@@ -93,6 +93,13 @@ const server = createServer((req, res) => {
       res.statusCode = note === 404 ? 404 : note === 500 ? 500 : 200;
       return res.end(JSON.stringify(res.statusCode === 200 ? (expect ? { expect } : { slip: { id: 1 } }) : { error: 'not one of your notes' }));
     }
+    // (hq prototype.)
+    if (u === '/api/agent/prototype') {
+      const { call, name } = JSON.parse(b);
+      res.statusCode = call === 8 ? 404 : 200;
+      return res.end(JSON.stringify(call === 8 ? { error: 'no live call #8' }
+        : { ok: `${name} v2 is on the call's page.`, id: 4, version: 2, link: 'https://call-7.preview.company.test/4/' }));
+    }
     if (u.startsWith('/api/agent/sketches')) return res.end(JSON.stringify({ sketches: u.includes('archived=1') ? [] : [SKETCH, { ...SKETCH, id: 11, label: '', strokes: 1, pictures: 0, sent: null, from: 'Ines' }] }));   // (from)   // (scraps)
     if (u === '/api/agent/item') return res.end(JSON.stringify({ id: 42, call: JSON.parse(b).call ?? 7, kind: JSON.parse(b).kind ?? 'task', owner: JSON.parse(b).owner ?? 'kit', ...(JSON.parse(b).replaces ? { replaced: 9, was: 'handled', cancelled: [11], told: [{ job: 12, message: 30 }], running: [] } : {}) }));
     if (u === '/api/agent/items' || u === '/api/agent/items?call=7') return res.end(JSON.stringify([
@@ -1343,4 +1350,42 @@ test('up hands a job on a lighter model up with its note, once it stops; on its 
   assert.match(handed.out, /^Handed up: once you stop, this job goes on on Opus 5\.5/);
   assert.deepEqual(JSON.parse(readFileSync(`${tmp}/.hq/up.json`, 'utf8')), { note: 'The margin comes from the grid, not the card: three files.' });
   rmSync(`${tmp}/.hq/up.json`);
+});
+
+test('prototype sends a folder\'s page and files for the call, or one HTML file as its page, and prints its line and link', async () => {
+  const folder = `${tmp}/proto`;
+  mkdirSync(`${folder}/art/.cache`, { recursive: true });
+  mkdirSync(`${folder}/node_modules/x`, { recursive: true });
+  writeFileSync(`${folder}/index.html`, '<!doctype html><img src="art/mug.svg">');
+  writeFileSync(`${folder}/art/mug.svg`, '<svg/>');
+  writeFileSync(`${folder}/.notes`, 'mine');
+  writeFileSync(`${folder}/art/.cache/old`, 'mine');
+  writeFileSync(`${folder}/node_modules/x/index.js`, 'mine');
+  const out = await hq('prototype', '--call', '7', 'Mug colours', folder, '--about', 'Bigger swatches');
+  assert.equal(out, "Mug colours v2 is on the call's page.\nhttps://call-7.preview.company.test/4/\n");
+  const base64 = (words: string) => Buffer.from(words).toString('base64');
+  assert.deepEqual(last().body, { call: 7, name: 'Mug colours', about: 'Bigger swatches',
+    files: { 'index.html': base64('<!doctype html><img src="art/mug.svg">'), 'art/mug.svg': base64('<svg/>') } });
+  await hq('prototype', 'Just the mug', `${folder}/art/mug.svg`, '--call', '7');
+  assert.deepEqual(last().body, { call: 7, name: 'Just the mug', files: { 'index.html': base64('<svg/>') } });
+  const refused = await run(['prototype', '--call', '8', 'Mug colours', folder]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /^Nothing saved: no live call #8\n$/);
+});
+
+test('prototype refuses a folder with no index.html, or past 8 MB, before it sends anything', async () => {
+  const sent = seen.length;
+  const folder = `${tmp}/too-big`;
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(`${folder}/page.html`, '<p>');
+  const noPage = await run(['prototype', '--call', '7', 'Big', folder]);
+  writeFileSync(`${folder}/index.html`, '<p>');
+  writeFileSync(`${folder}/film.webm`, Buffer.alloc((8 << 20) + 1));
+  const tooBig = await run(['prototype', '--call', '7', 'Big', folder]);
+  const noCall = await run(['prototype', 'Big', folder]);
+  assert.deepEqual([noPage.code, tooBig.code, noCall.code], [1, 1, 1]);
+  assert.match(noPage.err, /has no index\.html/);
+  assert.match(tooBig.err, /8 MB at most/);
+  assert.match(noCall.err, /^usage: hq prototype --call <n>/);
+  assert.equal(seen.length, sent);
 });

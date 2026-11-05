@@ -973,6 +973,9 @@ db.exec(`create index if not exists jobs_by_code on jobs (code);
 db.exec(`create index if not exists jobs_listed on jobs (id, code, created, finished, agent, title, engine, status, seat,
   attempts, request, kind, pr, round, stage, step, downtime, after, thread, seq, is_check, call, item, branch, session,
   not_before, expedite, customers, sha, voided, result)`);
+// Covers reviewplan.ts expeditedWork: the expedited jobs and their branches, few among all (after expedite's column), without a row read (its
+// where's terms as columns too).
+db.exec(`create index if not exists jobs_expedited on jobs (expedite, kind, id, branch) where expedite = 1`);
 // A call followed up before replies were set kept its notes as its work follow-up's last message: that becomes its reply.
 // A work follow-up still open was briefed that way: it's owed the ask for hq reply (reply_asks), which ledger.ts
 // askReplies() puts where its next run reads it (finished() needs the reply).

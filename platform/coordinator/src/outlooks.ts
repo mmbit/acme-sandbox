@@ -133,19 +133,21 @@ export function lines(f: Forecast) {
       "select id, project, name, goal, status, judge from threads where status = 'open' order by project, created",
     )
     .all() as Pick<Thread, 'id' | 'project' | 'name' | 'goal' | 'status' | 'judge'>[];
-  return threads.map(t => {
-    const outlook = outlookOf(t.id, f);
-    const next = outlook?.next == null ? null : jobLine(outlook.next, f);
-    return {
-      ...t,
-      urgent: threadUrgent(t.id),
-      cost: costs.report(t.id),
-      owner: ownerOf(t),
-      outlook,
-      next,
-      ready: readyOf(t),
-    };
-  });
+  return threads.map(t => ({
+    ...t,
+    urgent: threadUrgent(t.id),
+    cost: costs.report(t.id),
+    owner: ownerOf(t),
+    ...planned(t.id, f),
+    ready: readyOf(t),
+  }));
+}
+
+// A thread's outlook and the job that goes on next, alone: the summary's goals read only these (goals.ts lines), never the
+// cost book and the judge's reads around them.
+export function planned(id: string, f: Forecast) {
+  const outlook = outlookOf(id, f);
+  return { outlook, next: outlook?.next == null ? null : jobLine(outlook.next, f) };
 }
 
 // hq thread <id>: the thread, its outlook, and each of its open work jobs by its name (nameOf) with its size, what it has

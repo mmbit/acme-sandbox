@@ -129,9 +129,12 @@ test("hq call <id> moments: the moments and the transcript in one timeline by th
 test('the views go only where hq call goes: not a live call, nor a call about keys to another agent', async () => {
   const juno = await h.start({ agent: 'juno', title: 'Watching calls back' });
   const live = await h.liveCall('wren');
+  // (a colleague's: the CEO reads a live call's lines so far, job #24358, never its screen, which is the call's own)
+  const bolt = await h.start({ agent: 'bolt', title: 'Watching calls back' });
   for (const more of ['view=moments', 'view=screen&at=%2312'])
-    assert.deepEqual(await view(live.call, juno.token, more), NOT_FOUND, more);
-  assert.match((await h.hq(juno, 'call', String(live.call), 'moments')).out, /No call #\d+ you can read/);
+    assert.deepEqual(await view(live.call, bolt.token, more), NOT_FOUND, more);
+  assert.match((await h.hq(bolt, 'call', String(live.call), 'moments')).out, /No call #\d+ you can read/);
+  assert.match((await h.hq(juno, 'call', String(live.call), 'moments')).out, /still going on/);
   await end('wren', live, ['Board: done']);
   // a call about a card for keys: its own agent's alone, who is marked as holding keys
   const keys = h.jobs.createRequest({

@@ -51,7 +51,8 @@ test("the board's decision binds until a later call replaces or drops it, howeve
   assert.equal(checks().length, 1);
 });
 
-test("the board's words show only from a call hq call shows the check: not a live call's, nor one marked before as a customer call's", async () => {
+// (a live call's lines so far are the CEO's to read since job #24358, as hq call shows them: its words show)
+test("the board's words show only from a call hq call shows the check: not one marked before as a customer call's", async () => {
   reset();
   const fixture = await h.start({ agent: ceo(), title: 'A customer call follow-up' });
   await h.finish(fixture);
@@ -65,8 +66,9 @@ test("the board's words show only from a call hq call shows the check: not a liv
   const check = await startCheck();
   const text = (await h.hq(check, 'followthrough')).out;
   assert.match(text, /The board's words: "Hold the game work tonight"/);
-  assert.doesNotMatch(text, /Refund the customer|Carry on with that customer|Say nothing yet/);
-  assert.equal((text.match(/The board's words: left out/g) ?? []).length, 3);
+  assert.match(text, /The board's words: "Say nothing yet: the call is still on"/);
+  assert.doesNotMatch(text, /Refund the customer|Carry on with that customer/);
+  assert.equal((text.match(/The board's words: left out/g) ?? []).length, 2);
   // a job working on the call reads it
   const helper = h.queue({ agent: ceo(), item: followedUp.item });
   assert.match(read({ id: helper, agent: ceo() }), /"Refund the customer at the old address"/);

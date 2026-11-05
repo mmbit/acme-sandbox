@@ -6,6 +6,7 @@ import { fetchGuestPicture } from './ink/bookfetch.ts';
 import * as files from './notebookguestfiles.ts';
 import * as notebooks from './notebookguests.ts';
 import * as callguests from './callguests.ts';
+import * as prototypes from './callprototypes.ts';
 import * as members from './notebookmembers.ts';
 import { shelfOf } from './notebookguestshelf.ts';
 import * as pictures from './notebookpictures.ts';
@@ -18,8 +19,9 @@ import * as sending from './notebooksend.ts';
 import * as rounds from './notebookrounds.ts';
 import * as answers from './ink/bookanswer.ts';
 import { db } from './db.ts';
+import { timeZone } from './company.ts';
 import { reply } from './uploads.ts';
-import { isRefused, SAVE_MAX, type Refused } from './pagechecks.ts';
+import { isRefused, NOTE_MAX, SAVE_MAX, type Refused } from './pagechecks.ts';
 import { parseJson, readBody, routes, type RouteRequest } from '../../../shared/routes/routes.ts';
 import { scopedPath } from '../../hq/shell/ink/bookroutes.js';
 
@@ -35,8 +37,9 @@ guests.addRoom({
   serve: (req, res) => room(req, res),
 });
 
-// The guest a request is for: guests.ts serves the room only to a signed-in guest it opens for
-const nameOf = (req: IncomingMessage) => guests.signedIn(req)!.name;
+// The guest a request is for: guests.ts serves the room only to a signed-in guest it opens for (or a visitor: a call's
+// scan, callguests.ts.)
+const nameOf = (req: IncomingMessage) => guests.inRoomAs(req)!.name;
 
 // What a write on one of the guest's pages gets: the guest, their membership and round, the page and who they write as
 // there, and whether they're still in (signed in and a member of the page) after any wait
@@ -70,10 +73,14 @@ const room = routes({
     res.end();
   },
   [`GET ${ROOM}/`]: ({ req, res }) => {
-    const guest = guests.signedIn(req)!;
-    return files.servePage(res, guest.name, guests.langOf(guest));
+    const guest = guests.inRoomAs(req)!;
+    return files.servePage(res, guest.name, guest.lang, !guest.visitor);
   },
-  [`GET ${API}/shelf`]: ({ req, res }) => answer(res, shelfOf(nameOf(req))),
+  // (a visitor's shelf has nothing on it, and never a journal made for them: they're on the call's page alone.
+  [`GET ${API}/shelf`]: ({ req, res }) => {
+    const guest = guests.inRoomAs(req)!;
+    return answer(res, guest.visitor ? { books: [], journal: null, timeZone: timeZone() } : shelfOf(guest.name));
+  },
   [`GET ${API}/list`]: read(
     (name, q) => onCall(name, q)?.list ?? notebooks.listNotebooks(name, Number(q.get('notebook')) || undefined),
   ),
@@ -109,6 +116,12 @@ const room = routes({
   [`POST ${API}/replies/delete`]: onPage(byGroup, (b, on) => sending.deleteReply(b, on.who), ANSWERS),
   [`POST ${API}/answers/form`]: onPage(bySlip('id'), (b, on) => answers.answerForm(b, on.who), ANSWERS),
   [`POST ${API}/answers/tick`]: onPage(bySlip('id'), (b, on) => answers.tickAnswer(b, on.who), ANSWERS),
+  // (a call's guest's pen on one of its prototypes, {url, anchor, snip}: a scrap of theirs on the call's page, as the
+  // board's from HQ's viewer.)
+  [`POST ${API}/prototype-mark`]: write(
+    (b, name) => prototypes.markOnCall(b, page => callguests.onCallPage(page, name)?.by),
+    NOTE_MAX,
+  ),
   ...files.fileRoutes(ROOM),
 });
 
@@ -133,12 +146,12 @@ function uploadPicture({ req, res, url }: RouteRequest) {
   return pictures.uploadPicture(req, res, members.whoOf(member), stillIn, `${API}/pictures`);
 }
 
-// A write by the signed-in guest: its JSON body read first, then the guest asked again (their session may have ended
-// meanwhile), its answer's addresses under the scope
-function write(writing: (b: any, name: string, stillIn: () => boolean) => unknown) {
+// A write by the signed-in guest: its JSON body read first (at most max), then the guest asked again (their session
+// may have ended meanwhile), its answer's addresses under the scope
+function write(writing: (b: any, name: string, stillIn: () => boolean) => unknown, max = SAVE_MAX) {
   return async ({ req, res }: RouteRequest) => {
     const name = nameOf(req);
-    const raw = await readBody(req, SAVE_MAX);
+    const raw = await readBody(req, max);
     if (!raw) return reply(res, 413, { error: 'too large' }, true);
     const body = parseJson(raw);
     if (body === null) return reply(res, 400, { error: 'not JSON' });
@@ -147,7 +160,7 @@ function write(writing: (b: any, name: string, stillIn: () => boolean) => unknow
   };
 }
 const stillSignedIn = (req: IncomingMessage, name: string) =>
-  guests.signedIn(req)?.name.toLowerCase() === name.toLowerCase();
+  guests.inRoomAs(req)?.name.toLowerCase() === name.toLowerCase();
 
 // A write on one of the guest's pages: refused unless they're a member of the page it names, and in a closed round
 // unless it answers an agent. call: it's one a call's guest makes on the call's page too, as themselves, on what's

@@ -1,5 +1,5 @@
 // Explicit urgency on the existing work levels and their review loops.
-import { db, planChange, prepared, workBranch } from './db.ts';
+import { db, once, planChange, prepared, workBranch } from './db.ts';
 import { ceo } from './company.ts';
 import { publish } from './events.ts';
 
@@ -30,14 +30,17 @@ const urgentSourceOn = (branchSql: string) => `exists (
   select 1 from jobs source indexed by jobs_work_branch join urgent_work origin on origin.id = source.id
   where ${workBranch('source')} = ${branchSql} and source.kind = 'work' and origin.urgent)`;
 
+// A view on a LEFT JOIN's right side is built whole at each read, so urgent_work joins a job's thread and project
+// itself.
+once('2026-11-04-urgent-work-own-joins', 'drop view if exists urgent_tasks; drop view if exists urgent_work;');
 db.exec(`
   create view if not exists urgent_projects as select id, urgent from projects;
   create view if not exists urgent_threads as
     select t.id, (t.urgent or coalesce(p.urgent, 0)) urgent
     from threads t left join projects p on p.id = t.project;
   create view if not exists urgent_work as
-    select j.id, (j.urgent or coalesce(t.urgent, 0)) urgent
-    from jobs j left join urgent_threads t on t.id = j.thread;
+    select j.id, (j.urgent or coalesce(t.urgent, 0) or coalesce(p.urgent, 0)) urgent
+    from jobs j left join threads t on t.id = j.thread left join projects p on p.id = t.project;
   create view if not exists urgent_tasks as
     select j.id, (u.urgent or j.expedite or (j.pr is not null and
       ${urgentSourceOn('coalesce(j.branch, (select branch from prs where number = j.pr))')})) urgent

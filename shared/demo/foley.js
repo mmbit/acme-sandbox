@@ -5,9 +5,9 @@
 //            sfx.play('stamp', { size: 1.2 }); sfx.bind(muteButton);
 // The same name, params and seed give the same sound in the app and in the ad. See SYNTH.md.
 const TAU = Math.PI * 2;
-const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+export const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const semi = s => Math.pow(2, s / 12);
-function mulberry(a) {
+export function mulberry(a) {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }

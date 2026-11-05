@@ -136,6 +136,8 @@ const click = () => foley('switch', { size: 0.9 }, { vol: 0.8 });
 const OWN = {
   ringing: () => { tone(425, 0.03, { type: 'sine', vol: 0.07, attack: 0.03, hold: 0.97 }); tone(850, 0.03, { type: 'sine', vol: 0.011, attack: 0.03, hold: 0.97 }); },
   pickUp: () => { foley('clack', { hold: 0, size: 1.2, pitch: -3 }, { vol: 0.8 }); foley('switch', { size: 1.4, pitch: -2 }, { vol: 0.35, at: 0.025 }); },
+  // (the call's agent raised its hand: two soft sine notes rising, a fifth, quieter than the ring.)
+  handUp: () => { tone(660, 0.12, { type: 'sine', vol: 0.05, attack: 0.01 }); tone(990, 0.2, { type: 'sine', vol: 0.045, attack: 0.01, at: 0.13 }); },
 };
 export const sfx = new Proxy({}, { get: (_, name) => (...a) => (pack.sfx?.[name] ?? OWN[name] ?? click)(...a) });
 // A sound by its name, as the scenes (shell.sound.play) and a kit's moments call it.

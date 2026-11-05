@@ -26,7 +26,7 @@ import { answering, slipRoomHtml, wireRooms } from './bookslipreply.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
 import { markOpen } from './bookforyou.js';
-import { seenHtml, tagsHtml } from './bookassignlist.js';
+import { seenHtml, seenMarkHtml, tagsHtml } from './bookassignlist.js'; // (seenMarkHtml)
 import { formHtml, formsIn, wireForms } from './bookanswerreply.js';
 import { sendForm, sendReply } from './bookanswersdata.js';
 import { waitingHtml } from './bookanswers.js';
@@ -100,13 +100,14 @@ function draw(gs, view) {
       // (a group whose elements are all off the page, deleted and not yet saved, is drawn no more)
       const { box } = partsNow(page, g.id);
       if (!box) return '';
-      // A scrap's words are part of its body, under its picture. Its answers and replies go under the unit, and whom it
-      // went to at its corner (bookunits.js places them). A scrap is a unit, no clip: Select's bar has its menu.
+      // A scrap's words are part of its body, under its picture. Its answers and replies go under the unit, whom it
+      // went to at its corner, and who read it beside what they read (bookunits.js places them). A scrap is a unit, no
+      // clip: Select's bar has its menu. (who read it)
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
       const under = slipsHtml(g, view.rooms) + asksHtml(g, view.rooms, gs.book.dev);
       return `${words ? `<div class="bk-words" data-g="${g.id}">${words}</div>` : ''}${
         under ? `<div class="bk-under" data-g="${g.id}">${under}</div>` : ''
-      }${tagsHtml(g)}`;
+      }${tagsHtml(g)}${seenMarkHtml(g)}`;
     })
     .join('');
   wireSlips(layer, slipsOn(gs), word);

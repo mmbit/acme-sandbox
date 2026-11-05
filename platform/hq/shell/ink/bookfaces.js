@@ -18,7 +18,7 @@ export function portrait(id) {
 }
 export const faced = id => (portrait(id) ? renderer.look() : '');
 // The agent's face as HQ's look draws them, or their initial in their ink (an answer still coming under its note:
-// bookgroups.js; a try's versions: bookversions.js)
+// bookgroups.js; a try's versions: bookversions.js; the seen mark: bookassignlist.js)
 export function faceHtml({ by, name }) {
   const picture = portrait(by);
   return picture

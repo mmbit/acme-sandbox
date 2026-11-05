@@ -3,19 +3,41 @@
 import { execFile } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { promisify } from 'node:util';
-import { ORIGIN, REPO_DIR } from './config.ts';
+import { ORIGIN, PREVIEW, REPO_DIR, ZONE } from './config.ts';
 import { boardOn } from './preview.ts';
 
 const run = promisify(execFile);
 
+// The numbered hosts of one kind on the preview domain, <kind>-<n>.preview.<zone>: one's name, or none without a
+// domain (a run on one's own machine), and the number a host is, if it's one of them.
+export function numbered(kind: string) {
+  const name = new RegExp(`^${kind}-([1-9][0-9]{0,9})$`);
+  return {
+    hostOf: (n: number) => (ZONE ? `${kind}-${n}${PREVIEW}` : null),
+    numberAt(host: string) {
+      const h = host.toLowerCase().split(':')[0];
+      const n = ZONE && h.endsWith(PREVIEW) ? name.exec(h.slice(0, -PREVIEW.length))?.[1] : undefined;
+      return n ? Number(n) : null;
+    },
+  };
+}
+
 // A request's opening: the board's only, and no service worker, which could catch the preview login's code on its way
 // in. False once it's refused (what: the version, in the refusal's words).
-export function opened(req: IncomingMessage, res: ServerResponse, what: string) {
-  const host = String(req.headers.host ?? '').toLowerCase();
-  if (!boardOn(req, host)) return refused(res, 'not allowed');
+// also: whoever else the host lets in; sources: the CSP's directives for what its pages may load, beside the framing's.
+export function opened(
+  req: IncomingMessage,
+  res: ServerResponse,
+  what: string,
+  { also, sources }: { also?: () => boolean; sources?: string } = {},
+) {
+  const host = String(req.headers.host ?? '')
+    .toLowerCase()
+    .split(':')[0];
+  if (!boardOn(req, host) && !also?.()) return refused(res, 'not allowed');
   if (req.headers['service-worker'] === 'script') return refused(res, `no service workers on ${what}`);
   // HQ's viewer frames it; nothing else may
-  res.setHeader('content-security-policy', `frame-ancestors 'self' ${ORIGIN}`);
+  res.setHeader('content-security-policy', [sources, `frame-ancestors 'self' ${ORIGIN}`].filter(Boolean).join('; '));
   res.setHeader('cache-control', 'no-cache');
   return true;
 }

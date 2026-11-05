@@ -110,12 +110,13 @@ RUN curl -fsSL -o nemo_en_titanet_large.onnx "$SPEAKER_MODELS/nemo_en_titanet_la
 # dictation), reads.py (the call agent's report and git tools), drawing.py (the
 # board's notes, the agent's asks to see its screen and rings on its page), driving.py (the agent's walk-throughs of
 # finished work), answers.py (HQ's answers to both's rings and moves), callnotes.py (the agent's scraps and title on
-# the call's notes page), voices.py (who is talking in the board's room). Every
+# the call's notes page), voices.py (who is talking in the board's room), design.py (a design session and the
+# agent's raised hand). Every
 # module server.py and hq_tools.py import goes here:
 # platform/coordinator/src/image.test.ts fails on one left out.
 COPY voice/server.py voice/aloud.py voice/guard.py voice/hq_tools.py voice/turns.py voice/echo.py voice/room.py \
      voice/endpoint.py voice/dictate.py voice/reads.py voice/drawing.py voice/driving.py \
-     voice/answers.py voice/callnotes.py voice/voices.py /app/
+     voice/answers.py voice/callnotes.py voice/voices.py voice/design.py /app/
 # (and the TypeScript it runs, beside it as in the repo)
 COPY worker/bin/hq /usr/local/bin/hq
 COPY worker/hq /usr/local/hq

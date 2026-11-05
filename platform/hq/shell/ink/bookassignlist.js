@@ -9,7 +9,7 @@ import { esc } from '../../util.js';
 import { icon } from '../icons.js';
 import { scope, word } from './bookscope.js';
 import { cardOf } from './bookcard.js';
-import { portrait } from './bookfaces.js';
+import { faceHtml } from './bookfaces.js';
 
 // what a person is, by their kind
 const KIND_WORDS = { guest: 'kindGuest', agent: 'kindAgent' };
@@ -60,28 +60,28 @@ let given = null;
 export const freshTag = (g, to, at) => (given = { g, to, at });
 
 // A group's tags, at its unit's bottom-right corner (bookunits.js places them): an initial in a circle for each person
-// it went to, with a tick by it once they've answered; and the seen tick of the agent it went to, when it needs
-// nothing back (groupanswers.ts seenTick)
+// it went to, with a tick by it once they've answered
 export function tagsHtml(g) {
-  const seen = g.seen && !g.assigned?.some(p => p.to === g.seen.by) ? seenHtml(g.seen) : '';
-  if (scope || (!g.assigned?.length && !seen)) return '';
+  if (scope || !g.assigned?.length) return '';
   const tags = (g.assigned ?? []).map(p => {
     const label = p.answered ? word('nameAnswered', { name: p.name }) : word('assignedTo', { name: p.name });
     const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '';
     return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? TICK : ''}<span
       class="bk-face">${esc(initial(p.name))}</span></span>`;
   });
-  return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}${seen}</div>`;
+  return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}</div>`;
 }
-// Seen: the face of the agent who read it, as HQ's look draws them (their initial where it draws none), a small tick on
-// it in the brand's colour (the board: its avatar, not a letter.)
+// The seen tick of the agent it went to, when it needs nothing back (groupanswers.ts seenTick): on its own, beside
+// what they read (bookunitcards.js places it.)
+export function seenMarkHtml(g) {
+  if (scope || !g.seen || g.assigned?.some(p => p.to === g.seen.by)) return '';
+  return `<div class="bk-seen" data-g="${g.id}">${seenHtml(g.seen)}</div>`;
+}
+// Seen: the face of the agent who read it, as HQ's look draws them (their initial where it draws none: bookfaces.js), a
+// small tick on it in the brand's colour (the board: its avatar, not a letter.)
 export function seenHtml(seen) {
-  const label = word('seenBy', { name: seen.name }),
-    picture = portrait(seen.by);
-  const face = picture
-    ? `<span class="bk-face" data-portrait style="background-image:url(${picture})"></span>`
-    : `<span class="bk-face">${esc(initial(seen.name))}</span>`;
-  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${face}${TICK}</span>`;
+  const label = word('seenBy', { name: seen.name });
+  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${faceHtml(seen)}${TICK}</span>`;
 }
 // A tick drawn as the Notebook's own ink, never HQ's pixel icons, which stay on its menus and bars (the board: nothing
 // in the Notebook is pixel art.)

@@ -3,7 +3,8 @@
 // bridge:
 //   - the pen picked, the shell is told where the paper is on the screen and the pen's ink;
 //   - a stroke the shell hands back lands on the page shown as the pen's line, its pressure kept, saved to the store;
-//   - a tap the shell hands back is a click where it tapped: on the Eraser, which takes the Pencil back to the page;
+//   - a tap the shell hands back is a click where it tapped: on a page arrow one page turned, on the Eraser the Pencil
+//     back to the page;
 //   - while an answer's slide has lent the zoom, the shell is told the pen's width at the board's zoom. The Pencil
 //     touching the paper gives that zoom back, and the stroke then drawn lands as drawn at it.
 import assert from 'node:assert/strict';
@@ -62,6 +63,8 @@ async function inShell(browser, c) {
     assert.ok(Math.max(...pressures) > 0.7, `its pressure kept: ${pressures}`);
     await c.shot('native-pen-line', page);
 
+    await arrowTap(page);
+
     // a tap on the Eraser: picked, and the Pencil the page's again
     const eraser = middleOf(
       await page.locator('#book').getByRole('button', { name: 'Eraser', exact: true }).boundingBox(),
@@ -72,6 +75,22 @@ async function inShell(browser, c) {
   } finally {
     await done();
   }
+}
+
+// A Pencil tap on a page arrow, inside the paper the shell takes: one page turned, not one for the tap and one for its
+// click.
+async function arrowTap(page) {
+  const where = () => page.locator('#book .bk-where').textContent(),
+    [n, of] = (await where()).split(' / ').map(Number);
+  assert.ok(of > 1, `a chapter with pages to turn: ${n} / ${of}`);
+  const [label, to] = n > 1 ? ['The page before', n - 1] : ['The page after', n + 1],
+    arrow = middleOf(
+      await page.locator(`#book .bk-bar [data-island=pages] .bk-btn[aria-label="${label}"]`).boundingBox(),
+    );
+  await page.evaluate(at => window.shellPen([[...at, 0.5, 0]]), arrow);
+  await until(async () => (await where()) === `${to} / ${of}`, `${label}: ${to} / ${of}`);
+  await page.waitForTimeout(1000);
+  assert.equal(await where(), `${to} / ${of}`, `one Pencil tap on ${label}, one page`);
 }
 
 // In a native shell that draws the Pencil itself (booknative.js): a tall note's answer slid into sight zooms out to

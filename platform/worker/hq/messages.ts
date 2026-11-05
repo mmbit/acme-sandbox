@@ -107,9 +107,25 @@ async function sayOnCall(args: string[]) {
   );
 }
 
-type Said = { id: number; state: string; job?: number; why?: string; added?: number; chain_full?: boolean };
+type Said = {
+  id: number;
+  state: string;
+  job?: number;
+  why?: string;
+  added?: number;
+  chain_full?: boolean;
+  call?: number;
+};
 
-function said(to: string, { id, state, job, why, added, chain_full }: Said) {
+// (and a call with the board the recipient is on hears it too, within about 15 s: the coordinator's messages.ts send.
+function said(to: string, sent: Said) {
+  const where = delivery(to, sent);
+  return present(sent.call)
+    ? `${where}\n${to} is on call #${shown(sent.call)} with the board: the call hears it too, with ${to}'s next turn there.`
+    : where;
+}
+
+function delivery(to: string, { id, state, job, why, added, chain_full }: Said) {
   const check = `Check: hq sent ${id}`;
   if (why === 'next-run') {
     return `Kept for ${to}: ${job ? `job #${job} reads it at its next step` : 'the next run reads it'}, even while a pause holds work. If unread, it stays for the following run. ${check}`;

@@ -9,25 +9,18 @@
 // The preview goes with the branch (trybranch.ts dropBranch): a cleared version's host serves nothing.
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { PREVIEW, REPO_DIR, ZONE } from '../config.ts';
+import { REPO_DIR } from '../config.ts';
 import { db } from '../db.ts';
 import { isProduct } from '../owedproducts.ts';
 import { DIR } from '../pagescraps.ts';
 import { typeOf } from '../types.ts';
-import { decoded, gitShow, opened } from '../versionhost.ts';
+import { decoded, gitShow, numbered, opened } from '../versionhost.ts';
 import { answer, mockFiles } from '../../../hq/serve.mjs';
 import type { Slip } from './bookslips.ts';
 import { applied } from './trybranch.ts';
 
-const HOST = /^try-([1-9][0-9]{0,9})$/;
-// A version's preview host, or none without a domain (a run on one's own machine)
-export const hostOf = (slip: number) => (ZONE ? `try-${slip}${PREVIEW}` : null);
-// The version a host is the preview of, if it is one
-export function versionAt(host: string) {
-  const h = host.toLowerCase().split(':')[0];
-  const id = ZONE && h.endsWith(PREVIEW) ? HOST.exec(h.slice(0, -PREVIEW.length))?.[1] : undefined;
-  return id ? Number(id) : null;
-}
+// A version's preview host, and the version a host is the preview of
+export const { hostOf, numberAt: versionAt } = numbered('try');
 // A version still there with its branch: what its host serves
 const live = (id: number) =>
   db

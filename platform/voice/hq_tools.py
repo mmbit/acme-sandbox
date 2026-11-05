@@ -11,6 +11,8 @@ from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
 from callnotes import (CHANGE_WORDS, DRAW_WORDS, GOAL, MARK_WORDS, MARKS, PAGE_WORDS, TITLE_WORDS_SAID, TOPIC_MOST,
                        TRY_WORDS, WHAT, WRITE_DOWN_WORDS, change_asked, drawing_asked, mark_asked, note_asked, title_asked,
                        try_asked)
+from callnotes import PROTOTYPE_ABOUT, PROTOTYPE_HTML, PROTOTYPE_NAME, PROTOTYPE_WORDS, prototype_asked
+from design import BRIEF_MOST, BUILD_TOOL_WORDS
 from voices import NAME_LENGTH, VOICE_WORDS
 from voices import ENROL_WORDS, FORGET_WORDS
 
@@ -41,7 +43,7 @@ NO_ANSWER = "No answer in {} minutes, though the coordinator is up, so the wait 
 # speaks right after reading them: every answer but hang_up's carries this as a part of its own (answer()), the moment
 # the agent turns it into words. Text keeps its numbers.
 ALOUD = ('The numbers here are for your tools only. Never say one aloud (a job, card, pull request, call, item or '
-         'pin): tell the board what the work is and whose it is.')
+         'pin): tell the board what the work is.')
 COLLEAGUE = re.compile(r'[a-z0-9][a-z0-9-]{0,39}')
 DEADLINE = re.compile(r'^[0-9][0-9hmHM:TZ -]{0,24}$')  # (the coordinator reads it: windows.ts)
 # (a deliverable, <project>/<slug>, in the tools' words.)
@@ -71,14 +73,14 @@ GOALS = {'type': 'string', 'minLength': 1, 'maxLength': GOAL,
          'The team judges the work, and any rule made from it, against this'}
 # the time of something written down, for work new or already under way (a review, a running job): the board's own
 # with its date and no zone, as windows.ts reads it
-# The time to tell the board is live four times in five.
+# The time to tell the board is live four times in five, the one time it hears (call.ts ONE_TIME).
 WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you told the board it will be done, at our '
         'pace: 2h, 90m or 1h30m from now; the board\'s own time as it said it, with its date and no zone (2026-10-26 '
         "09:00, on the company's clock); a time with Z, or a time of day alone (14:30), is UTC. Give "
         'it whenever you tell the board a time, also for work already under way (a review, a running job): with job, '
         "it is that work\'s, and its deliverable takes the time at once; the job tool\'s with its item takes it as "
         "it\'s queued. The time you tell is the one eta or when gives to tell the board (live four times in five), never a "
-        'planned finish. It is ours: its slips are never news to the board, unless board_set'}
+        'planned finish beside it, nor a later one with a margin of your own. It is ours: its slips are never news to the board, unless board_set'}
 # whether the board set that time itself: only such a time's miss is told to it, once
 BOARD_SET = {'type': 'boolean', 'description': 'with deadline: true only when the board named this time itself or '
              "asked for the work by it ('I need it by Tuesday'). A time you gave or offered, even one it took, is ours: "
@@ -92,7 +94,9 @@ SIZE = {'type': 'string', 'description': 'your estimate as a JSON string, for ex
 TOOLS = [
     {'name': 'job', 'description': "Put work on a colleague's list as a separate job. "
      "Queue it only once the board agrees the direction on this call. Until it does, say what you'd do and ask. A "
-     "job on a direction the board then turns down makes more mess and wastes tokens and the board's money. It "
+     "job on a direction the board then turns down makes more mess and wastes tokens and the board's money. "
+     "A colleague's quick prototype to show an idea on this call is the exception: queue it at once (prototype says "
+     "how). It "
      "doesn't reach them live: nobody is on it until it runs, so tell the board it's queued, never that it's sent "
      "or that they're on it. The title is what HQ shows; the brief is the whole hand-off, in the colleague's terms: "
      "they get nothing else. It's queued only when this "
@@ -273,7 +277,7 @@ TOOLS += [
      'choose the task work estimate as size, then it plays that size into the plan as it stands, every seat and window counted, in a '
      'few seconds: the earliest planned live finish without making any window miss, a proposed window, and the time to tell the board (live four times in five). With by (the '
      "board's time), whether it makes that time, and only if not, what would: windows giving or one more seat. "
-     'Give the board its time to tell the board, but a finish past by comes with what to check and do first: do it. '
+     'Give the board its time to tell the board, the one time, with no margin of your own, but a finish past by comes with what to check and do first: do it. '
      'With extra_seat (5x or 20x), omit what and its flags to replay the whole '
      'existing plan before and after an added Claude Max seat, with every window and capacity confidence. '
      'Use this whenever the board asks whether another seat would help, even if no deadline misses. Nothing changes.',
@@ -611,6 +615,35 @@ TOOLS += [
          'svg': {'type': 'string', 'minLength': 1,
                  'description': 'the drawing, from <svg viewBox="0 0 640 480"> to its </svg>'}}}},
 ]
+# A throwaway prototype, kept with the call (callnotes.py; the coordinator's callprototypes.ts).
+TOOLS += [
+    {'name': 'prototype', 'description': 'Make a prototype to show an idea on the call: a throwaway page the board '
+     "and its guest play with. It lands as a card on both iPads and a clip on the call's page: they open it full "
+     "screen and tap through it, and their pen marks on it reach you as marks on the call's page do. Never ask before "
+     'you make one. Saving again under the same name makes its next version (v2) beside the earlier ones. '
+     # (a brief: built in the background, design.py.)
+     'Give a brief (what to build, what each part does, how it should feel) and a builder makes it in the background '
+     'while you go on: it takes a few minutes, to make it good, and your hand goes up when it has landed. That is '
+     'the usual way: one where every tap does something you see, with motion and a little life, beats a quick thin one. '
+     'A next version builds on the last one under its name: say what to change. Write the page yourself (html) only '
+     'for something you can show in a few lines, like a single slider; then it shows within seconds. Write one whole '
+     'HTML page with everything inline (CSS, script, SVG, data URLs): nothing from outside the page loads. Make it '
+     "fit an iPad in either orientation, with big touch targets. Never a customer's details or anything of HQ's. A "
+     "page you write comes back as its picture (its script runs on the iPads, not in the picture), with the call's "
+     'number. Several concepts at once, or a whole product: hand each to a colleague with job (now: true), a quick '
+     'job whose brief says what to build, to save it with hq prototype --call <this call\'s number, which your '
+     'briefing gives> "<name>" <its folder>, and to change nothing in the repo (a job that commits nothing opens no '
+     'pull request and no review). Theirs appears the same way, beside yours.',
+     'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False, 'properties': {
+         'name': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_NAME,
+                  'description': "its name, a few words ('Colour slider'): the same name again is its next version"},
+         'brief': {'type': 'string', 'minLength': 1, 'maxLength': BRIEF_MOST,
+                   'description': 'what the builder makes, in plain words (or html instead)'},
+         'html': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_HTML,
+                  'description': 'the whole page, from <!doctype html> to </html>, everything inline (or brief instead)'},
+         'about': {'type': 'string', 'maxLength': PROTOTYPE_ABOUT,
+                   'description': 'what this version changes, one plain line (for a v2 and after)'}}}},
+]
 
 # Several people in the board's room, told apart by their voices (voices.py).
 TOOLS += [
@@ -636,6 +669,33 @@ TOOLS += [
      'board does): later calls no longer recognise them.',
      'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False, 'properties': {
          'name': {'type': 'string', 'minLength': 1, 'maxLength': NAME_LENGTH, 'description': 'the name it was saved under'}}}},
+]
+# A design session at the board's table, and the agent's raised hand (the voice line's design.py).
+TOOLS += [
+    {'name': 'design_session', 'description': 'Make this call a design session, when someone asks for one (a '
+     "brainstorm, sketching ideas together): the board's screen opens a free sketch page for it in the Notebook, and "
+     'the answer tells you how to take part. Not needed when the call started as one: you were told so then.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
+    {'name': 'raise_hand', 'description': 'In a design session: raise your hand when you have something worth adding '
+     '(an idea, something overlooked, a prototype to offer or announce, a sketch to check) and they are talking, '
+     'instead of talking over them. They see a raised hand and hear a soft beep; the line gives you your moment at a '
+     'natural pause, or when they tap it. Say nothing more in the reply that raises it. down: true lowers it, when it '
+     'no longer fits.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+         'about': {'type': 'string', 'maxLength': 120,
+                   'description': "what you'd add, a few words ('a colour picker that learns'): shown under the hand"},
+         'down': {'type': 'boolean', 'description': 'true: lower your hand'}}}},
+]
+# Passing a turn: the voice line reads it from the reply's stream (server.py SAY_NOTHING_TOOL).
+SAY_NOTHING_ANSWER = ('Passed: nothing more of this reply is said, and what you do in it plays no tick. Carry on in '
+                      'silence or end your reply.')
+TOOLS += [
+    {'name': 'say_nothing', 'description': 'Say nothing at all in this reply: the words you heard weren\'t for you, or '
+     'need no answer (people talking to each other, to someone else, thinking aloud). Call it first, with no words '
+     'before it: whatever you write is read aloud, a stage direction like "(listening)" too. Work you do after it in '
+     'the same reply (a note, a sketch, a prototype) goes on in silence, without the tick that tells people waiting '
+     'for your answer that you\'re on it.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -867,6 +927,8 @@ def hq(waits, name, a):
         return answered(run(waits, ['expedite', str(n)], ''), 'Nothing expedited', 'it may or may not be expedited', by='hq expedite')
     if name == 'hang_up':
         return True, HANG_UP_ANSWER
+    if name == 'say_nothing':
+        return True, SAY_NOTHING_ANSWER
     if name == 'reach':
         return reach(waits, a)
     if name == 'manage':
@@ -1233,6 +1295,20 @@ def draw_picture(a):
     return shown(line_asked({'draw_picture': asked}))
 
 
+def prototype(a):
+    """(ok, content) of the prototype tool: its picture as the board sees it, and its line; or, from a brief, the line's
+    word that a builder has it."""
+    if 'brief' in a:
+        if set(a) - {'name', 'brief'} or not all(isinstance(a.get(k), str) for k in ('name', 'brief')):
+            return False, [{'type': 'text', 'text': BUILD_TOOL_WORDS['shape']}]
+        return page_said({'prototype': a}, PROTOTYPE_WORDS)
+    if not (asked := prototype_asked(a)):
+        return False, [{'type': 'text', 'text': PROTOTYPE_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': PROTOTYPE_WORDS['none']}]
+    return shown(line_asked({'prototype': asked}))
+
+
 def page_said(asked, words):
     if not SCREEN_SOCKET or not SCREEN_KEY:
         return False, [{'type': 'text', 'text': words['none']}]
@@ -1274,6 +1350,22 @@ def forget_voice(a):
     if not SCREEN_SOCKET or not SCREEN_KEY:
         return False, [{'type': 'text', 'text': FORGET_WORDS['gone']}]
     return said(line_asked({'forget_voice': {'name': a['name']}}))
+
+
+def design_session(a):
+    """(ok, content) of the design_session tool: the voice line's answer on its socket."""
+    if a or not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': 'design_session takes nothing.' if a else 'The call has ended.'}]
+    return said(line_asked({'design_session': {}}))
+
+
+def raise_hand(a):
+    """(ok, content) of the raise_hand tool: the voice line's answer on its socket."""
+    if set(a) - {'about', 'down'} or not isinstance(a.get('about', ''), str) or not isinstance(a.get('down', False), bool):
+        return False, [{'type': 'text', 'text': 'raise_hand takes about, a few words, or down: true.'}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': 'The call has ended.'}]
+    return said(line_asked({'raise_hand': a}))
 
 
 def said(got):
@@ -1329,7 +1421,9 @@ def outcome(future):
 LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive,
               'write_down': write_down_in_hq, 'title_notes': title_notes, 'read_notes': read_notes, 'mark_notes': mark_notes,
               'change_note': change_note, 'try': try_versions, 'draw_picture': draw_picture, 'name_voice': name_voice,
-              'save_voice': save_voice, 'forget_voice': forget_voice}
+              'save_voice': save_voice, 'forget_voice': forget_voice,
+              'prototype': prototype,
+              'design_session': design_session, 'raise_hand': raise_hand}
 
 
 def line_answers(name, offered):
@@ -1361,11 +1455,11 @@ def answer(msg, waits, offered=TOOLS):
             ok, text = partner(name, arguments)
         elif name == 'waiting':
             ok, text = waits.waiting()
-        elif name == 'hang_up':
+        elif name in ('hang_up', 'say_nothing'):  # (say_nothing)
             ok, text = hq(waits, name, arguments)
         else:
             ok, text = waits.awaited(name, arguments)
-        aloud = [] if offered is PARTNER_TOOLS or name == 'hang_up' else [{'type': 'text', 'text': ALOUD}]
+        aloud = [] if offered is PARTNER_TOOLS or name in ('hang_up', 'say_nothing') else [{'type': 'text', 'text': ALOUD}]
         result = {'content': [{'type': 'text', 'text': text}, *aloud], 'isError': not ok}
     elif method == 'ping':
         result = {}

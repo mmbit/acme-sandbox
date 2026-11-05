@@ -31,13 +31,14 @@ stack_env() { # what compose.yaml needs besides /etc/$SERVER_NAME/env; $1 = the 
   done < <(python3 infra/care_engines.py)
 }
 
-# Between deploys, the status report every 10 minutes so seats and requests stay visible. $1: the commit HQ runs.
+# Between deploys, the status report every 10 minutes so seats and requests stay visible. $1: the commit HQ runs; $2:
+# why a newer one isn't deployed yet, if one waits (a live call).
 report_between() {
   local stamp=/var/lib/$SERVER_NAME/reported log
   [ -z "$(find "$stamp" -mmin -10 2>/dev/null)" ] || return 0
   # report.sh's compose calls need the stack's variables too, or each one warns 7 times that they're unset.
   stack_env "$1"
-  log=$(mktemp); echo "periodic report (no deploy); deployed $1" > "$log"; ./infra/report.sh "$log"; touch "$stamp"
+  log=$(mktemp); echo "periodic report (no deploy${2:+: $2}); deployed $1" > "$log"; ./infra/report.sh "$log"; touch "$stamp"
 }
 
 # The coordinator's data volume: the board's keys (platform/coordinator/src/secrets.ts), its approval records
@@ -217,11 +218,16 @@ fi
 stack_env "$commit"
 # a deploy never cuts a live call. Recreating the voice container ends every call
 # on it, so while the voice line has a call on (platform/voice/server.py keeps a file per live call in /data/live), the
-# deploy waits: this runs again a minute later.
-# A file over 3 hours old (a call's longest) doesn't count, so a line that hung can't hold deploys back for good.
+# deploy waits: this runs again a minute later, and the status report goes on meanwhile (report_between).
+# The line touches a live call's file every 30 s while its audio still comes and the call is in use, and ends a call
+# whose line went quiet (platform/voice/server.py watch_live): a file untouched for 5 minutes is a hung line's or one
+# of a call left with nothing on it, and doesn't count.
 # (never while going back to the last good deploy: HQ is down then, and every call with it)
-on_call() { [ -z "${rolling_back:-}" ] && [ -n "$($compose exec -T voice find /data/live -type f -mmin -180 2>/dev/null)" ]; }
-if on_call; then echo "deploy of $commit waits: a call is live on the voice line"; exit 0; fi
+on_call() { [ -z "${rolling_back:-}" ] && [ -n "$($compose exec -T voice find /data/live -type f -mmin -5 2>/dev/null)" ]; }
+if on_call; then
+  waits="the deploy of $commit waits: a call is live on the voice line"
+  echo "$waits"; report_between "$last" "$waits"; exit 0
+fi
 # The search model (platform/coordinator/Dockerfile): a build that couldn't fetch it goes on without it, and the layer
 # cache would keep that for good (MEMORY_MODEL_TRY is part of its key). So while the running coordinator has no model,
 # each deploy stores a new value, which fetches it again. Once it has one the value stays put, so the layer that

@@ -1,60 +1,59 @@
-// The call screen's Add a guest: someone in the room with the board joins this call's page from a device of their own,
-// with their own pen, muted (the coordinator's callguests.ts). The board gives their name and email address, and the
-// language their door speaks; the card then shows a QR code and its link. Their door says first that the agent is an AI
-// and the call is written down, they sign in with a code emailed to them, and the call's page opens. Good until the
-// call ends.
+// The call screen's Join from an iPad: whoever is in the room with the board joins this call's page from a device of
+// their own, with their own pen, muted (the coordinator's callguests.ts). The card shows at once the call's one QR code
+// and its link, the same for every device and every scan, in the call's language; their join page says first that the
+// agent is an AI and the call is written down, asks their name (remembered on the device), and the call's page opens.
+// Good until the call ends. (the QR code in place of a guest's name and email)
 import { act } from './data.js';
-import { esc } from '../util.js';
 import { qrCode, qrPath } from '/shared/qr/qr.js';
 
-const LANGS = { nl: 'Nederlands', en: 'English', de: 'Deutsch' };
+let joining = null; // (the call whose joins it hears, guestKey.)
 
 // The key waits for the call to pick up (call.js asks again then), and goes with its end
 export function guestKey(c) {
+  joining = c; // (whose joins it hears)
   const key = c.layer?.querySelector('#call-guest');
   if (key) key.disabled = !c.call || !!c.over;
 }
 
-// The key shows the card, and again hides it
-export function addGuest(c) {
+// The line hears of each guest added, so the agent takes its part in a shared session from then on, before their
+// voice is told apart from the board's (the line's voices.py joined): at once, and again at each pick-up after a
+// reconnect (the line takes each name once).
+export function guestsToLine(c) {
+  if (c.ws?.readyState !== 1) return;
+  for (const name of c.guests ?? []) c.ws.send(JSON.stringify({ type: 'guest', name }));
+}
+
+// Each join from the QR code, on the iPad: the coordinator's event (events.js), the name on the call's guests and to
+// the line.
+document.addEventListener('call:guest', e => {
+  const c = joining;
+  if (!c || c.over || e.detail?.call !== c.call) return;
+  if (!(c.guests ??= []).includes(e.detail.name)) c.guests.push(e.detail.name);
+  guestsToLine(c);
+});
+
+// The key shows the card with the call's QR code, and again hides it
+export async function addGuest(c) {
   const card = c.layer?.querySelector('#call-guest-card');
   if (!card) return;
   if (!card.hidden) return void (card.hidden = true);
   card.hidden = false;
-  const lang = c.dial?.lang ?? 'en'; // (the call's own, as a start)
-  card.innerHTML = `<b>Add a guest</b>
-    <form class="guest-form">
-      <label>Name <input name="name" autocomplete="off" required maxlength="60"></label>
-      <label>Email <input name="email" type="email" autocomplete="off" required></label>
-      <label>Their language <select name="lang">${Object.entries(LANGS)
-        .map(([k, v]) => `<option value="${k}"${k === lang ? ' selected' : ''}>${v}</option>`)
-        .join('')}</select></label>
-      <p>They join this call’s page with their own pen, muted. They get a code by email to sign in.</p>
-      <div class="guest-keys"><button type="submit">Make their link</button><button type="button" class="guest-close">Close</button></div>
-    </form>`;
-  card.querySelector('.guest-close').onclick = () => (card.hidden = true);
-  const form = card.querySelector('form');
-  form.onsubmit = async e => {
-    e.preventDefault();
-    const asked = Object.fromEntries(new FormData(form));
-    form.querySelector('[type=submit]').disabled = true;
-    try {
-      const { link, name } = await act('/api/calls/guest', { call: c.call, ...asked });
-      shown(card, link, name);
-    } catch (err) {
-      form.querySelector('[type=submit]').disabled = false;
-      form.querySelector('p').textContent = err.message;
-    }
-  };
-  card.querySelector('input').focus();
+  card.innerHTML = '<b>Join from an iPad</b><p>Making the code…</p>';
+  try {
+    // (the call's own language: its join page speaks it)
+    const { link } = await act('/api/calls/guest', { call: c.call, lang: c.dial?.lang ?? 'en' });
+    if (!card.hidden) shown(card, link);
+  } catch (err) {
+    card.querySelector('p').textContent = err.message;
+  }
 }
 
-function shown(card, link, name) {
+function shown(card, link) {
   const qr = qrCode(link, { level: 'M' }),
     n = qr.size + 8;
-  card.innerHTML = `<b>${esc(name)}’s link</b>
+  card.innerHTML = `<b>Join from an iPad</b>
     <svg class="guest-qr" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" role="img" aria-label="Scan to join this call’s page"><rect width="${n}" height="${n}" fill="#fff"/><path d="${qrPath(qr)}"/></svg>
-    <p>${esc(name)} scans this on their own device, or opens the link. A code goes to their email to sign in, then this call’s page opens. Muted: the sound stays here. Good until the call ends.</p>
+    <p>Scan on each iPad, or open the link: it opens this call’s page with its own pen, muted. Anyone who scans it can draw on this page only, until the call ends.</p>
     <a class="guest-link" target="_blank" rel="noopener noreferrer"></a>
     <button type="button" class="guest-close">Close</button>`;
   const a = card.querySelector('.guest-link');

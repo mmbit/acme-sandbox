@@ -314,6 +314,7 @@ export const shown = p =>
 // above the pull tab where the screen has the room (a phone on its side puts its pull tab at the foot), each sticking
 // out less than it, each icon tinted from its own ribbon (README, Bookmarks).
 // On a page that is the whole screen, folded at the screen's left edge, most of each past it and its icon showing.
+// Each a ribbon a finger's 44 px with its gap (the Ink README, Bookmarks.).
 // Beside HQ's page: beside().
 async function placed(p, name) {
   const t = await tabs(p),
@@ -347,7 +348,7 @@ async function placed(p, name) {
         `${name}: ${a.chapter}'s icon showing (${a.icon.x}–${a.icon.right})`,
       );
     } else beside(name, a, { edge, paper, keys });
-    assert.ok(a.box.height <= 30, `${name}: ${a.chapter} a thin ribbon (${a.box.height} px)`);
+    assert.ok(a.box.height <= 40, `${name}: ${a.chapter} a ribbon (${a.box.height} px)`);
     const reach = isWhole ? a.box.right : edge.x - a.box.x;
     assert.ok(
       reach < lip.right - lip.x,

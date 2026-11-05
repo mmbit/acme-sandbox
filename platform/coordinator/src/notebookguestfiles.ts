@@ -59,7 +59,8 @@ const imports = JSON.stringify({
 
 // The guest's room around their book: the company's colours, fonts and logo inline, the rest in bookguestroom.css.
 // The book's own colours from brand.yaml: its accent (colours.notebook) and what's picked or done (colours.chosen).
-export function servePage(res: ServerResponse, name: string, lang: guests.Lang) {
+// (passkey: the prompt to save one; never for a visitor, who has no guest's sign-in.)
+export function servePage(res: ServerResponse, name: string, lang: guests.Lang, passkey = true) {
   const colours = brand().colours ?? {};
   const bookColours = ['notebook', 'chosen']
     .filter(key => colours[key])
@@ -79,6 +80,6 @@ export function servePage(res: ServerResponse, name: string, lang: guests.Lang) 
     'content-security-policy': `default-src 'none'; script-src 'self' 'sha256-${createHash('sha256').update(imports).digest('base64')}'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src 'self'${ZONE ? ` https://*${PREVIEW}` : ''}`,
   });
   res.end(
-    `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex"><title>${words[lang].title}</title><style>${css}</style><link rel="stylesheet" href="shell/ink/bookguestroom.css"></head><body class="notebook-guest-room"><header class="guest-logo">${guests.logoHtml()}</header><main><h1>${words[lang].title}</h1><p data-notebook-status role="status"></p>${guests.passkeyButton(name, lang)}</main><footer>${words[lang].footer}</footer><div id="toasts" aria-live="polite"></div><script type="importmap">${imports}</script><script type="module" src="shell/ink/bookguest.js"></script><script src="/vendor/webauthn.js" defer></script><script src="/guest/guestkeys.js" defer></script></body></html>`,
+    `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex"><title>${words[lang].title}</title><style>${css}</style><link rel="stylesheet" href="shell/ink/bookguestroom.css"></head><body class="notebook-guest-room"><header class="guest-logo">${guests.logoHtml()}</header><main><h1>${words[lang].title}</h1><p data-notebook-status role="status"></p>${passkey ? guests.passkeyButton(name, lang) : ''}</main><footer>${words[lang].footer}</footer><div id="toasts" aria-live="polite"></div><script type="importmap">${imports}</script><script type="module" src="shell/ink/bookguest.js"></script><script src="/vendor/webauthn.js" defer></script><script src="/guest/guestkeys.js" defer></script></body></html>`,
   );
 }

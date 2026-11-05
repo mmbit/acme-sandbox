@@ -184,6 +184,7 @@ each tap, key, scroll and drag shows in the video, so an ad's sound cues can lan
 node shared/demo/ad.mjs scene.html [--out ad.mp4] [--duration s] [--audio sound.wav] [--audio-start s]
   [--bpm 120 --offset 0] [--fps 30] [--label "Made with AI"] [--label-pos top-left]
   [--label-inset 280,72] [--workers 3] [--square <css background> | --no-square] [--only vertical|square] [--no-social]
+  [--lang nl] [--prices a,b]
 ```
 
 **Every ad comes out twice**: the 9:16 film for social, then a 1080x1080
@@ -201,6 +202,8 @@ label (with `"label": ""`) marks it `data-ai-label`: the square hides it and dra
   a `url()` is relative to the scene). `"square": false` (`--no-square`) makes the vertical one only.
 - **Each file's `.render.json` renders only itself** (`--only vertical` or `--only square`), so a square cut of an
   older ad is one command: `node shared/demo/ad.mjs scene.html --only square`.
+- **One language of several** (`--lang nl`): the scene reads `demo.data.lang`, and the films are `<out>.nl.mp4` and
+  `<out>-square.nl.mp4`.
 
 - The scene is a 1080x1920 page that defines `window.frame(t)`, which draws time t in seconds and may
   be async. Frames are rendered out of order by up to four pages, each drawing the same share every run, so the drawing must depend only

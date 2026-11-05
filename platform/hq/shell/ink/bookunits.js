@@ -130,7 +130,8 @@ export function layUnits(view, width) {
       .map(w => [Number(w.dataset.g), w.offsetHeight + 8]),
   );
   const units = unitsOf(page).map(u => ({ ...u, below: underOf(view, u.id) })),
-    l = (isCanvas(page.chapter) ? canvasLaid : masonryLaid)(page, units, width),
+    // (isCanvas takes the page)
+    l = (isCanvas(page) ? canvasLaid : masonryLaid)(page, units, width),
     origins = new Map(l.places.map(p => [p.id, { x: p.x, y: p.y }]));
   let moved = page.scale !== l.scale;
   for (const [kind, list] of Object.entries(LISTS))
@@ -299,9 +300,16 @@ export const drawing = (page, id) => id < 0 || page.groups?.get(id)?.kind === 'd
 export const fixed = (page, id) => id !== undefined && !!page.groups?.has(id) && !drawing(page, id);
 // What a unit covers on the page (its px): its place and whatever is drawn on it, wherever that reaches
 export function reachOn(page, p) {
-  let r = { x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
+  const r = { x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h },
+    on = drawnOn(page, p.id);
+  return on ? union(r, on) : r;
+}
+// What's drawn on a unit, wherever it is on the page (its px): the box round its ink, typed words and pictures; null for
+// none
+export function drawnOn(page, id) {
+  let r = null;
   for (const [kind, list] of Object.entries(LISTS))
-    for (const el of page[list] ?? []) if (el.g === p.id) r = union(r, boxOf(kind, el));
+    for (const el of page[list] ?? []) if (el.g === id) r = r ? union(r, boxOf(kind, el)) : boxOf(kind, el);
   return r;
 }
 // A new unit for what's drawn in a box below every scrap: the page's last, today's, kept in the column it's drawn in, at
@@ -311,7 +319,8 @@ export function reachOn(page, p) {
 export function newUnit(page, box, lifted = false) {
   const id = (page.temp = (page.temp ?? 0) - 1),
     here = { x: box.x0 - PAD, y: box.y0 - PAD };
-  if (isCanvas(page.chapter)) {
+  // (isCanvas takes the page)
+  if (isCanvas(page)) {
     // (on a canvas, where it's drawn, kept there by the store)
     (page.pending ??= []).push({ id, place: here });
     page.origins.set(id, here);

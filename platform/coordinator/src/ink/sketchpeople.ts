@@ -43,6 +43,15 @@ export function grantOf(name: string) {
         .get(name, email) as Grant | undefined)
     : undefined;
 }
+// A grant for someone at no address (callguests.ts: whoever scans a call's QR code), new each time: key stands where an
+// address would, never one, so grantOf finds it for no invited person of that name, the board's rail doesn't list it,
+// and their marks still name them (guestOf).
+export function giveAt(name: string, key: string) {
+  const id = db
+    .prepare('insert into sketch_guests (guest, email, granted) values (?, ?, ?)')
+    .run(name, key, new Date().toISOString()).lastInsertRowid;
+  return db.prepare('select * from sketch_guests where id = ?').get(Number(id)) as Grant;
+}
 export const hasBook = (name: string) => !!grantOf(name);
 export const whoOf = (g: Grant) => `guest:${g.id}`;
 // (and a book with a page in it holds them at that address: guests.ts gives the name to someone else only once nothing

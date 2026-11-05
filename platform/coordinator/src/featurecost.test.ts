@@ -385,3 +385,61 @@ test('one cost book answers each thread and the project as their own reads do', 
   const board = (await h.board('/api/projects')).body;
   assert.deepEqual(costs.project('game').used, board.projects.find((project: any) => project.id === 'game').cost.used);
 });
+
+// The book is kept between calls (costjobs.ts, costowners.ts): after every kind of change it reads, each thread's and
+// project's report is the one a book rebuilt from every job gives, to the last bit
+test('the kept book answers as a rebuilt one after every change it reads', async () => {
+  const { featureCosts } = await import('./featurecost.ts');
+  const { costJobs } = await import('./costjobs.ts');
+  const { db } = await import('./db.ts');
+  const { recordUsage } = await import('./usage.ts');
+  const ids = (sql: string) => (db.prepare(sql).all() as { id: string }[]).map(row => row.id);
+  let rebuilds = 0;
+  const same = async (change: string) => {
+    const kept = featureCosts(),
+      keptJobs = costJobs();
+    rebuilds++;
+    const fresh = (await import(`./featurecost.ts?rebuilt=${rebuilds}`)).featureCosts() as typeof kept;
+    assert.deepEqual(keptJobs, (await import(`./costjobs.ts?rebuilt=${rebuilds}`)).costJobs(), change);
+    for (const id of ids('select id from threads'))
+      assert.deepEqual(kept.report(id), fresh.report(id), `${change}: ${id}`);
+    for (const id of ids('select id from projects'))
+      assert.deepEqual(kept.project(id), fresh.project(id), `${change}: ${id}`);
+  };
+  const first = thread('kept-first'),
+    second = thread('kept-second');
+  const work = past({ thread: first }, 100);
+  h.storedPr(700, work, 'open');
+  const review = past({ kind: 'review', pr: 700, round: 1 }, 30);
+  await same('first read');
+  recordUsage({ job: review, engine: 'claude', usage: { models: { model: { input: 7 } } } });
+  await same('a usage report');
+  db.prepare("update jobs set status = 'failed' where id = ?").run(review);
+  await same("a job's state");
+  const joined = past({ thread: second, branch: `job/${work}` }, 50);
+  await same('a second thread on the branch');
+  db.prepare('update jobs set thread = ? where id = ?').run(first, joined);
+  await same('a job moved to another thread');
+  const fix = past({ fixFor: 700, stage: 'fix', round: 1 }, 20);
+  h.storedPr(701, fix, 'open');
+  past({ kind: 'review', pr: 701, round: 1 }, 10);
+  await same("a fix's branch and its review");
+  db.prepare('update prs set branch = ? where number = 701').run(`job/${joined}`);
+  await same("a pull request's branch");
+  const preview = past({ previewFor: [700] }, 5);
+  await same('a preview held for a merge');
+  db.prepare('insert into card_merges (job, pr) values (?, 701)').run(preview);
+  await same('a merge held for one more pull request');
+  db.prepare('insert into seat_cost_jobs values (?, ?, ?, ?, ?)').run('claude-a', T + 3 * MINUTE, work, 0.013, 60_000);
+  await same('a seat meter');
+  db.prepare("insert into runs (job, seat, started, ended, ended_as) values (?, 'claude-a', ?, null, null)").run(
+    work,
+    new Date(T + 10 * MINUTE).toISOString(),
+  );
+  await same('a run under way');
+  assert.equal((await change('feature', { id: second, feature: first, round: 'kept', feedback: true })).status, 200);
+  await same('a feedback round');
+  db.prepare('delete from card_merges where job = ?').run(preview);
+  db.prepare('delete from jobs where id = ?').run(review);
+  await same('a merge and a job gone');
+});

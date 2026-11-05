@@ -14,8 +14,9 @@
 //     board's screen (at: a box in fractions of the screen), drawn exactly there in its colour, over the page and never
 //     kept (calldrive.js aimed: in the preview there when that's where it aimed), and the line hears whether it could
 //     ({ type: 'inked' }). Nothing here picks what it rings: the agent did, from the picture.
-//   - The Pencil down and lifted while the board's screen is shown goes to the line ({ type: 'pen', down }): it answers
-//     once the pen rests, so the turn has what was drawn while the board spoke (server.py PEN_REST_SECONDS).
+//   - The Pencil down and lifted on the call goes to the line ({ type: 'pen', down }), its screen shown or not (the
+//     call's notes page, the Shelf): it answers once the pen rests, so the turn has what was drawn while the board
+//     spoke, and a drawing reaches the agent once it's done, not at each stroke (server.py PEN_REST_SECONDS).
 //   - Hung up, a call the board drew on leaves its page in the board's day: kept, or thrown away with one tap (one with
 //     a notes page, below, or a page a notebook has since, needs neither: it goes in by itself).
 //   - A walk-through (a card's Walk me through it) has the call's notes page as any call does, one page a call.
@@ -38,8 +39,12 @@ import { cardOf } from '../callcards.js'; // (the call engine's)
 import { inkOf } from './agentink.js'; // (an agent's ink, shared with the store's typed answers)
 import { initial, shapeOf } from './booklayout.js';
 import { bookLayout, openAt } from './book.js';
+import { RESTING } from './bookwrite.js';
 
 const $ = s => document.querySelector(s);
+// What the Pencil taps rather than draws on: the page's controls, and the call's own bubble. A field the book inks over
+// (a scrap's words kept from Scribble or not being typed in: bookwrite.js drawable) is paper.
+const CONTROLS = `button, input, textarea:not([data-pen], ${RESTING}), select, a, .callbubble`;
 const event = (name, detail = null) => document.dispatchEvent(new CustomEvent(name, { detail }));
 // How long a hang-up waits for the mark still settling to go into the book
 const FILED_WAIT_MS = 10_000;
@@ -63,15 +68,15 @@ export function startDrawing(c) {
     resend(c);
   };
   const onPen = e => {
-    if (e.pointerType !== 'pen' || c.over || e.target.closest?.('button, input, textarea, select, a, .callbubble'))
-      return;
+    if (e.pointerType !== 'pen' || c.over || e.target.closest?.(CONTROLS)) return;
     minimise(c); // (the same bubble as its own key's.)
   };
   // (a lift goes whenever its touch went, shown or not since)
   const penMoved = e => {
     const down = e.type === 'pointerdown';
     if (e.pointerType !== 'pen' || !e.isPrimary || c.ws?.readyState !== 1 || down === !!c.penDown) return;
-    if (down && (c.over || !shown(c) || e.target.closest?.('.callbubble'))) return;
+    // (a tap on a control is no drawing: the line would wait for it to rest.)
+    if (down && (c.over || e.target.closest?.(CONTROLS))) return;
     c.penDown = down;
     c.ws.send(JSON.stringify({ type: 'pen', down }));
   };
@@ -149,18 +154,48 @@ function relayMarks(c) {
 // it if it's open. HQ asks again while the call is on if the store wasn't reached: an ask the network dropped, or the
 // proxy's 503 while the coordinator is away. The board hears of any other failure on a card.
 async function notesPage(c) {
-  const ask = () => post('/api/notebooks/call', { call: c.call, ...(c.brought ? { page: c.brought } : {}) });
+  // (a design session's is a sketch page)
+  const design = !!c.design,
+    ask = () =>
+      post('/api/notebooks/call', {
+        call: c.call,
+        ...(c.brought ? { page: c.brought } : {}),
+        ...(design && { design }),
+      });
   try {
     const r = await reached(ask, c);
     if (!r.ok) throw new Error(`the store answered ${r.status}`);
     const { page, notebook } = await r.json();
-    c.notesPage = { id: page.id, notebook };
+    c.notesPage = { id: page.id, notebook, sketch: !!page.sketch };
     if (c.over) return;
     event('book:paged', { page: page.id });
+    if (c.design) designed(c); // (and a design session the line started while it was asked for)
   } catch (err) {
     console.error('[hq] the call’s notes page wasn’t opened:', err);
     if (!c.over) notesCard(c);
   }
+}
+// A design session (call.js callAgent's design, or the line's 'design' as the agent switches to one): the call's page a
+// sketch page, a canvas to draw anywhere on (sketchcanvas.js), and the book opened at it at once whatever the screen's
+// shape, so the board never opens it by hand. Before the page is there, notesPage asks for it as one and comes back
+// here.
+async function designed(c) {
+  c.design = true;
+  const at = c.notesPage;
+  if (c.over || !at || c.sketchOpened) return;
+  if (!at.sketch) {
+    try {
+      const r = await reached(() => post('/api/notebooks/call', { call: c.call, design: true }), c);
+      if (!r.ok) throw new Error(`the store answered ${r.status}`);
+      at.sketch = !!(await r.json()).page.sketch;
+    } catch (err) {
+      console.error('[hq] the call’s page wasn’t made a sketch page:', err);
+    }
+    if (!at.sketch || c.over || c.sketchOpened) return;
+    event('book:notebook'); // (its pages read again: the page shown as notes so far is laid as a canvas)
+  }
+  c.sketchOpened = c.notesOpened = true;
+  openAt({ page: at.id, notebook: at.notebook });
 }
 // An ask's answer once the store is reached. It asks again a second later, then a second more each time, at most every
 // 5 s, until the call is over. Then it hands back the last answer, or the network's error.
@@ -221,6 +256,7 @@ export const FROM_LINE = {
     if (c.marks?.get(ev.id)?.updated === ev.updated) c.marks.delete(ev.id);
   },
   heard: (c, ev) => event('call:heard', { text: ev.text }),
+  design: c => designed(c), // (the agent switched the call to a design session)
   ask: (c, ev) => askCard(c, ev),
   async ink(c, ev) {
     const { at, words = '' } = ev;

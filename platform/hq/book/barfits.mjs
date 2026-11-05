@@ -36,20 +36,27 @@ function toolsHeld({ tools, screen }) {
     );
 }
 
-// The bar: on the paper, Undo and Redo at its left, the page's arrows round where it is in its very middle, the
-// overview and the dots at its right, two keys at each end at every size
-function barHeld({ bar, where, paper, screen }) {
+// The bar: on the paper, the overview at its left, the page's arrows round where it is in its very middle, the dots at
+// its right; Undo and Redo their own pill left of it (above its left end where there's no room: a phone), clear of it
+function barHeld({ bar, pill, where, paper, screen }) {
   assert.ok(
     bar.left >= Math.max(paper.left, 0) - 1 && bar.right <= Math.min(paper.right, screen.width) + 1,
     `the bar on the paper (${JSON.stringify({ bar, paper })})`,
   );
-  assert.deepEqual(bar.start, ['Undo', 'Redo'], "Undo and Redo at the bar's left");
+  // (the bar as drawn: the Ink README, The book's frame.)
+  assert.deepEqual(pill.keys, ['Undo', 'Redo'], 'Undo and Redo a pill of their own');
+  assert.ok(
+    pill.right <= bar.left - 4 || pill.bottom <= bar.top - 4,
+    `Undo and Redo's pill clear of the bar: ${JSON.stringify({ pill, bar })}`,
+  );
+  assert.ok(pill.left >= -1, `Undo and Redo's pill on the screen: ${JSON.stringify(pill)}`);
+  assert.deepEqual(bar.start, [OVERVIEW], "the overview at the bar's left");
   assert.ok(
     bar.middle.length === 3 && bar.middle[0] === 'The page before' && bar.middle[2] === 'The page after',
     `the page's arrows round where it is in the bar's middle: ${bar.middle.join(', ')}`,
   );
   const off = middle(where.left, where.right) - middle(bar.left, bar.right);
   assert.ok(Math.abs(off) <= 1, `the page's count in the very middle of the bar: ${off} px off`);
-  assert.deepEqual(bar.end, [OVERVIEW, 'More'], "the overview and the dots at the bar's right");
+  assert.deepEqual(bar.end, ['More'], "the dots at the bar's right");
 }
 const middle = (a, b) => (a + b) / 2;

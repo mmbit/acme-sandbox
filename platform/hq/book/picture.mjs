@@ -27,9 +27,10 @@ export function pictureStories(c) {
   );
 }
 
-export async function recording(browser, c, viewport, { hasTouch = true } = {}) {
+// (notebooks: the store's seed.)
+export async function recording(browser, c, viewport, { hasTouch = true, notebooks = {} } = {}) {
   const context = await c.hqIn(browser, viewport, {
-    notebooks: {},
+    notebooks,
     hasTouch,
     deviceScaleFactor: 1,
   });

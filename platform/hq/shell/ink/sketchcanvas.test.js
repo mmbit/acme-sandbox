@@ -165,9 +165,15 @@ test('answers under notes of a staggered masonry, as the masonry laid notes of e
       hs.map((h, i) => ({ id: i + 1, h })),
       widthFor(3),
     ),
-    asked = [7, 10, 13, 16, 19],
+    // (four in the middle column, one in the left: as the masonry staggers them at its GAP.)
+    asked = [8, 10, 13, 17, 19],
     units = laid.map((p, i) => note(i + 1, p.x, p.y, hs[i], asked.includes(i) ? 60 : 0)),
     { places } = canvasOf(units, widthFor(3));
+  assert.deepEqual(
+    asked.map(i => laid[i].column),
+    [1, 1, 1, 1, 0],
+    'boxed in, but for one at the edge',
+  );
   assert.ok(asked.filter(i => places[i].hung.tie).length >= 3, 'boxed in on every side: most tied past their rows');
   allTheirOwn(
     places,

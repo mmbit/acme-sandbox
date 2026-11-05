@@ -262,6 +262,8 @@ function photos(st) {
       photo.dataset.url = s.url;
       photo.append(Object.assign(new Image(), { src: s.url, alt: '', draggable: false }));
     }
+    // (an agent's drawing: its lines straight on the post-it.)
+    photo.toggleAttribute('data-drawing', !!s.drawing);
     const at = photoOf(s),
       tape = tapeOf(s);
     Object.assign(photo.style, {

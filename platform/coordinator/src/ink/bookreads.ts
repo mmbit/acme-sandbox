@@ -88,8 +88,8 @@ export async function forVoice(b: any) {
       `No page ${number ? `#${number[1]}` : 'has those words in its label'}. ${some ? `The latest: ${some}.` : 'The book is empty.'}`,
     ] as Refused;
   }
-  const p = found.find(f => f.strokes || JSON.parse(f.scraps).length) ?? found[0];
-  if (!p.strokes && !JSON.parse(p.scraps).length) return [409, `Page ${name(p)} has nothing on it yet.`] as Refused;
+  const p = found.find(drawnOn) ?? found[0];
+  if (!drawnOn(p)) return [409, `Page ${name(p)} has nothing on it yet.`] as Refused;
   const file = await pictureOf(p);
   if (!file) return 404; // (deleted while it was drawn)
   const pictures = await piecesOf(readFileSync(`${DIR}/${file}`));
@@ -120,6 +120,12 @@ async function piecesOf(png: Buffer) {
     ),
   );
 }
+// Whether a page has anything on it: an old book's page its ink and scraps, a Notebook page its units (notebook_groups,
+// where its strokes and scraps columns stay empty: call #262's agent read the practice session's full page as empty).
+const drawnOn = (p: Page) =>
+  !!p.strokes ||
+  JSON.parse(p.scraps).length > 0 ||
+  !!db.prepare('select 1 from notebook_groups where page = ? and parent is null and deleted is null limit 1').get(p.id);
 const minute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 const listed = (who: string) =>
   db.prepare(`select ${COLUMNS} from book_pages where who = ? order by updated desc, id desc`).all(who) as Page[];

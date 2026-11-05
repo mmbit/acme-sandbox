@@ -34,16 +34,20 @@ export const openGoals = () =>
 export function lines(f: Forecast) {
   const goals = openGoals();
   if (!goals.length) return [];
-  const threads = outlooks.lines(f);
+  // (each goal's own open threads, their outlook and next task alone: hq projects' whole lines read the cost book and
+  // every open thread.)
+  const open = db.prepare("select id, name, goal from threads where project = ? and status = 'open' order by created");
   return goals.map(goal => {
     const sentence = sentenceOf(goal.id)?.text ?? 'no sentence yet (hq project say)';
-    const bets = threads.filter(t => t.project === goal.id).map(betLine);
+    const threads = open.all(goal.id) as Bet[];
+    const bets = threads.map(t => betLine({ ...t, ...outlooks.planned(t.id, f) }));
     const listed = bets.length ? bets : ['no open deliverable: a goal with no bet in motion'];
     return `${goal.name} (${goal.id}): ${sentence}${listed.map(b => `\n  - ${b}`).join('')}`;
   });
 }
 
-function betLine(t: ReturnType<typeof outlooks.lines>[number]) {
+type Bet = { id: string; name: string; goal: string };
+function betLine(t: Bet & ReturnType<typeof outlooks.planned>) {
   const o = t.outlook;
   const at = (ms: number | null) => (ms === null ? null : companyTime(ms));
   const deadline = o ? o.deadline : (findThread(t.id)?.deadline ?? null);

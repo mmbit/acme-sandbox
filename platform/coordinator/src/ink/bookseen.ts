@@ -1,22 +1,30 @@
 // What the book's judge (bookjudge.ts) reads of a note.
 import { readFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { db } from '../db.ts';
 import { ORIGIN } from '../config.ts';
 import { findAgent } from '../jobs.ts';
 import { DIR } from '../pagescraps.ts';
 import type { Target } from './bookjudge.ts';
 
-// What the judge reads of a target: whose, its words, when they were saved and how they came, its picture, its page,
-// and the answer it replies to
+// What the judge reads of a target: whose, its words, what a verdict on it holds for, when they were saved and how they
+// came, its picture, its page, and the answer it replies to
 export type Seen = {
   by: string;
   words: string;
+  drawn: string; // (a group's drawnOf, a note's or a box's words.)
   saved: string;
   said: string | null;
   picture: { type: string; data: Buffer } | null;
   where: string;
   answers: number | null; // (the answer it replies to: a book_slips row)
 };
+// A group's contents as one value: its ink, typed words, pictures and post-it words. A verdict holds for these, so
+// anything drawn since is read again
+export const drawnOf = (g: { ink: string; texts: string; pictures: string; words: string }) =>
+  createHash('sha1')
+    .update(JSON.stringify([g.ink, g.texts, g.pictures, g.words]))
+    .digest('base64url');
 type PageRow = { id: number; kind: string; owner: string | null; url: string | null; call: number | null };
 const pageOf = (id: number) =>
   db.prepare('select id, kind, owner, url, call from book_pages where id = ?').get(id) as PageRow | undefined;
@@ -58,7 +66,9 @@ async function groupSeen(id: number, picture: boolean): Promise<Seen | null> {
         answers: number | null;
         kind: string;
         by: string;
+        ink: string;
         texts: string;
+        pictures: string;
         anchor: string | null;
         words: string;
         said: string | null;
@@ -89,7 +99,8 @@ async function groupSeen(id: number, picture: boolean): Promise<Seen | null> {
         : g.kind === 'reply'
           ? 'under an answer on a page of its notebook'
           : 'drawn on a free page of its notebook';
-  return { by: g.by, words, saved: g.updated, said, picture: pic, where, answers: g.answers };
+  const drawn = drawnOf(g);
+  return { by: g.by, words, drawn, saved: g.updated, said, picture: pic, where, answers: g.answers };
 }
 function noteSnip(grp: number) {
   const n = db
@@ -123,7 +134,8 @@ async function noteSeen(id: number, picture: boolean): Promise<Seen | null> {
   const url = (JSON.parse(n.anchor) as { url?: string }).url ?? p.url;
   const where =
     p.kind === 'call' ? callWhere(p) : p.kind === 'free' || !url ? 'a free page of its book' : pageWhere(url, p.owner);
-  return { by: n.by, words: n.words, saved: n.updated, said: n.said, picture: pic, where, answers: n.answers };
+  const drawn = n.words;
+  return { by: n.by, words: n.words, drawn, saved: n.updated, said: n.said, picture: pic, where, answers: n.answers };
 }
 function boxSeen(page: number, text: string): Seen | null {
   const p = db.prepare('select id, kind, owner, url, call, who, updated from book_pages where id = ?').get(page) as
@@ -133,6 +145,7 @@ function boxSeen(page: number, text: string): Seen | null {
   return {
     by: p.who,
     words: text,
+    drawn: text,
     saved: p.updated,
     said: 'typed',
     picture: null,

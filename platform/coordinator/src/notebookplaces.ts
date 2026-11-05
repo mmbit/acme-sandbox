@@ -11,8 +11,8 @@ import { unitOf } from '../../hq/shell/ink/scrapunit.js';
 // A unit's place on a canvas: its top-left in the page's px
 export type Place = { x: number; y: number };
 
-// Whether a page is a canvas: one of the board's sketches
-export const onCanvas = (p: NotebookPage) => isCanvas(pageChapter(p));
+// Whether a page is a canvas: one of the board's sketches, or a design session's call page
+export const onCanvas = (p: NotebookPage) => isCanvas({ chapter: pageChapter(p), sketch: !!p.sketch });
 
 // POST /api/notebooks/groups/place { page, places: [{ id, x, y }] }: units of a sketch page placed where they have
 // none yet, as HQ laid them. A unit placed already keeps its place: the first screen's stands. → { groups }, the units

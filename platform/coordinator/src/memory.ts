@@ -22,6 +22,7 @@ import { DATA_DIR, REPO_DIR } from './config.ts';
 import * as jobs from './jobs.ts';
 import type { Reader } from './jobs.ts';
 import * as ledger from './ledger.ts';
+import { ceo } from './company.ts';
 import * as intercom from './intercom.ts';
 import * as meetingrecord from './meetingrecord.ts';
 import { jobsOfCode } from './jobcodes.ts';
@@ -601,7 +602,8 @@ export function call(id: unknown, reader: Reader) {
   if (c.own_only) jobs.handedKeys(reader.id);
   const base = { id: c.id, ts: c.ts, agent: c.agent, request: c.request, job: c.job };
   const by = c.heard_by && `job #${c.job}, ${who(c.heard_by)}'s`;
-  const none = c.reported ? '' : !c.job ? 'nobody has followed this call up yet'
+  const none = c.reported ? '' : c.live ? 'the call is still going on: these are its lines so far'
+    : !c.job ? 'nobody has followed this call up yet'
     : c.heard_kind === 'chat' ? `The CEO's intercom chat heard this call: what came of it is in that conversation, not a report`
     : c.heard_status !== 'done' ? `its follow-up (${by}) is ${['failed', 'stopped', 'cancelled'].includes(c.heard_status) ? c.heard_status : 'not done yet'}`
     : `its follow-up (${by}) ended without a report`;
@@ -610,7 +612,8 @@ export function call(id: unknown, reader: Reader) {
 
 // Whether a reader may read a call's lines (hq call, the call's pictures: pictures.ts): true, 404 (no such call, still
 // going on, or about a card for keys and another agent's), or a refusal that says why (marked as about a customer).
-// A job working on the call (ledger.ts mine) reads it whatever it's about.
+// A job working on the call (ledger.ts mine) reads it whatever it's about, and the CEO a call still going on, as far as
+// the voice line has kept it in HQ (call.ts kept.).
 export const callAccess = (id: number, reader: Reader) => canRead(callRow(id), reader);
 // A call every job reads (canRead for any reader): ended, not about a customer, not a card for keys's.
 export function readByAll(id: number) {
@@ -620,7 +623,7 @@ export function readByAll(id: number) {
 const callRow = (id: number) => db.prepare(`${CALLS} where id = ?`).get(id) as any;
 function canRead(c: any, reader: Reader): true | 404 | [403, string] {
   if (!c) return 404;
-  if (!working(c.id, reader) && (c.live || (c.own_only && c.agent !== reader.agent))) return 404;
+  if (!working(c.id, reader) && ((c.live && reader.agent !== ceo()) || (c.own_only && c.agent !== reader.agent))) return 404;
   if (c.customer && !readsCustomerCall(c.id, reader)) return [403, customerCallRefused(c, reader)];
   return true;
 }

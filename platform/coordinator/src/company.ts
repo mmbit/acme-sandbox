@@ -123,10 +123,11 @@ export function projects(): ProjectSettings {
   return { list, businesses: file.businesses ?? [], groups: file.groups ?? {}, covers: file.covers ?? {}, made: file.made ?? {},
     requireThread: file.requireThread === true };
 }
-// A project's cover where projects.yaml names one, and the style its business gives its covers.
-export const coverOf = (project: Project) => ({
-  cover: projects().covers[project.id],
-  style: projects().businesses.find(b => b.id === project.business)?.style,
+// A project's cover where projects.yaml names one, and the style its business gives its covers, from the caller's
+// projects()
+export const coverOf = (project: Project, settings: ProjectSettings) => ({
+  cover: settings.covers[project.id],
+  style: settings.businesses.find(b => b.id === project.business)?.style,
 });
 // The file's `projects:` entries the table hasn't got, put in it (once the file's text changes: readOnce)
 function liftProjects(file: any) {

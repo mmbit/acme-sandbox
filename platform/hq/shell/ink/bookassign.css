@@ -154,6 +154,11 @@
   translate: calc(-100% - 8px) calc(-100% - 8px);
   pointer-events: none;
 }
+/* the seen mark on its own, its top-left where bookunitcards.js puts it beside what was read. */
+#book .bk-groups > .bk-seen {
+  display: flex;
+  pointer-events: none;
+}
 .bk-tag {
   display: flex;
   align-items: center;
@@ -178,18 +183,17 @@
 }
 /* seen (a note that needs nothing back): the face of the agent who read it, as HQ's look draws them (else their
    initial), ringed and ticked in the chosen colour, as a chosen version is (bookversions.css); in a reply's line, after
-   its words. */
+   its words. Its face is the answers' (bookfaces.js, bookanswers.css), sized and ringed here. */
 .bk-tag[data-seen] {
   position: relative;
 }
-.bk-tag[data-seen] .bk-face {
+#book .bk-tag[data-seen] .bk-answer-face {
   width: 30px;
   height: 30px;
-  border-color: var(--bk-chosen);
-  background: var(--bk-chosen) center / cover no-repeat;
-}
-.bk-tag[data-seen] .bk-face[data-portrait] {
-  image-rendering: pixelated;
+  background-color: var(--bk-chosen);
+  box-shadow: inset 0 0 0 2px var(--bk-chosen);
+  color: var(--bk-ink);
+  font-size: 13px;
 }
 .bk-tag[data-seen] .bk-tick {
   position: absolute;

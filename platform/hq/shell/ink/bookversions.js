@@ -20,6 +20,8 @@ import { inkOf } from './agentink.js';
 import { DOTS, inkBox, pathsOf } from './bookanswerart.js';
 import { frameUnder } from './bookversionframes.js';
 import { LETTERS, versionsOf } from './bookversionsof.js';
+import { prototypeLink } from '../previews.js';
+import { local } from '../data.js';
 
 export function versionsEl(g, parts, was = null) {
   const read = versionsOf(g);
@@ -35,7 +37,7 @@ export function versionsEl(g, parts, was = null) {
     ...versions.map(({ v, letter, fate }) => versionHtml(v, letter, fate)),
     ...Array.from({ length: coming }, (_, i) => comingHtml(LETTERS[versions.length + i])),
   ];
-  el.innerHTML = `<header class="bk-versions-head">${parts.faceHtml(who)}<b>${esc(who.name)}</b><span>· on staging</span></header>${
+  el.innerHTML = `<header class="bk-versions-head">${parts.faceHtml(who)}<b>${esc(who.name)}</b><span>· ${prototypes(versions) ? 'prototype' : 'on staging'}</span></header>${
     read.ended
       ? `<p class="bk-versions-ended" role="status">${esc(read.ended)}</p>`
       : `<div class="bk-versions-frames">${frames.join('')}${inkHtml(versions.flatMap(({ replies }) => replies))}</div>`
@@ -48,6 +50,9 @@ export function versionsEl(g, parts, was = null) {
     for (const type of ['pointerdown', 'touchstart']) link.addEventListener(type, e => e.stopPropagation());
   return el;
 }
+
+// A call's prototype's versions (the coordinator's callprototypes.ts), on its call's host.
+const prototypes = versions => versions.some(({ v }) => prototypeLink(v.link, location.hostname, local));
 
 // ---- a frame
 

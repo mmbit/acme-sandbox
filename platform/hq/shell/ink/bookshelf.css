@@ -97,10 +97,11 @@
   justify-content: center;
   width: 44px;
 }
+/* (24 px: a pixel look's 8-pixel icons at 3 px a pixel, whole pixels and crisp.) */
 #book .bk-far-up svg,
 #book .bk-far-more svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 @media (hover: hover) {
   #book :is(.bk-far-up, .bk-far-more):hover {

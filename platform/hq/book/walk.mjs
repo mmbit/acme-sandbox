@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import { fulfilPart } from '../../../shared/review/parts.mjs';
 import { heard, playLine } from './call.mjs';
+import { until } from './kit.mjs';
 
 const CARD = 77;
 
@@ -155,13 +156,14 @@ async function pointed(s, page) {
 
 // A second walk-through, written on: its page stays, going in by itself (no card that keeps or throws it away)
 async function keptWhenWritten(s) {
+  const from = s.posts.length;
   const page = await ringFromCard(s);
   const walkPage = s.pages.findLast(p => p.kind === 'call');
   await page.click('#call-min');
   await page.waitForSelector('#call-layer', { state: 'hidden', timeout: 3000 });
   await s.pen(s.ring(330, 440, 110, 34)); // (round the card's title)
   // (the note goes in once the Pencil has stayed up, its snip taken: slow on a loaded worker)
-  for (let i = 0; i < 60 && !s.posts.some(p => p.path === '/api/book/note'); i++) await page.waitForTimeout(250);
+  await until(() => s.posts.slice(from).some(p => p.path === '/api/book/note'), 'the note posted', 15_000);
   const sent = await heard(s, 'note', e => e.id > 0);
   s.line.send({ type: 'note', id: sent.id, state: 'received' });
   await page.click('.callbubble .cb-hangup');
@@ -199,6 +201,8 @@ const PREVIEW_PAGE = `<!doctype html><meta name="viewport" content="width=device
 <script src="/__review/review.js"></script>`;
 
 async function previewWalked(s) {
+  // (from here on: every call here is call 9, whose page an earlier story's call wrote on too)
+  const from = s.posts.length;
   const { page, frame, walkPage } = await previewOpened(s);
   await pointedInPreview(s, page, frame);
   await ringedInPreview(s, page, frame);
@@ -207,7 +211,7 @@ async function previewWalked(s) {
   await frame.waitForFunction(() => !document.querySelector('.hq-ring, .hq-pointer'), null, { timeout: 5000 });
   await page.waitForTimeout(1500);
   assert.equal(
-    s.posts.filter(p => p.path === '/api/book/note' && p.body.page === walkPage.id).length,
+    s.posts.slice(from).filter(p => p.path === '/api/book/note' && p.body.page === walkPage.id).length,
     0,
     "a preview's rings write nothing on the walk-through's page",
   );
@@ -224,12 +228,17 @@ async function previewOpened(s) {
     return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
   });
   const page = await ringFromCard(s);
+  // (what HQ last told review mode in the preview's frame: on a call, or not)
+  await page.addInitScript(() => addEventListener('review:call', e => (window.__onCall = e.detail)));
   const walkPage = s.pages.findLast(p => p.kind === 'call');
   s.line.send({ type: 'open', id: 4, what: 'the basket', url: `${PREVIEW}/basket` });
   await page.locator('#call-cards [data-card="open"]').getByRole('button', { name: 'Open' }).click();
   assert.equal((await heard(s, 'opened', e => e.id === 4)).answer, 'open');
-  await page.waitForSelector('#viewer .bar .pin:not([hidden])', { timeout: 15_000 }); // (review mode said hello)
-  return { page, walkPage, frame: page.frame({ url: /hello\.preview\.test/ }) };
+  // review mode said hello and HQ answered it's a call: the board's pen there is the call's, so the viewer's bar has no pin
+  const frame = await until(() => page.frame({ url: /hello\.preview\.test/ }), "the preview's frame", 15_000);
+  await frame.waitForFunction(() => window.__onCall === true, null, { timeout: 15_000 });
+  assert.equal(await page.locator('#viewer .bar .pin').isHidden(), true, "no pin in the viewer's bar on a call");
+  return { page, walkPage, frame };
 }
 
 // Its pointer, where it aimed in the preview, and nothing on HQ's own page

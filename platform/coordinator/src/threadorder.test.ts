@@ -1018,8 +1018,6 @@ test("a task drawn after a failed one is its owner's call: a redo queued without
   assert.equal(projects.findThread(t)!.status, 'open', 'the failed task still keeps the deliverable unfinished');
 });
 
-// #23814 failed at 10:15 on 4 Nov with its next step #23835 drawn; hq/the-card-reader, drawn needing that deliverable,
-// then hq/pushes-ride-out needing the card reader, had no ETA and never started (job #23890)
 test('a deliverable whose next task a failed task holds holds none of the deliverables that need it', async () => {
   const engine = thread('stalled'),
     art = thread('beside');

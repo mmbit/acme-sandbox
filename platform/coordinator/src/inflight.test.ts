@@ -209,8 +209,6 @@ test('further waits (hq waits) hold a job until each is done and its latest pull
   assert.match((await open(lark, after)).line, new RegExp(`^${named(after)} lark, queued after #${deps[0]}, and until #\\d+ is done and merged: After one$`));
 });
 
-// #23851 waited --after #23848, a fix run that failed while #23852 fixed and merged its pull request: the claim had let
-// it go, but its line still said "queued after #23848" (job #23890)
 test("an --after that ended and let its job go isn't said in its line", async () => {
   reset();
   const fix = await ended('The fix run', 'failed');

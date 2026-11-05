@@ -19,7 +19,8 @@ const page = (id, pos, label, more = {}) => ({
   h: 1600,
   ...more,
 });
-const SEED = {
+// (exported: pagearrows.mjs locks some of its pages.)
+export const SEED = {
   notebooks: [
     { id: 1, kind: 'mine', name: 'My journal', archived: false, created: T0, updated: T0, asks: { open: 0, all: 0 } },
   ],

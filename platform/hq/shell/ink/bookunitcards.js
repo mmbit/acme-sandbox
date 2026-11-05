@@ -2,8 +2,9 @@
 // paper, its room to write and the handle at its foot to drag that room taller or shorter), what hangs under each moved
 // to its foot. The board's own drawings get no paper and no handle. (The title and the day of what's showing are the
 // view's, bookviewhead.js)
-import { bodyIn, drawing, heightOf, partsOf, wordsOf } from './bookunits.js';
-import { heightFor } from './scrapunit.js';
+import { bodyIn, drawing, drawnOn, heightOf, partsOf, reachOn, wordsOf } from './bookunits.js';
+import { meets, union } from './bookselectmath.js';
+import { UNIT_W, heightFor } from './scrapunit.js'; // (UNIT_W)
 import { isCanvas, isPush, pushedDown } from './sketchcanvas.js';
 import { ask } from './notebookdata.js';
 import { dayWords } from './bookhead.js';
@@ -11,6 +12,8 @@ import { esc } from '../../util.js';
 import { word } from './bookscope.js';
 import { hangUnder } from './bookunder.js';
 
+// (the room between the seen mark and what was read, page px.)
+const SEEN_GAP = 10;
 // Words the board reads (a heading, a date), marked so a minimised call covers as little of them as it can: by their own
 // box, not the page-wide line.
 const seen = words => `<span data-keep-in-sight>${esc(words)}</span>`;
@@ -58,7 +61,49 @@ export function drawCards(view) {
     // (whom it went to, at its corner: bookassignlist.js.)
     const tags = view.el.querySelector(`:scope > .bk-groups > .bk-tags[data-g="${p.id}"]`);
     if (tags) Object.assign(tags.style, { left: `${p.x + p.w}px`, top: `${p.y + p.h}px` });
+    // (who read it, beside what they read.)
+    const seen = view.el.querySelector(`:scope > .bk-groups > .bk-seen[data-g="${p.id}"]`);
+    if (seen) Object.assign(seen.style, seenAt(page, p, seen));
   }
+}
+// Where the seen mark goes (its left and top, page px): beside what its agent read, the group's own ink, words and
+// pictures wherever they are on the page, never its unit's corner (a drawing's unit is its slot in the masonry, its ink
+// kept where it was drawn, maybe a note or two away: a tick at the slot would read as another note's). Right of it at
+// its foot, else under it, left of it or over it: the first that stays on the page and covers no other unit's paper or
+// ink, nor what hangs under one; else in its own box's corner.
+function seenAt(page, p, mark) {
+  const r = readBox(page, p.id) ?? { x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h },
+    [w, h] = [mark.offsetWidth, mark.offsetHeight],
+    at = (x, y) => ({ x0: x, y0: y, x1: x + w, y1: y + h }),
+    sheet = { x0: page.x ?? 0, y0: page.y ?? 0, x1: (page.x ?? 0) + page.w, y1: (page.y ?? 0) + page.h },
+    others = page.places.flatMap(q => [
+      ...(q.id === p.id ? [] : [drawing(page, q.id) ? readBox(page, q.id) : reachOn(page, q)]),
+      ...(q.hung?.h ? [{ x0: q.hung.x, y0: q.hung.y, x1: q.hung.x + q.hung.w, y1: q.hung.y + q.hung.h }] : []),
+    ]),
+    clear = b =>
+      b.x0 >= sheet.x0 &&
+      b.y0 >= sheet.y0 &&
+      b.x1 <= sheet.x1 &&
+      b.y1 <= sheet.y1 &&
+      !others.some(o => o && meets(o, b)),
+    beside = [
+      at(r.x1 + SEEN_GAP, r.y1 - h),
+      at(r.x1 - w, r.y1 + SEEN_GAP),
+      at(r.x0 - SEEN_GAP - w, r.y1 - h),
+      at(r.x1 - w, r.y0 - SEEN_GAP - h),
+    ],
+    b = beside.find(clear) ?? at(Math.max(r.x0, r.x1 - w), Math.max(r.y0, r.y1 - h));
+  return { left: `${b.x0}px`, top: `${b.y0}px` };
+}
+// What's on a group wherever it is on the page (page px), its post-it words too; null for nothing
+function readBox(page, id) {
+  const r = drawnOn(page, id),
+    o = page.origins?.get(id),
+    words = wordsOf(page, id);
+  if (!o || !words) return r;
+  const top = o.y + bodyIn(page, id),
+    under = { x0: o.x, y0: top, x1: o.x + UNIT_W, y1: top + words };
+  return r ? union(r, under) : under;
 }
 // A handle at every unit's foot, each kept as the page is laid again (the one held keeps its pointer)
 function placeHandles(layer, places) {
@@ -109,7 +154,8 @@ function dragged(view, layer) {
       // (in the store's terms: the words drawn in its body aside)
       const h = heightFor(partsOf(page, id), Math.round(from + (m.clientY - y0) / scale)) - wordsOf(page, id);
       page.resizing = { id, h: Math.max(1, h) };
-      if (isCanvas(page.chapter) && at) {
+      // (isCanvas takes the page)
+      if (isCanvas(page) && at) {
         const by = Math.max(0, heightOf(page, id) - from);
         page.resizing.push = { top: at.y, from: at.y + from, x0: at.x, x1: at.x + at.w, by };
       }

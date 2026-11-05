@@ -1,8 +1,9 @@
 // book-check.mjs's stories of Ink 1.1's answers that ask for nothing but a tick (shell/ink/bookassignlist.js seenHtml,
 // shared/review/slip.js; the coordinator's ink/groupanswers.ts seenTick and ink/bookfix.ts), each on a Notebook of
 // its own played by HQ's one stand-in (answersplay.mjs), on an iPad mini by finger and a desktop by mouse:
-//   - Seen: a note that needs nothing back wears its agent's face with a small tick on it at its unit's corner, gone once
-//     an answer comes; a picture's answer says where its numbers came from in one small line under it.
+//   - Seen: a note that needs nothing back wears its agent's face with a small tick on it right beside what was read,
+//     its words or its ink, gone once an answer comes; a picture's answer says where its numbers came from in one small
+//     line under it. (beside what was read)
 //   - A fix: a box to tick by its line, or round its drawing; ticked, it's built once the page is sent (from the
 //     dots' Tear off and send, Submit), and its slip then says who's building it, its box ticked for good.
 import assert from 'node:assert/strict';
@@ -10,13 +11,24 @@ import { FEED_MS, notebookOn, underItsNote } from './answersplay.mjs';
 import { inStory } from './answers.mjs';
 import { tearOffMenu } from './tearing.mjs';
 import { say, until } from './kit.mjs';
+import { boxOf as inkBox } from '../shell/ink/notebookstack.js';
+import { UNIT_W } from '../shell/ink/scrapunit.js';
 
 const SOURCE = "From HQ's speed checker, last 7 days";
+// The board's red circle high in its unit, the rest of what was drawn under it rubbed out: the unit as tall as it was
+// (in its own px.)
+const RING = [
+  {
+    color: '#d0312d',
+    size: 4,
+    points: Array.from({ length: 26 }, (_, i) => [70 + 45 * Math.cos(i / 4), 70 + 45 * Math.sin(i / 4), 0.5, i * 16]),
+  },
+];
 
 // c: book-check's { hqIn, base, shot, MINI, DESKTOP, … }
 export function fixStories(c) {
   return {
-    'a seen tick on its agent’s face at a note’s corner, gone once answered; a picture’s source under it, on an iPad mini and a desktop':
+    'a seen tick on its agent’s face beside what was read, gone once answered; a picture’s source under it, on an iPad mini and a desktop':
       async browser => {
         await seen(browser, c, c.MINI, 'mini');
         await seen(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
@@ -49,32 +61,49 @@ const inView = (page, el, what) => {
   return until(seen, () => `${what} in view: ${why}`);
 };
 
+// A seen tick right beside what was read (its box in its unit's own px, from the unit's place on the screen): within a
+// few px of it and covering none of it, wherever it is in its unit (a circle drawn high in a tall one has its tick by
+// the circle, not at the unit's foot a post-it's height below).
+async function besideRead(page, g, tick, what) {
+  const unit = await boxOf(page.locator(`#book .bk-unit[data-unit="${g.id}"]`)),
+    s = unit.width / UNIT_W,
+    b = g.box,
+    [left, top] = [unit.left + b.x * s, unit.top + b.y * s],
+    face = await boxOf(tick.locator('.bk-answer-face')),
+    apart = Math.max(left - face.right, face.left - left - b.w * s, top - face.bottom, face.top - top - b.h * s),
+    at = JSON.stringify({ read: { left, top, ...b }, face });
+  // (typed words' height an estimate here and on the page: a px or two either way)
+  assert.ok(apart > -3, `${what}: covering none of it: ${at}`);
+  assert.ok(apart < 16 * s, `${what}: right beside it: ${at}`);
+}
+
 async function seen(browser, c, viewport, size, options = {}) {
   const nb = notebookOn(c),
     read = Object.assign(nb.typed(4700, 'nice, the shelf looks right now', 60, 60), { seen: nb.ceo }),
-    asked = nb.typed(4701, 'is the pen getting faster?', 60, 60);
-  nb.groups.push(read, asked);
+    asked = nb.typed(4701, 'is the pen getting faster?', 60, 60),
+    circle = { ...nb.typed(4702, '', 0, 0), texts: [], ink: RING, box: inkBox({ ink: RING }), h: 420, seen: nb.ceo };
+  nb.groups.push(read, asked, circle);
   nb.seed.slips.push({
     id: 4710,
     ...nb.answer(asked, 'text', 'Yes: down to 17 ms.', { picture: '/mock/book-snip-2.svg', source: SOURCE }),
   });
   await inStory(browser, c, { viewport, nb, options }, async (page, play) => {
-    const tick = page.locator(`#book .bk-tags[data-g="${read.id}"] .bk-tag[data-seen]`);
+    // (wherever the page puts the group's mark)
+    const tickOf = g => page.locator(`#book .bk-groups > [data-g="${g.id}"] .bk-tag[data-seen]`),
+      tick = tickOf(read);
     await tick.waitFor({ timeout: FEED_MS });
     await tick.scrollIntoViewIfNeeded();
     // (the agent's own face as HQ's look draws them, no letter; a tick drawn as the Notebook's ink, never HQ's pixel
     // icon.)
-    const face = tick.locator('.bk-face[data-portrait]');
+    const face = tick.locator('.bk-answer-face');
     assert.match(await face.evaluate(el => el.style.backgroundImage), /^url\("data:image\//, 'its face');
     assert.equal((await face.innerText()).trim(), '', 'no letter');
     assert.equal(await tick.getAttribute('aria-label'), say('seenBy', { name: nb.name }));
     assert.equal(await tick.locator('svg.bk-tick:not([data-icon]) path').count(), 1, 'a tick on it');
-    // (inside its unit, at its bottom-right corner)
-    const [t, unit] = [await boxOf(tick), await boxOf(page.locator(`#book .bk-unit[data-unit="${read.id}"]`))];
-    const at = JSON.stringify({ t, unit });
-    assert.ok(t.right <= unit.right && t.bottom <= unit.bottom && t.left >= unit.left && t.top >= unit.top, at);
-    assert.ok(unit.right - t.right < 24 && unit.bottom - t.bottom < 24, `at its corner: ${at}`);
-    assert.equal(await page.locator(`#book .bk-tags[data-g="${asked.id}"]`).count(), 0, 'an answered note: no tick');
+    await besideRead(page, read, tick, 'the typed note');
+    await tickOf(circle).scrollIntoViewIfNeeded();
+    await besideRead(page, circle, tickOf(circle), 'the circle');
+    assert.equal(await tickOf(asked).count(), 0, 'an answered note: no tick');
     // the picture's source, one small line right under it
     const slip = slipOf(page, asked, 4710);
     await underItsNote(page, asked, '.answer-slip[data-slip="4710"]');

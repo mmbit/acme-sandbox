@@ -172,7 +172,7 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   );
   assert.match(
     line(misses),
-    /; the time to tell the board: live by .* UTC, four times in five; planned finish .* UTC; MISSES its deadline .* UTC \(the board's own time\) by \d.*; next #/,
+    /; the one time to tell the board: live \w{3} .* UTC, four times in five, never the ETA beside it; planned finish .* UTC; MISSES its deadline .* UTC \(the board's own time\) by \d.*; next #/,
   );
   assert.match(
     line(none),
@@ -620,8 +620,6 @@ test('missing deadlines show once for a deliverable, excluding served windows an
   }
 });
 
-// hq/the-card-reader was drawn after hq/push-tests-live, whose next step a failed task held, and hq/pushes-ride-out after
-// it: none had an ETA (job #23890)
 test('a deliverable drawn naming no needs passes over one whose next task a failed task holds', () => {
   db.exec('delete from pauses; delete from thread_needs');
   const stalled = thread('stalled');
@@ -683,4 +681,22 @@ test('a deliverable drawn naming no needs after a read booked days ahead plays n
   } finally {
     db.exec('delete from thread_needs');
   }
+});
+
+test("an expedited task's deliverable finishes with its work and deploy, past a stopped task before it", async () => {
+  const session = thread('session');
+  const stopped = queued(session, { engine: 'codex' }),
+    redo = queued(session, { engine: 'codex' });
+  db.prepare("update jobs set status = 'stopped', finished = ? where id = ?").run(
+    new Date(T + MINUTE).toISOString(),
+    stopped,
+  );
+  db.prepare('update jobs set expedite = 1 where id = ?').run(redo);
+  assert.equal((await h.claim('codex', { seat: 'codex-1' }))?.id, redo);
+  const f = forecast.refresh(Date.now());
+  const o = f.threads.get(session)!,
+    played = f.usual.get(redo)!;
+  assert.notEqual(o.eta, null, JSON.stringify(o.chain));
+  assert.equal(played.merged, played.done, 'it merges on its checks, which its run ends with');
+  assert.equal(o.finish, played.done! + f.snapshot.deployLagMs);
 });

@@ -15,7 +15,7 @@ import { assertOwned, ownRun, ownershipSignal, requestSignal, sleepOwned, waitOw
 import { readAs, returnSignIn } from './signin.ts';
 import { REFRESH_URL_VAR, codexRefreshes, exchangeWithOpenAI, serveRefreshes } from './refreshes.ts';
 import { measurement } from '../tooling/metrics.ts';
-import { DEFAULT_ESTIMATE_SCALE, TOKEN_ESTIMATE_GUIDANCE } from '../hq/estimating.ts';
+import { DEFAULT_ESTIMATE_SCALE, ONE_TIME, TOKEN_ESTIMATE_GUIDANCE } from '../hq/estimating.ts';
 import type { SeatState } from '../hq/seatwords.ts';
 import { handedUpLines, lighterLine, lightLines } from './lighter.ts';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -1353,7 +1353,8 @@ How work happens here:
   ${DEFAULT_ESTIMATE_SCALE}
 ${TOKEN_ESTIMATE_GUIDANCE}${lighterLine(job)}
   For new work, get the time for the board with \`hq when "..." --size <JSON>\`,
-  with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq deliverable <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${boardClock(c, job.kind === 'chat')}${job.kind === 'chat' ? '' : `
+  with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq deliverable <project>/<slug>\` (by its name or words: \`hq projects <words>\`).
+  ${ONE_TIME}${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${boardClock(c, job.kind === 'chat')}${job.kind === 'chat' ? '' : `
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
   log. Write them as a report on the work, never as a reply to the board, even when you're acting on its answer.
   The board sees only the ${c.phone}, ${c.newsletter} and the ${c.intercom} (and a call's notes, when your job says so).

@@ -202,6 +202,13 @@
   position: absolute;
   box-shadow: 0 0 0 1px rgba(80, 60, 10, 0.14);
 }
+/* an agent's drawing (pagescraps.ts Scrap drawing): its lines straight on the post-it's yellow, no edge and no tape. */
+#book .bk-photo[data-drawing] {
+  box-shadow: none;
+}
+#book .bk-photo[data-drawing]::before {
+  content: none;
+}
 #book .bk-photo > img {
   display: block;
   width: 100%;

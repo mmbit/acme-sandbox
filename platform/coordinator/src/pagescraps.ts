@@ -25,7 +25,8 @@ const SCRAP_XY = { min: -24_000, max: 24_000 },
   SCRAP_SIDE = { min: 4, max: 12000 },
   TILT = 180;
 
-export type Scrap = { file: string; x: number; y: number; w: number; h: number; tilt: number };
+// drawing: an agent's drawing on a clear ground (drawing.ts), lines straight on what's under it with no tape or edge
+export type Scrap = { file: string; x: number; y: number; w: number; h: number; tilt: number; drawing?: true };
 export const isScrap = (id: number, file: unknown) =>
   typeof file === 'string' && new RegExp(`^${id}-s-[0-9a-f]{8}\\.(png|jpg)$`).test(file);
 // A notebook group's picture on that page (notebookpictures.ts), placed or not.
@@ -73,7 +74,8 @@ export function scrapsOf(
     const sides = within(c.w, SCRAP_SIDE) && within(c.h, SCRAP_SIDE);
     if (!within(c.x, SCRAP_XY) || !within(c.y, SCRAP_XY) || !sides || !within(c.tilt, { min: -TILT, max: TILT }))
       return [400, 'a picture on the page is { file, x, y, w, h, tilt }, within the page and a half turn'];
-    scraps.push({ file: c.file, x: round(c.x), y: round(c.y), w: round(c.w), h: round(c.h), tilt: round(c.tilt) });
+    const place = { x: round(c.x), y: round(c.y), w: round(c.w), h: round(c.h), tilt: round(c.tilt) };
+    scraps.push({ file: c.file, ...place, ...(c.drawing === true && { drawing: true }) });
   }
   return scraps;
 }

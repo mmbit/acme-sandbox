@@ -11,9 +11,13 @@ HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (draw_picture: a drawing of the agent's own in the call's notes, callnotes.py.)
 # (name_voice: voices.py)
 # (save_voice, forget_voice: voices.py's saved voices)
-CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_note', 'draw', 'draw_picture', 'drive', 'estimate', 'eta', 'expedite',
-              'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_notes', 'name_voice',
-              'open_work', 'reach', 'read_notes', 'replace', 'report', 'save_voice', 'screen',
+# (prototype: a throwaway page of the agent's own, kept with the call, callnotes.py.)
+# (design_session, raise_hand: a design session and the agent's raised hand, design.py.)
+# (say_nothing: the agent passes its turn, design.py.)
+CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_note', 'design_session', 'draw', 'draw_picture', 'drive', 'estimate',
+              'eta', 'expedite', 'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_notes',
+              'name_voice', 'open_work', 'prototype', 'raise_hand', 'reach', 'read_notes', 'replace', 'report',
+              'save_voice', 'say_nothing', 'screen',
               'search', 'sketch', 'title_notes', 'try', 'waiting', 'when', 'write_down']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them

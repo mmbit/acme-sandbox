@@ -1,6 +1,7 @@
 // The measured runs and panels a pull request still needs before it can merge.
 import { db, prepared } from './db.ts';
 import { sweepAction, officeOnly, RULING_SWEEP_MS } from './review.ts';
+import { onChecks } from './expeditedplan.ts';
 import { org, roles, ceo } from './company.ts';
 import { OPEN_JOBS, workBranchOf } from './jobs.ts';
 import { withPicks } from './models.ts';
@@ -23,6 +24,7 @@ type PullRequest = {
   links: string;
   sha: string | null;
   since: number;
+  expedited: number;
 };
 type Run = {
   id: number;
@@ -55,47 +57,59 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
     if (work.opensReview === false || work.kind !== 'work' || ['fix', 'merge', 'carry'].includes(work.origin))
       return undefined;
     const pr = record.branches.get(workBranchOf(work));
-    const resolution = pr ? resolutionOf(sweepAction(pr, true), now) : undefined;
-    if (
-      pr &&
-      (resolution !== undefined ||
-        !inReview(pr) ||
-        (!pr.round && officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number)))
-    )
-      return {
-        panel: pr.panel ?? 'records',
-        count: 0,
-        stages: [],
-        terminal: null,
-        unresolved: inReview(pr),
-        ...resolution,
-      };
-    const own = pr ? (record.runs.get(pr.number) ?? []) : [];
-    const panel = pr?.panel ?? (pr && own.length && !own.some(run => run.kind === 'review') ? 'check' : 'triage');
-    const current = Math.max(1, pr?.round ?? 1);
-    const fixing = own.some(run => run.round === current && run.kind === 'work' && isOpen(run));
-    const undrawn = pr && !fixing ? record.undrawn.get(pr.number) : undefined;
-    if (undrawn && !undrawn.sorter) return undrawnFix(pr!, undrawn.owner);
-    const count = Math.max(current + Number(fixing || !!undrawn), record.counts.get(pr?.review_class ?? panel) ?? 1);
-    const selection = pr ? record.selections.get(pr.number) : undefined;
-    const reviewers = panelMembers(
-      own.filter(run => run.round === current && run.id > (pr?.since ?? 0)),
-      selection,
-    );
-    return buildPlan({
-      panel,
-      count,
-      current,
-      own: Map.groupBy(own, run => run.round),
-      reviewers,
-      selected: !!selection,
-      pr,
-      record,
-      actors: { ...actors, consolidator: selection?.consolidator ?? actors.consolidator },
-      work,
-      sorter: undrawn?.sorter,
-    });
+    // (expedited work)
+    return record.onChecks(work, pr && inReview(pr) ? pr : undefined) ?? roundsBefore(work, pr, record, actors, now);
   };
+}
+
+// The rounds a pull request (or work that will open one) still has before it merges, as measured runs and panels
+function roundsBefore(
+  work: Work,
+  pr: PullRequest | undefined,
+  record: ReturnType<typeof records>,
+  actors: ReturnType<typeof panelActors>,
+  now: number,
+): ReviewPlan {
+  const resolution = pr ? resolutionOf(sweepAction(pr, true), now) : undefined;
+  if (
+    pr &&
+    (resolution !== undefined ||
+      !inReview(pr) ||
+      (!pr.round && officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number)))
+  )
+    return {
+      panel: pr.panel ?? 'records',
+      count: 0,
+      stages: [],
+      terminal: null,
+      unresolved: inReview(pr),
+      ...resolution,
+    };
+  const own = pr ? (record.runs.get(pr.number) ?? []) : [];
+  const panel = pr?.panel ?? (pr && own.length && !own.some(run => run.kind === 'review') ? 'check' : 'triage');
+  const current = Math.max(1, pr?.round ?? 1);
+  const fixing = own.some(run => run.round === current && run.kind === 'work' && isOpen(run));
+  const undrawn = pr && !fixing ? record.undrawn.get(pr.number) : undefined;
+  if (undrawn && !undrawn.sorter) return undrawnFix(pr!, undrawn.owner);
+  const count = Math.max(current + Number(fixing || !!undrawn), record.counts.get(pr?.review_class ?? panel) ?? 1);
+  const selection = pr ? record.selections.get(pr.number) : undefined;
+  const reviewers = panelMembers(
+    own.filter(run => run.round === current && run.id > (pr?.since ?? 0)),
+    selection,
+  );
+  return buildPlan({
+    panel,
+    count,
+    current,
+    own: Map.groupBy(own, run => run.round),
+    reviewers,
+    selected: !!selection,
+    pr,
+    record,
+    actors: { ...actors, consolidator: selection?.consolidator ?? actors.consolidator },
+    work,
+    sorter: undrawn?.sorter,
+  });
 }
 
 // Ruled "changes" with its findings in the owner's inbox and no fix task drawn. While the owner's planning job holds
@@ -134,14 +148,16 @@ function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
 }
 
 // Every pull request's state from prs_plan, never a row's verdict (db.ts), and the files and links of those in review,
-// the only ones whose files are read (sweepAction, officeOnly): the rest read as none.
+// the only ones whose files are read (sweepAction, officeOnly, mergesOnChecks): the rest read as none. Of those, too,
+// whether it merged expedited.
 function pullRequests() {
   const prs = prepared(
     `select number, branch, author, panel, review_class, round, status, sha, since from prs indexed by prs_plan
     order by number`,
   ).all() as PullRequest[];
-  const texts = prepared('select files, links from prs where number = ?');
-  for (const pr of prs) Object.assign(pr, inReview(pr) ? texts.get(pr.number) : { files: '[]', links: '[]' });
+  const texts = prepared('select files, links, expedited from prs where number = ?');
+  for (const pr of prs)
+    Object.assign(pr, inReview(pr) ? texts.get(pr.number) : { files: '[]', links: '[]', expedited: 0 });
   return prs;
 }
 
@@ -170,6 +186,7 @@ function records(now: number, prospective?: ProspectiveRun) {
   );
   return {
     branches: new Map(prs.map(pr => [pr.branch, pr])),
+    onChecks: onChecks(),
     selections: recordedSelections(),
     runs: Map.groupBy(runs, run => run.pr),
     undrawn: undrawnOwners(),

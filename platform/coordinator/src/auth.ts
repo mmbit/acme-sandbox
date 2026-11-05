@@ -149,10 +149,10 @@ export async function enrollVerify(req: IncomingMessage, res: ServerResponse, bo
 // sheet, a browser of its own where the passkey works, and the passkey unlocks a one-time code instead of a session: the
 // sheet hands it to the app (hq-shell://signed-in?code=…), and the app's web view trades it for a session at
 // /app/signed-in with the verifier only the app that opened the sheet holds, sha256(verifier) being the challenge. A
-// code taken on the way (another app on the device claiming the scheme) opens nothing without it; one passkey's unlock
-// makes one code, good once for a minute. The page can't tell which app opened it, though: another app that opens
-// /login?app=… itself gets the session if the board unlocks there, so the page asks for an unlock only when HQ's app
-// has just opened it. Only an app tied to HQ's domain closes that.
+// code taken on the way (another app on the device claiming the scheme) opens nothing without it, and one passkey's
+// unlock makes one code, good once for a minute. Nothing here can tell which app opened the page, though: another
+// app that opens /login?app=… itself gets the session if the board unlocks there. The page only warns the board, in
+// words, to unlock when HQ's app has just opened it. Only an app tied to HQ's domain closes that.
 const APP_CODE_MS = 60_000;
 const APP_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;   // (a sha256, base64url)
 const sha256 = (value: string) => createHash('sha256').update(value).digest('base64url');

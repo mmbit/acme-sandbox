@@ -1,6 +1,6 @@
 // A close-up: one person, head and shoulders, filling the frame's left half, talking into a microphone, with a
 // question in a bubble beside them. For interviews, a new face or anyone's own story.
-export default (g, { C, R, P, fg, wall, bust, box, text, disc }) => {
+export default (g, { C, R, fg, wall, bust, box, text }) => {
   wall(g, { kind: 'brick', c: C.plum2 });
   R(g, 0, 60, 128, 12, C.woodD); R(g, 0, 60, 128, 1, C.wood);                   // the desk's edge, in front
   bust(g, 'fay', 18, 16, { mouth: 'open' });

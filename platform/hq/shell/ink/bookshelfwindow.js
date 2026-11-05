@@ -9,6 +9,7 @@ import { icon } from '../icons.js';
 import { mountScreens } from './bookshelf.js';
 import { aimAt } from './booknewest.js';
 import { swinging } from './bookswing.js';
+import { takesCallInk } from './bookcallmarks.js';
 
 stylesheet('shell/ink/bookshelfwindow.css');
 
@@ -27,6 +28,8 @@ export function mountShelfWindow(host, { dev, pages, open, fold }) {
   dialog.setAttribute('aria-label', 'The Shelf');
   dialog.innerHTML = '<div class="bk-far" tabindex="-1"></div>';
   host.append(dialog);
+  // (no page: on a call the Pencil scribbles on it for the call's agent, as on HQ's page)
+  takesCallInk(dialog);
   const w = (on = { dialog, fold, going: null });
   w.screens = mountScreens(dialog.querySelector('.bk-far'), {
     dev,

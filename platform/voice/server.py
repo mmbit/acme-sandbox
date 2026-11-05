@@ -16,7 +16,7 @@ six people on the join link's page (/voice/join, room.py). On it the agent speak
 (the opening), has the partner tools (note, no_transcript and hang_up: no look-ups), and keeps only its notes once
 the other side would rather we kept no transcript.
 """
-import asyncio, base64, functools, hashlib, http.client, itertools, json, logging, os, re, secrets, shutil, socket
+import asyncio, base64, dataclasses, functools, hashlib, http.client, itertools, json, logging, os, re, secrets, shutil, socket
 import threading, time, uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +37,7 @@ from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, marks_lost, note
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
 from callnotes import (CHANGE_WORDS, DRAW_WORDS, MARK_WORDS, PAGE_WORDS, TITLE_WORDS_SAID, TRY_WORDS, WRITE_DOWN_WORDS,
                        CallNotes)
+from callnotes import PROTOTYPE_HTML, PROTOTYPE_NAME, PROTOTYPE_WORDS
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -46,6 +47,10 @@ import room
 import turns
 from voices import VOICE_WORDS, Voices
 from voices import ENROL_WORDS, FORGET_WORDS, NAME_LENGTH
+from design import ABOUT_LENGTH, DESIGN_TOOL_WORDS, HAND_PAUSE_SECONDS, HAND_TOOL_WORDS, Design
+from design import DESIGN_OPEN_SECONDS, MADE_WORDS, MAKE_MOST_SECONDS, MAKE_QUIET, MAKES
+from design import (BRIEF_MOST, BUILD_EFFORT, BUILD_FAILED, BUILD_SECONDS, BUILD_TOOL_WORDS, BUILD_WORDS, build_ask,
+                    built_page)
 
 HQ, TOKEN, ORIGIN = os.environ['HQ_URL'], take_token(os.environ), os.environ['ORIGIN']  # (guard.py: who can read what)
 MODELS = Path(os.environ.get('VOICE_MODELS', '/models'))  # (replay.py runs the real models outside the image)
@@ -65,7 +70,7 @@ class Paths(NamedTuple):
     repo: Path = Path('/repo')  # the server's checkout of main, mounted read only
     calls: Path = Path('/data/calls')  # each call's transcript so far (Call.file)
     # A file per call that's on: a deploy waits while there is one (infra/sync.sh on_call), as recreating this container
-    # ends every call on it.
+    # ends every call on it. Touched while the call's line is live (watch_live).
     live: Path = Path('/data/live')
     cli_config: Path = Path('/data/claude')  # the call agents' CLI config (guard.agent_env's CLAUDE_CONFIG_DIR)
     work: Path = Path('/data/call')  # the line's working folder: the CLI's (and its HOME), where there's no repo
@@ -101,11 +106,16 @@ AGAIN = 1.0    # a sound over the reply that was let go counts again if the boar
 # full stop, which comes at almost every pause), as the model takes over a second to speak and words the board adds
 # before that take the reply back (cut_in); mid-thought, long enough that a thinking pause rarely outlasts it
 WAIT_SECONDS = {'done': 0, 'open': 1.5}
-# The board's Pencil still moving as it stops talking (HQ says when it's down and lifted, while its screen is shown): the
-# answer waits for the pen to rest, as long as review mode takes a mark to be done (settle.js's 1.5 s), so the turn's
+# The board's Pencil still moving as it stops talking (HQ says when it's down and lifted on a call): the
+# answer waits for the pen to rest, longer than review mode takes a mark to be done (settle.js's 1.5 s), so the turn's
 # picture has what it drew while it spoke and its last words, and what it scribbles while talking goes with them. At
 # most PEN_MOST_SECONDS: a board that draws on without a word isn't kept waiting for an answer to its last.
-PEN_REST_SECONDS, PEN_MOST_SECONDS = 1.5, 8.0
+# A drawing is done once the pen rests, not at each stroke: lifting it for a moment between strokes (half a second, a
+# second) is one drawing, so the rest is longer than review mode's, and a mark on the call's notes page (HQ's
+# calldraw.js, MARK_REST_SECONDS after its last change) counts as the pen lifted then. While the board draws, no hold
+# sound plays and nothing it drew goes to the agent alone (unprompted); the pen down again while a turn of the agent's
+# own hasn't said anything takes it back: the board isn't done yet, and the turn waits till it is.
+PEN_REST_SECONDS, PEN_MOST_SECONDS, MARK_REST_SECONDS = 3.0, 8.0, 1.5
 TAKE_BACK = 1.2  # the board carries on before hearing this much of the reply: it was one message
 # HQ pings the line twice a second beside the microphone's frames, and the line answers each as it reads it. On a weak
 # connection the frames back up and come late, in a burst (nothing is lost on the way): the line is behind while a ping
@@ -116,8 +126,8 @@ VOICE = 'alba'  # the Pocket TTS voice for an agent without one of its own (org.
 # A tool step (a job's brief takes the model seconds to write) is never silence: while it runs, a soft two-note tick
 # plays whenever the line has been quiet for QUIET s, until the agent's words come. What the agent wrote before the
 # step is said as it starts. The wait for a reply's first words is held by a softer sound of its own, thinking(), the
-# same way. Neither plays until the board has been quiet for HUSH s since its
-# last words, and never while it talks: the line asks the model sooner, and a pause mid-sentence is no wait to mask.
+# same way. Neither plays until the board has been quiet for HUSH s since its last words, never while it talks, nor
+# while it draws (PEN_REST_SECONDS): the line asks the model sooner, and a pause mid-sentence is no wait to mask.
 # These are the line's only hold sounds: a spoken hold line
 # of the line's own ("One moment, I'll queue that.") replaced the tick for a while, and a tick was preferred.
 QUIET, HUSH = 2.0, 1.5
@@ -150,7 +160,8 @@ SCREEN_WORDS = {  # (circled)
              'with their next turn, and the pictures come again then. The moments go on, and the screen tool still lists '
              'them (since).'),
     'none': "There's no screen on this call: nobody is showing our pages.",
-    'unread': "Their screen couldn't be read for this turn: what they did comes with your next turn.",
+    'unread': ("They're showing you their screen, but it couldn't be read for this turn: your screen tool looks at it now, "
+               'and what they did comes with your next turn.'),
     'gone': 'This session has no screen any more: the call ended, or its session was restarted.',
     'failed': "The screen couldn't be read just now",
 }
@@ -173,6 +184,11 @@ HANG_UP_TOOL = 'mcp__hq__hang_up'
 # lost) within HOLD: with its next words, or in a turn of its own once the line is quiet.
 BACK_WORDS = ("(The call dropped out on the board's side just now, and they've called back into it: this is the same "
               'call. What you said as it dropped may not have reached them. Welcome them back.)')
+# A colleague's message to the agent while it's on the call (HQ's messages.ts forCall, through keep_in_hq): it hears it
+# with its next words, or in a turn of its own once the line is quiet.
+MESSAGE_WORDS = ("(A message from {sender}{job} reached you on this call: \"{text}\" It's a colleague's, not the "
+                 "board's words: if the board is waiting on it or it changes what you're doing, tell them what matters "
+                 "in it, in your own words.)")
 # The marks the transcript puts after a reply the board talked over or the session cut short; a page that calls back
 # shows the reply without them (Call.said_so_far).
 INTERRUPTED = ' (interrupted)'
@@ -200,6 +216,8 @@ HELLO = ("(The line has just picked up the board's call: you answer it, as anyon
 # hello follows once ready if the board hasn't spoken yet.
 HELLO_WAIT_SECONDS = 20.0
 NOTE_TOOL, NO_TRANSCRIPT_TOOL = 'mcp__hq__note', 'mcp__hq__no_transcript'
+# The agent passes its turn (design.py): nothing more of the reply is said, its steps play no tick.
+SAY_NOTHING_TOOL = 'mcp__hq__say_nothing'
 # The objection's answer when the coordinator sends none (a company's own words come with call-context)
 OBJECTED = {'en': "No problem, I won't keep one.", 'nl': 'Geen probleem, dan houd ik er geen bij.',
             'de': 'Kein Problem, dann behalte ich keins.'}
@@ -341,13 +359,16 @@ from pocket_tts import TTSModel  # noqa: E402 (after the recogniser: torch is sl
 from piper import PiperVoice  # noqa: E402
 import torch  # noqa: E402
 pocket = TTSModel.load_model()
-# Pocket TTS speaks every language in the agent's own voice (org.yaml's: each language's model has the same voice
-# names). One voice garbles Dutch (it dropped a sentence's end and made seconds of noise of another, 3 runs in 3, where
-# alba, jane, paul and eve read back through the phone as clearly as Piper): Piper speaks Dutch for it. Dutch runs at
-# temperature 0.7, not the default 0.3: a little cleaner through the phone, read back as well and as fast.
+# Pocket TTS speaks English and German in the agent's own voice (org.yaml's: each language's model has the same voice
+# names), and Dutch in a voice the company names (a care ticket's `voices`). Dutch runs at temperature 0.7, not the
+# default 0.3: a little cleaner through the phone, read back as well and as fast.
 pockets = {'en': pocket, 'nl': TTSModel.load_model(language='dutch', temp=0.7),
            'de': TTSModel.load_model(language='german')}
-NOT_IN_DUTCH = {'bill_boerst'}
+# Every other voice speaks Dutch as Piper's alex. Pocket TTS's Dutch said "hoi" as "how" in every voice and drifted
+# between voices within a reply, the board's "chimera" of Flemish and Dutch (call #255): alba's 1.5 s windows were
+# 0.52-0.67 like their mean voiceprint, alex's 0.72-0.82; alex reads back word for word at about five syllables a
+# second.
+DUTCH = 'alex'
 voice_states = {}  # by language and voice
 # Pocket TTS says the same words differently each time (its noise from torch's one generator): fixed words kept in SAID
 # are made from a seed, so the take every caller hears after a restart is the same one, a known take rather than a
@@ -368,6 +389,12 @@ PIPERS = {name: PiperVoice.load(str(MODELS / f'{model}.onnx'))
 # too. Spelled as said, read back right through the phone 6 times in 6 ("aa-ie") and 5 in 6 ("Ka-I"); never with dots
 # ("A.I."), where it stops as at a sentence's end. Piper reads "AI" right as it is.
 SPELLED = {'nl': [('AI', 'aa-ie')], 'de': [('AI', 'Ka-I'), ('KI', 'Ka-I')]}
+# English words in another language's reply, marked ‹live› by the agent (its prompt, call.ts): a Piper voice says them
+# from English espeak's sounds, each as the nearest its own language has (NEAR: a Dutch voice never learnt ɹ or æ, and
+# said "review" with them as "revive"); alex said "live" "liever" without them and "live" with. Pocket TTS reads letters,
+# and says them as written. The screen and the transcript have them unmarked.
+MARKED = re.compile(r'‹([^‹›]*)›')
+NEAR = {'ɹ': 'r', 'ᵻ': 'ɪ', 'ɾ': 't', 'æ': 'ɛ', 'ɜ': 'ø', 'ɐ': 'ɑ', 'θ': 's', 'ð': 'd', 'ɚ': 'ər', 'ɝ': 'ør'}
 # Each sentence is synthesised in a thread of its own, calls at once in parallel.
 # One lock for every synthesis made overlapping replies on three calls wait for each other: 3 to 8 s of gaps in 150 s,
 # 0.1 to 0.5 s without it (load_check.py). Parallel synthesis on one model gives the same audio as serial: Pocket TTS
@@ -453,7 +480,7 @@ async def serve_screens(path):
     """The line's screen socket, for the call agents' screen tool (hq_tools.py): only the line's own user reaches it.
     Each connection asks once (one JSON line with its session's key, SCREENS) and gets one answer."""
     path.unlink(missing_ok=True)
-    screens = await asyncio.start_unix_server(screen_asked, path=str(path))
+    screens = await asyncio.start_unix_server(screen_asked, path=str(path), limit=ASK_BYTES)
     path.chmod(0o600)
     return screens
 
@@ -466,6 +493,11 @@ ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORD
                'write_down': WRITE_DOWN_WORDS, 'title_notes': TITLE_WORDS_SAID, 'read_notes': PAGE_WORDS, 'mark_notes': MARK_WORDS,
                'change_note': CHANGE_WORDS, 'try': TRY_WORDS, 'draw_picture': DRAW_WORDS, 'name_voice': VOICE_WORDS}
 ASKED_WORDS |= {'save_voice': ENROL_WORDS, 'forget_voice': FORGET_WORDS}
+ASKED_WORDS |= {'prototype': PROTOTYPE_WORDS}
+ASKED_WORDS |= {'design_session': DESIGN_TOOL_WORDS, 'raise_hand': HAND_TOOL_WORDS}
+# The longest ask's line: a prototype's page, each of its characters at most 12 bytes in JSON (one outside Unicode's
+# basic plane, as two \u escapes), and room for the rest.
+ASK_BYTES = 12 * PROTOTYPE_HTML + (1 << 16)
 
 
 async def screen_asked(reader, writer):
@@ -481,7 +513,11 @@ async def screen_asked(reader, writer):
                          'mark_notes': call.page.mark_tool, 'change_note': call.page.change_tool,
                          'try': call.page.try_tool, 'draw_picture': call.page.drawing_tool,
                          'name_voice': call.voice_tool,
-                         'save_voice': call.enrol_tool, 'forget_voice': call.forget_tool}[kind]
+                         'save_voice': call.enrol_tool, 'forget_voice': call.forget_tool,
+                         'prototype': call.prototype_tool,
+                         'design_session': call.design_tool, 'raise_hand': call.hand_tool}[kind]
+        # (made once the room is done.)
+        tool = functools.partial(call.made, tool) if call and kind in MAKES else tool
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
         print(f'{kind} tool: {err!r}', flush=True)
@@ -1023,6 +1059,24 @@ class Care:
                 print(f'call: {self.agent}: care did not take the end of the call: {err!r}', flush=True)
 
 
+def unmarked(text):
+    """The words as shown and kept, without the marks of the English ones (MARKED)."""
+    return text.replace('‹', '').replace('›', '')
+
+
+def marked(text, piper=None):
+    """The text for a voice: a Piper voice's with each marked word in its English sounds (Piper's [[...]], spoken() has
+    taken out any brackets of the agent's), Pocket TTS's unmarked."""
+    if not piper:
+        return unmarked(text)
+    english = dataclasses.replace(piper, config=dataclasses.replace(piper.config, espeak_voice='en-us'))
+
+    def sounds(m):
+        said = ''.join(NEAR.get(c, c) for c in ''.join(''.join(s) for s in english.phonemize(m[1]))).strip()
+        return f'[[ {said} ]]' if said else ''
+    return MARKED.sub(sounds, text)
+
+
 def spelled(text, lang):
     """The text with the letters Pocket TTS misreads in this language spelled as they're said (SPELLED)."""
     for written, said in SPELLED.get(lang, ()):
@@ -1137,6 +1191,7 @@ class Limits(NamedTuple):
     wait_seconds: dict = WAIT_SECONDS
     pen_rest_seconds: float = PEN_REST_SECONDS
     pen_most_seconds: float = PEN_MOST_SECONDS
+    design_open_seconds: float = DESIGN_OPEN_SECONDS
     hang_up_wait_seconds: float = HANG_UP_WAIT_SECONDS
     care_call_seconds: float = CARE_CALL_SECONDS
 
@@ -1194,6 +1249,11 @@ class Call:
         self.noticed = None   # why the agent couldn't answer, as the line last said it (until a reply gets through)
         # Hung up: after end(), no turn or agent starts and the transcript isn't written
         self.ended = False
+        # When the call's line last sent anything: its audio, or HQ's ping (watch_live).
+        self.signal = self.wiring.monotonic()
+        # When the call was last in use: words heard, the board's pen, a reply or a build at work (watch_live); and how
+        # its own route closes its connection when the watch ends it.
+        self.active, self.close_line = self.signal, None
         self.writing = threading.Lock()  # a transcript write, from its check of ended to its last byte (end() runs in a thread)
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
@@ -1222,14 +1282,21 @@ class Call:
         self.screen_key = ''  # the session's key on the line's screen socket (SCREENS)
         # The board drawing on its HQ call (drawing.py): its notes go with the
         # pictures above (note), with entries of their own ('note'), and the agent's asks and rings wait here. On the
-        # last screen-turn the screen was on (screen['on']); away: HQ's connection dropped and it hasn't come back yet;
+        # last screen-turn, or by HQ's own word since (screen_shown), the screen was on (screen['on']); away: HQ's
+        # connection dropped and it hasn't come back yet;
         # back: the board called back into the call, which the agent hasn't heard yet (came_back)
         self.screen['on'], self.away, self.back = False, False, False
+        self.messages = []  # (colleagues' messages for the agent's next message: messaged.)
         self.drawing = Drawing(self)
         # The agent driving a piece of work on the board's screen (driving.py)
         self.driving = Driving(self)
         # The call's notes page in the board's Notebook (callnotes.py): the agent's notes and its title.
         self.page = CallNotes(self)
+        # A design session, and the agent's raised hand (design.py).
+        self.design, self.hand_waits = Design(self.send_event), None
+        # Prototypes built in the background (build): each page saved on the call by its name, the last one (the next
+        # version builds on it), and the builders at work.
+        self.prototypes, self.builders = {}, set()
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
         # (the AI line and the transcript line) whole in each of its languages (care_first), and a reply in another
@@ -1259,12 +1326,14 @@ class Call:
     async def start(self):
         live = self.wiring.paths.live / self.file.stem  # (live while it's set up too)
         live.touch()
+        LIVE.add(self)
         self.new_screen_key()
         try:
             if self.voices:  # (a failed read ends the call's start, as the context's does)
                 await self.saved_voices()
             await self.brain.start()
         except BaseException:
+            LIVE.discard(self)
             live.unlink(missing_ok=True)
             raise
         if self.callout:
@@ -1316,7 +1385,8 @@ class Call:
         the hello's turn's, which ends the synthesis: it plays the moment the line picks up), else None (made as it's
         said)."""
         words = ''
-        async for delta in self.brain.ask(HELLO):
+        # (a design session's words first, started from HQ's key.)
+        async for delta in self.brain.ask('\n\n'.join(filter(None, (self.design.told(), HELLO)))):
             if type(delta) is str:
                 words += delta
         words = ' '.join(words.split())
@@ -1588,6 +1658,7 @@ class Call:
         so_far = ('The call so far, from speech recognition:\n' + '\n'.join(lines) if not self.objected else
                   "They asked us to keep no transcript, so there is none. Your notes so far: " + ('; '.join(self.notes) or 'none'))
         self.brain.recap = f'({why} {so_far})' + lost
+        self.design.fresh()
         self.screen['heard'].clear()  # (the new session has heard none of it, nor the coordinator's briefing)
         self.new_screen_key()
         await self.brain.start()
@@ -1628,6 +1699,7 @@ class Call:
         """Audio from the board, 16 kHz float32, and the agent's voice as it played over the same samples on HQ's side
         (none: nothing played)."""
         self.got += len(samples)
+        self.signal = self.wiring.monotonic()
         if self.echo:
             samples = self.echo.cancel(samples, voice)
         self.pending = np.concatenate([self.pending, samples])
@@ -1685,6 +1757,7 @@ class Call:
                 if not self.draft:  # (the words began about as long before their last sound as they lasted)
                     self.draft_at = self.wall_ms(self.spoke - len(seg) / RATE)
                 self.draft.append(self.labelled(text, len(seg), voiced))
+                self.active = ended
                 self.keep()  # (each piece as it's heard)
                 await self.send_event({'type': 'heard', 'text': unhesitating(self.so_far(), self.lang)})
                 self.schedule(ended)
@@ -1717,6 +1790,9 @@ class Call:
             self.waiting.cancel()
         waited = self.wiring.monotonic() - since if since else 0
         wait = self.limits.wait_seconds['done' if self.sounded_finished else 'open'] - waited
+        # (thinking aloud at the table.)
+        if self.design.on and not self.sounded_finished:
+            wait = self.limits.design_open_seconds - waited
         self.waiting = asyncio.create_task(self.commit(max(0, wait)))
 
     async def commit(self, wait):
@@ -1747,15 +1823,41 @@ class Call:
         line, against the quickest ping so far (the two clocks' difference and the network's own delay). Both clocks
         are monotonic, so setting either changes nothing; the baseline creeps up 10 ms a second, so their drift never
         adds up."""
-        now = self.wiring.monotonic()
+        now = self.signal = self.wiring.monotonic()  # (signal)
         delay = now * 1000 - sent
         base = min(self.ping[1] + 10 * (now - self.ping[0]), delay) if self.ping else delay
         self.ping, self.late = (now, base, self.n), (delay - base) / 1000
         self.latest = max(self.latest, self.late)
 
     def penned(self, down):
-        """HQ's word on the board's Pencil: down on the screen, or lifted."""
+        """HQ's word on the board's Pencil: down on the screen, or lifted. Down again while a turn of the agent's own
+        (nothing said by the board) hasn't said anything: the board isn't done, and the turn is taken back
+        (drawing_on)."""
         self.pen = 'down' if down else self.wiring.monotonic()
+        self.active = self.wiring.monotonic()
+        if down:
+            self.drawing_on()
+
+    def drew(self):
+        """A mark on the call's notes page came (HQ sends it MARK_REST_SECONDS after its last change, from any screen,
+        its guest's too): the pen was lifted then, as far as the line knows, and the board is still drawing."""
+        if self.pen != 'down':
+            self.pen = max(self.pen or 0, self.wiring.monotonic() - MARK_REST_SECONDS)
+        self.active = self.wiring.monotonic()
+        self.drawing_on()
+
+    def drawing_on(self):
+        """The board draws on while a turn of the agent's own (pictures or marks alone) is still quiet, no words heard
+        nor a tool step yet: the turn stops unheard, as one the board's words overtake does (answer), and what it had
+        goes with the next."""
+        last, step = self.last, self.last and self.last.get('step')
+        if (step and step['wait'] and not last['text'] and not last['heard'] and self.turn
+                and not self.turn.done() and self.speaking and not self.speaking.is_set()):
+            last.setdefault('cut', self.wiring.monotonic())
+            self.speaking.set()
+            self.until = 0
+            self.brain.interrupt()
+            print(f'call: {self.agent} let the board draw on: its own turn taken back unheard', flush=True)
 
     def inking(self):
         """The board's pen is down, or was lifted less than PEN_REST_SECONDS ago: it may not be done."""
@@ -1801,14 +1903,32 @@ class Call:
         ping baseline stays (the same two clocks): HQ first sends again the board's audio the line hasn't had, with
         pings from when it was said, so it reads as late and the answer waits for all of it (behind, owed)."""
         self.until, self.away = 0, False  # (away)
+        self.signal = self.wiring.monotonic()  # (back: watch_live.)
 
     # (a page that left mid-call calls back into it)
     def came_back(self):
         """The board called back into this call after it dropped (its page reloaded or left): the transcript says so, and
-        the agent hears it with its next turn (BACK_WORDS). HQ's new page counts its timeline from now."""
+        the agent hears it with its next turn (BACK_WORDS). HQ's new page counts its timeline from now, and its pings
+        from its own clock (performance.now() starts again with the page): the old page's baseline read every ping as
+        late by the old page's age, and the answers waited for audio that never came (thousands of seconds late). The
+        old page's pen goes with it: a lift it never sent kept the line waiting for a drawing nobody makes."""
         self.back, self.live_at = True, None
+        self.ping, self.late, self.pen = None, 0.0, None
         self.write(f'({self.them} dropped out of the call and called back in.)')
         self.nudge()
+
+    def messaged(self, messages):
+        """Colleagues' messages for the agent, from HQ: in the transcript as they come, and with the agent's next message
+        (MESSAGE_WORDS), or in a turn of its own once the line is quiet."""
+        for m in messages:
+            if not (isinstance(m, dict) and isinstance(m.get('text'), str) and isinstance(m.get('from'), str)):
+                continue
+            job = f"'s job #{m['job']}" if isinstance(m.get('job'), int) else ''
+            self.messages.append(MESSAGE_WORDS.format(sender=m['from'].capitalize(), job=job, text=m['text']))
+            self.write(f"(A message from {m['from'].capitalize()}{job} reached the call.)")
+        if self.messages and not self.ended:
+            self.keep()
+            self.nudge()
 
     def said_so_far(self):
         """The call's words so far, for the screen of a page that called back into it: whose ('board' or 'agent') and
@@ -1893,16 +2013,18 @@ class Call:
         if not self.ended and self.ready():
             self.nudge()
 
-    async def mark(self, mark_id, updated):
+    async def mark(self, mark_id, updated, drawn=True):
         """A mark on the call's notes page as it rests (HQ's calldraw.js: the board's from any screen, its guest's),
         in its place with the pictures as a note is (place), with who drew it. Each change of it comes once: HQ hears
         the line has it ('received'), or couldn't read it ('failed'), and sends it again until it does. One that finds
-        the pictures full waits for the next turn to make room (unblock)."""
+        the pictures full waits for the next turn to make room (unblock, not drawn just now)."""
         told = self.told.get(('mark', mark_id))
         if told and told['updated'] == updated:
             return await self.send_event(told)
         if ('mark', mark_id, updated) in self.known:
             return
+        if drawn:
+            self.drew()
         if len(self.pictures) >= PICTURES:
             self.blocked[mark_id] = updated
             return
@@ -1919,7 +2041,7 @@ class Call:
         """A turn took the pictures waiting: the marks that found them full take their places now, in turn (mark)."""
         blocked, self.blocked = self.blocked, {}
         for mark_id, updated in blocked.items():
-            asyncio.create_task(self.mark(mark_id, updated))
+            asyncio.create_task(self.mark(mark_id, updated, drawn=False))
 
     async def place(self, kind, fetch, drawn_id, **entry):
         """A note or a mark in its place with the pictures (show), fetched from the coordinator. Its picture counts
@@ -1958,8 +2080,8 @@ class Call:
 
     async def unprompted(self):
         """Pictures shared with nothing said: once the line has been quiet for SHOWN_SECONDS (no reply on its way or
-        playing, the board not talking, nothing waiting to be answered), they go to the agent in a turn of their own. If
-        the board talks first, they go with its words instead (answer)."""
+        playing, the board not talking, nothing waiting to be answered) and the board's pen has rested (inking), they go
+        to the agent in a turn of their own. If the board talks first, they go with its words instead (answer)."""
         calm = self.wiring.monotonic()
         while True:
             await asyncio.sleep(0.1)
@@ -1967,13 +2089,14 @@ class Call:
                 return
             if not self.idle() or not (self.ready() or self.answers()):
                 calm = self.wiring.monotonic()
-            elif self.wiring.monotonic() - calm >= SHOWN_SECONDS:
+            # (a drawing goes once it's done, not at each stroke.)
+            elif self.wiring.monotonic() - calm >= SHOWN_SECONDS and not self.inking():
                 self.turn = asyncio.create_task(self.answer('', self.turn))
                 return
 
     def answers(self):
         """Whether the board has answered the agent's asks or suggestions since its last turn (drawing.py, driving.py.)."""
-        return bool(self.back or self.drawing.answered or self.driving.answered)
+        return bool(self.back or self.messages or self.drawing.answered or self.driving.answered)
 
     def idle(self):
         """Nothing going on. The board's words count until it has been quiet for a second: its last words may still be
@@ -2035,6 +2158,7 @@ class Call:
             await self.send_event(self.told[picture_id])  # (read as it's sent: no newer word on it goes out first)
         await self.drawing.retell()
         await self.driving.retell()
+        await self.design.retell()
 
     # ---- a walk-through's screen (SCREEN_TURN_SECONDS)
     def watched(self):
@@ -2075,8 +2199,9 @@ class Call:
             got = await asyncio.wait_for(asyncio.to_thread(self.wiring.hq, 'POST', 'screen-turn', asked), self.limits.screen_turn_seconds)
         except Exception as err:  # (TimeoutError: no answer in time)
             print(f'call: {self.agent}: no screen with this turn: {err!r}', flush=True)
-            # (a call nobody has shown a screen on hears nothing of it)
-            return {**look, 'text': f"({SCREEN_WORDS['unread']})"} if 'brief' in heard else look
+            # (seen or said shown by HQ, not paused: it wasn't read.)
+            unread = ('brief' in heard or self.screen['on']) and not self.screen['paused']
+            return {**look, 'text': f"({SCREEN_WORDS['unread']})"} if unread else look
         on = self.screen['on'] = isinstance(got, dict) and got.get('on') is True  # (on)
         self.screen['paused'] = paused = on and got.get('paused') is True
         if not paused:
@@ -2104,6 +2229,13 @@ class Call:
                     after=got['last'] if type(got.get('last')) is int else self.screen['after'],
                     version=got['version'] if picture and type(got.get('version')) is int else seen)
         return look
+
+    def screen_shown(self, state):
+        """HQ's page says the board's screen is 'shown', 'paused' or 'off', as that changes and each time the line picks
+        up: the line knows it at once, not only from a screen-turn that answered in time (call #258: a turn whose
+        screen-turn didn't left the agent saying it saw nothing, the screen shown for 19 s). The next screen-turn that
+        answers says it again."""
+        self.screen['on'], self.screen['paused'] = state != 'off', state == 'paused'
 
     def screen_sent(self, look):
         """The turn's message went to the session with what the screen added (screen_turn): the agent has those
@@ -2247,7 +2379,7 @@ class Call:
         stop = self.speaking = threading.Event()
         said, buf, worded = '', '', False  # (worded: this model response has words: its tool steps come after them)
         # a tool step is running, or the reply's first words haven't come (wait), and no words since
-        step = {'on': True, 'wait': True}
+        step = turn['step'] = {'on': True, 'wait': True}  # (turn's: drawing_on.)
         hum = asyncio.create_task(self.hum(stop, step, turn))
         ask = text
         # (the session still has the replies to earlier messages, which the board heard: the note names the one taken
@@ -2262,8 +2394,11 @@ class Call:
         ask = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask)))
         # (and the reminder to title the call's page: callnotes.py.)
         back, self.back = BACK_WORDS if self.back else '', False
-        answered = '\n'.join(filter(None, (back, self.drawing.told(), self.driving.told(), self.page.told(),
-                                            self.voices and self.voices.told())))
+        messaged, self.messages = '\n'.join(self.messages), []
+        answered = '\n'.join(filter(None, (back, messaged, self.drawing.told(), self.driving.told(), self.page.told(),
+                                            self.voices and self.voices.told(),
+                                            self.design.told())))
+        raised = self.design.hand  # (the hand up as this turn started: its words lower it.)
         delivered = False  # the model has the message: its first request started
         earlier = self.lines[:turn['n']]  # (the call so far, for a fresh session: this message goes as its own)
         try:
@@ -2311,8 +2446,12 @@ class Call:
                                 await self.say(line, stop, turn)
                             await self.object(stop, turn)
                             continue
-                        if stop.is_set() or turn.get('gone'):
-                            continue  # talked over, or hung up after the goodbye: let the turn finish quietly
+                        if isinstance(delta, Step) and delta.name == SAY_NOTHING_TOOL:
+                            turn['quiet'], buf = True, ''  # (passed: nothing more said, and no tick for what it does)
+                            step['on'] = False
+                            continue
+                        if stop.is_set() or turn.get('gone') or turn.get('quiet'):
+                            continue  # talked over, hung up after the goodbye or passed: let the turn finish quietly
                         if isinstance(delta, Step):  # what the agent wrote before the step is said now; the tick holds the rest
                             if delta.name == HANG_UP_TOOL:
                                 turn['bye'] = True  # (the call ends once the goodbye is said: leave)
@@ -2361,7 +2500,7 @@ class Call:
             renewed = await self.renew('the reply', err, stop, turn, shown)
             if self.ended:
                 return
-            if renewed:
+            if renewed and not turn.get('quiet'):  # (a turn it passed had nobody waiting.)
                 said = "Sorry, I lost my train of thought there. Could you say that again?"
                 await self.say(said, stop, turn)
         else:
@@ -2373,6 +2512,8 @@ class Call:
             said += buf
             await self.say(buf, stop, turn)
         await self.notice_after(stop, turn)
+        if said.strip() and raised and raised is self.design.hand:  # (it got its say)
+            await self.design.lower()
         if self.care and spoke is not None and turn['heard']:
             self.timed(turn, spoke, asked, worded_at)
         if await self.ended_turn(said.strip(), stop, turn) and turn.get('bye') and not self.ended:
@@ -2440,6 +2581,14 @@ class Call:
             await asyncio.sleep(0.1)
             now = self.wiring.monotonic()
             hushed = self.quiet * WINDOW + PAUSE >= HUSH  # (the VAD's quiet starts PAUSE s in)
+            # (a design session's silence is the room thinking: no swell while the agent thinks, most of its replies
+            # say nothing.)
+            if step['wait'] and self.design.on:
+                continue
+            # (nor while the board draws, or over a turn of the agent's own on what it drew: nothing was asked, and the
+            # agent may say nothing; no sound at the pen's lifts.)
+            if self.inking() or step['wait'] and not turn['text']:
+                continue
             if step['on'] and hushed and not stop.is_set() and now >= self.until + QUIET:
                 if not step['wait']:
                     turn['heard'] = turn['heard'] or now
@@ -2458,7 +2607,7 @@ class Call:
         if not text:
             return
         await self.send_event({'type': 'state', 'state': 'speaking'})
-        await self.send_event({'type': 'said', 'text': text})
+        await self.send_event({'type': 'said', 'text': unmarked(text)})
         async for x in self.audio_of(text, lang, stop, keep, made):
             if not stop.is_set():
                 now = self.wiring.monotonic()
@@ -2472,8 +2621,9 @@ class Call:
         # (HQ shows "€4", "06" and "Acme", the board hears "four euros", "oh six" and "Ak-mee")
         text = aloud(respelt(text, self.brain.respell.get(lang, {})), lang)
         named = getattr(self.brain, 'voices', {}).get(lang)  # (the company's, in the language: Piper's or Pocket's)
-        named = named or ('alex' if lang == 'nl' and self.brain.voice in NOT_IN_DUTCH else None)
+        named = named or (DUTCH if lang == 'nl' else None)
         piper = PIPERS.get(named)
+        text = marked(text, piper)
         voice = named or self.brain.voice
         seed = getattr(self.brain, 'seeds', {}).get(lang, SEED)
         kept = (lang, voice, text, seed)
@@ -2543,7 +2693,7 @@ class Call:
         """A line of the transcript, unless the other side asked for none (object), and when it was said (wall_ms; now
         unless given)."""
         if not self.objected:
-            self.lines.append(line)
+            self.lines.append(unmarked(line))
             self.times.append(at or self.wall_ms())
 
     def heard_lines(self, text):
@@ -2580,6 +2730,163 @@ class Call:
             return {'error': VOICE_WORDS['shape']}
         done, words = self.voices.rename(named.get('voice'), named.get('name'))
         return {'ok': words} if done else {'error': words}
+
+    # ---- a design session and the agent's raised hand (design.py).
+    async def design_tool(self, asked):
+        """The agent's design_session tool: the call becomes a design session, HQ opens its free sketch page, and the
+        agent hears the session's words in the tool's answer."""
+        if self.ended:
+            return {'error': DESIGN_TOOL_WORDS['gone']}
+        if not self.design.start():
+            return {'ok': DESIGN_TOOL_WORDS['already']}
+        print(f'call: {self.agent} made the call a design session', flush=True)
+        await self.send_event({'type': 'design'})
+        return {'ok': f"{DESIGN_TOOL_WORDS['on']} {self.design.told()}"}
+
+    async def hand_tool(self, asked):
+        """The agent's raise_hand tool: its hand up with what it's about (HQ shows it, with a soft beep), its moment
+        waited for (hand_moment); or down."""
+        if self.ended:
+            return {'error': HAND_TOOL_WORDS['gone']}
+        hand = asked.get('raise_hand')
+        about = ' '.join(str(hand.get('about') or '').split())[:ABOUT_LENGTH] if isinstance(hand, dict) else ''
+        if not isinstance(hand, dict) or (hand.get('down') is not True and not about):
+            return {'error': HAND_TOOL_WORDS['shape']}
+        if hand.get('down') is True:
+            return {'ok': HAND_TOOL_WORDS['down' if await self.design.lower() else 'none']}
+        await self.design.raise_hand(about)
+        print(f'call: {self.agent} raised its hand', flush=True)
+        self.wait_for_moment()
+        return {'ok': HAND_TOOL_WORDS['up']}
+
+    def hand_tapped(self):
+        """Someone tapped the agent's raised hand on the call screen: its moment comes as soon as nothing is on its way."""
+        if self.design.hand:
+            self.design.tapped()
+            self.wait_for_moment()
+
+    def wait_for_moment(self):
+        if not self.hand_waits or self.hand_waits.done():
+            self.hand_waits = asyncio.create_task(self.hand_moment())
+
+    async def hand_moment(self):
+        """The raised hand's moment: once the room has been quiet for HAND_PAUSE_SECONDS past idle() (no reply on its
+        way or playing, nobody talking, nothing waiting to be answered), or, tapped, once no reply is on its way or
+        playing and nothing heard waits for its turn. The agent then has a turn of its own with the hand's words
+        (design.py moment), as unprompted pictures do."""
+        calm = self.wiring.monotonic()
+        while self.design.hand and not self.ended:
+            await asyncio.sleep(0.1)
+            now = self.wiring.monotonic()
+            replying = self.turn is not None and not self.turn.done()
+            free = not (replying or now < self.until or self.draft or self.waiting)
+            if not self.idle():
+                calm = now
+            if (self.design.hand['tapped'] and free) or now - calm >= HAND_PAUSE_SECONDS:
+                print(f"call: {self.agent} had its hand's moment ({'tapped' if self.design.hand['tapped'] else 'a pause'})", flush=True)
+                await self.design.moment()
+                self.turn = asyncio.create_task(self.answer('', self.turn))
+                return
+
+    # ---- prototypes, built in the background from a brief (design.py BUILD_WORDS).
+    async def made(self, tool, asked):
+        """One of the agent's asks that makes something (design.py MAKES), once the room is done in a design session
+        (done), or its words that it wasn't made."""
+        return await tool(asked) if await self.done() else {'error': MADE_WORDS}
+
+    async def done(self):
+        """Whether the people in a design session are done (design.py MAKE_QUIET): quiet long enough since their last
+        words, nothing heard still to answer or on its way, the pen at rest. False once they talk on and the turn is
+        taken back (cut_in), or the call ends. Not a session: done at once."""
+        if not self.design.on:
+            return True
+        stop, until = self.speaking, self.wiring.monotonic() + MAKE_MOST_SECONDS
+        while not (stop and stop.is_set()) and not self.ended:
+            # (from the last sound, as hum counts it)
+            quiet = self.quiet * WINDOW + PAUSE >= MAKE_QUIET['done' if self.sounded_finished else 'open']
+            if quiet and not (self.draft or self.waiting or self.over or self.behind() or self.inking()):
+                return True
+            if self.wiring.monotonic() >= until:
+                print(f'call: {self.agent} made something after {MAKE_MOST_SECONDS:.0f} s, the room never quiet',
+                      flush=True)
+                return True
+            await asyncio.sleep(0.1)
+        return False
+
+    async def prototype_tool(self, asked):
+        """The agent's prototype tool: a page of its own (html) saved at once (CallNotes), or a brief a builder takes in
+        the background (build) while the agent goes on."""
+        given = asked.get('prototype')
+        if not isinstance(given, dict) or 'brief' not in given:
+            got = await self.page.prototype_tool(asked)
+            if 'error' not in got and isinstance(given, dict):
+                self.prototypes[one_line(given['name'])] = given['html'].strip()
+            return got
+        name = one_line(given['name']) if isinstance(given.get('name'), str) else ''
+        brief = given['brief'].strip() if isinstance(given['brief'], str) else ''
+        if set(given) - {'name', 'brief'} or not 0 < len(name) <= PROTOTYPE_NAME or not 0 < len(brief) <= BRIEF_MOST:
+            return {'error': BUILD_TOOL_WORDS['shape']}
+        if refusal := self.page.refused(PROTOTYPE_WORDS):
+            return {'error': refusal}
+        builder = asyncio.create_task(self.build(name, brief))
+        self.builders.add(builder)
+        builder.add_done_callback(self.builders.discard)
+        print(f'call: {self.agent} had a prototype built in the background', flush=True)
+        return {'ok': BUILD_TOOL_WORDS['started']}
+
+    async def build(self, name, brief):
+        """A prototype built from the agent's brief while the call goes on: the CLI once, with no tools, at BUILD_EFFORT,
+        on the call's seat (the next version of one the call has builds on its page). Its page is saved as the agent's
+        would be, and the agent's hand goes up for it (design.py built); one that fails, the agent hears why."""
+        start = self.wiring.monotonic()
+        try:
+            result = await self.builder(build_ask(name, brief, self.lang, self.prototypes.get(name)))
+            if not (page := built_page(result)):
+                raise ValueError('no whole page in its answer')
+            got = await self.page.prototype_tool({'prototype': {'name': name, 'html': page[0]}})
+            if 'error' in got:
+                raise ValueError(got['error'])
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            print(f'call: {self.agent}: a prototype built in the background failed ({err!r})'[:300], flush=True)
+            if not self.ended:
+                self.design.due = '\n'.join(filter(None, (self.design.due, BUILD_FAILED.format(name=name, why=err))))
+            return
+        self.prototypes[name] = page[0]
+        print(f'call: {self.agent}: a prototype built in the background after {self.wiring.monotonic() - start:.0f} s',
+              flush=True)
+        if self.ended:
+            return
+        shown = f"{name} v{got['version']}" if type(got.get('version')) is int else name
+        if await self.design.built(shown[:ABOUT_LENGTH], f'{shown}: {page[1]}' if page[1] else shown):
+            self.wait_for_moment()
+
+    async def builder(self, ask):
+        """The builder's answer to ask: the CLI's result text. The call's seat, no tools and nothing of the call's own
+        (no HQ token, no screen socket), its session not kept."""
+        paths = self.wiring.paths
+        signs = sign_in_pipe(seat_token(paths.seat))
+        try:
+            env = agent_env(os.environ, HQ, signs, '', self.agent, None, self.brain.tz, work=paths.work,
+                            cli_config=paths.cli_config)
+            proc = await self.wiring.start_cli(
+                'claude', '-p', '--output-format', 'json', '--model', MODEL, '--effort', BUILD_EFFORT, '--tools', '',
+                '--strict-mcp-config', '--setting-sources', 'user', '--permission-mode', 'dontAsk',
+                '--no-session-persistence', '--system-prompt', BUILD_WORDS, cwd=paths.work, env=env, pass_fds=(signs,),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                limit=1 << 24)
+        finally:
+            os.close(signs)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(ask.encode()), BUILD_SECONDS)
+        finally:
+            if proc.returncode is None:  # (given up on, or the call ended: cancelled)
+                proc.kill()
+        result = json.loads(out or b'{}') if out.strip().startswith(b'{') else {}
+        if proc.returncode or result.get('is_error') or not isinstance(result.get('result'), str):
+            raise RuntimeError(f"the builder ended with {proc.returncode}: {str(result.get('result') or '')[:200]}")
+        return result['result']
 
     async def enrol_tool(self, asked):
         """The agent's save_voice tool (voices.py), the board having asked: with a name alone, what to tell them and ask
@@ -2651,50 +2958,135 @@ class Call:
 
     def end(self):
         # First: a turn that loses its agent to the close below sees it, and a write under way finishes before the
-        # hand-over below, which no write comes after
+        # hand-over below, which no write comes after. Once: the line's watch may end a quiet call that its connection's
+        # end ends again (a second would hand HQ the transcript again, its token spent, as a new call).
         with self.writing:
+            if self.ended:
+                return
             self.ended = True
-        self.brain.close()
-        SCREENS.pop(self.screen_key, None)  # (its key answers nothing from now)
-        self.pictures = []
-        self.drawing.end()
-        self.driving.end()
-        if self.voices and self.voices.prints:
-            print(self.voices.report(self.agent), flush=True)
-            if heard := self.voices.heard():  # (the saved voices it heard, refined)
-                try:
-                    self.wiring.hq('POST', 'voiceprints-heard', {'heard': heard})
-                except Exception as err:
-                    print(f'call: {self.agent}: saved voices not refined ({type(err).__name__})', flush=True)
-        if self.speaking:
-            self.speaking.set()
-        if self.brain.token:
-            self.keep(last=True)  # (a call where nobody spoke still hands its token back)
-        (self.wiring.paths.live / self.file.stem).unlink(missing_ok=True)
-        if not self.care:
-            hand_over(self.file, self.wiring.hq)
+        # (whatever fails on the way, the call is over: a deploy stops waiting for it, and HQ gets its transcript and
+        # closes its call.)
+        try:
+            self.brain.close()
+            SCREENS.pop(self.screen_key, None)  # (its key answers nothing from now)
+            self.pictures = []
+            self.drawing.end()
+            self.driving.end()
+            # (its page has no call to go to.)
+            for builder in list(self.builders):
+                builder.get_loop().call_soon_threadsafe(builder.cancel)  # (this runs in a thread of its own)
+            if self.voices and self.voices.prints:
+                print(self.voices.report(self.agent), flush=True)
+                if heard := self.voices.heard():  # (the saved voices it heard, refined)
+                    try:
+                        self.wiring.hq('POST', 'voiceprints-heard', {'heard': heard})
+                    except Exception as err:
+                        print(f'call: {self.agent}: saved voices not refined ({type(err).__name__})', flush=True)
+            if self.speaking:
+                self.speaking.set()
+        finally:
+            try:
+                if self.brain.token:
+                    self.keep(last=True)  # (a call where nobody spoke still hands its token back)
+            finally:
+                LIVE.discard(self)
+                (self.wiring.paths.live / self.file.stem).unlink(missing_ok=True)
+                if not self.care:
+                    hand_over(self.file, self.wiring.hq)
+
+
+# One hand-over at a time: a call's end and the sweep never send the same transcript twice.
+HANDING = threading.Lock()
+# How often the line tries again to hand over the transcripts it holds (hand_over_held), in seconds
+HELD_EVERY = 60
 
 
 def hand_over(file, hq):
-    """The transcript goes to the coordinator (hq); the file stays until it's there (a crash or restart hands it over
-    later)."""
-    try:
-        call = json.loads(file.read_text())
-        if call['lines'] or call.get('token') or call.get('callout'):  # (a silent call still ends its token, a call out itself)
-            hq('POST', 'call-end', call)
-        file.unlink()
-    except FileNotFoundError:
-        pass
-    except Exception as err:
-        print('Could not hand over the transcript yet:', err, flush=True)
+    """The transcript goes to the coordinator (hq). The file stays until HQ has it, and hand_over_held tries again."""
+    with HANDING:
+        try:
+            call = json.loads(file.read_text())
+            if call['lines'] or call.get('token') or call.get('callout'):  # (a silent call still ends its token, a call out itself)
+                hq('POST', 'call-end', call)
+            file.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as err:
+            print('Could not hand over the transcript yet:', err, flush=True)
+
+
+async def hand_over_held(paths, hq, every=HELD_EVERY):
+    """The transcripts the line holds go to the coordinator, except a live call's (its file in live). At the start
+    these are the calls a crash or restart cut off. Then it looks again each `every` seconds, for one HQ didn't take at
+    its call's end. The board can't read a transcript until HQ has it."""
+    while True:
+        for f in paths.calls.glob('*.json'):
+            if not (paths.live / f.stem).exists():
+                await asyncio.to_thread(hand_over, f, hq)
+        await asyncio.sleep(every)
+
+
+# Every LINES_EVERY seconds: each call's transcript so far goes to HQ as it grows (call-lines), so what was said is in HQ
+# even if the call never ends cleanly, and the CEO reads a call still going on; HQ answers with the colleagues' messages
+# for the call, which its agent hears (Call.messaged). (A call that's over is hand_over_held's.) (call #257's transcript stayed on the line, its call open in HQ with no lines, and a colleague's word
+# never reached the call)
+LINES_EVERY = 15
+
+
+async def kept_in_hq(wiring):
+    sent = {}  # (each file's last change sent, by name)
+    while True:
+        await asyncio.sleep(LINES_EVERY)
+        for name, messages in await asyncio.to_thread(keep_in_hq, wiring, sent):
+            if call := next((e['call'] for e in CALLS.values() if e['call'].file.name == name), None):
+                call.messaged(messages)
+
+
+def keep_in_hq(wiring, sent):
+    """Sends each live call's lines when they changed (sent: the last change sent, by file), or its token alone. The
+    messages HQ had for each call, by its file's name."""
+    live, heard = {f.name for f in wiring.paths.live.iterdir()}, []
+    files = list(wiring.paths.calls.glob('*.json'))
+    for file in files:
+        try:
+            if file.stem not in live:  # (over: hand_over_held's)
+                continue
+            changed = file.stat().st_mtime_ns
+            call = json.loads(file.read_text())
+            if not call.get('token') or call.get('callout'):  # (a call out's notes go at its end only)
+                continue
+            fresh = sent.get(file.name) != changed
+            answer = wiring.hq('POST', 'call-lines', {'agent': call.get('agent'), 'token': call['token'],
+                                                      **({'lines': call.get('lines'), 'times': call.get('times')} if fresh else {})})
+            sent[file.name] = changed
+            if isinstance(answer, dict) and isinstance(answer.get('messages'), list) and answer['messages']:
+                heard.append((file.name, answer['messages']))
+        except FileNotFoundError:
+            pass
+        except Exception as err:  # (HQ busy, or the file half written: the next round sends it)
+            print(f'call: the transcript so far not in HQ yet ({type(err).__name__})', flush=True)
+    for name in set(sent) - {f.name for f in files}:
+        del sent[name]
+    return heard
 
 
 # ---- HQ's call screen: JSON events and 16 kHz PCM16 frames both ways ----
 # A call outlives its connection: when the phone switches networks, the app reconnects to the same call (its id)
 # within HOLD seconds and carries on, and a page that reloaded or left calls back into it ('back': came_back). Hanging
-# up says so ('bye'); otherwise the call ends once HOLD runs out.
-HOLD = 30
+# up says so ('bye'); otherwise the call ends once HOLD runs out. HOLD is long enough for the board to close a browser
+# that froze, open HQ again and dial: a new dial to an agent whose call is still on comes back into it (held), whichever
+# key dialled. (it was 30 s, and a frozen iPad took the board longer)
+HOLD = 600
 CALLS = {}  # call id -> {'call', 'line', 'timer'}
+
+
+def held(first):
+    """The line's id of the call a new dial from HQ comes back into, or None: one with the same agent still on the line
+    (its connection dropped, or still open from a page that froze), about the same card unless the dial is about none.
+    Only the board dials from HQ, so the agent's call that's still on is the board's own."""
+    agent, request = re.sub(r'[^a-z0-9-]', '', str(first.get('agent') or '')), int(first.get('request') or 0)
+    return next((cid for cid, e in CALLS.items() if e['call'].agent == agent and not e['call'].ended
+                 and (not request or e['call'].request == request)), None)
 
 
 class Line:
@@ -2707,6 +3099,50 @@ class Line:
             await self.ws.send(data)
         except ConnectionClosed:
             pass
+
+
+# A call counts as live (its file in paths.live, which a deploy waits for: infra/sync.sh) while its line is and the call
+# is in use. Every LIVE_EVERY seconds the line touches each live call's file (so its age is how long the call has been
+# neither), except:
+# - a call whose line sent nothing (its audio, HQ's pings) for LIVE_QUIET seconds: a connection that hung or a page that
+#   froze. The line ends it and closes its connection (close_line).
+# - a call with nothing on it for LIVE_IDLE seconds: no words heard, no pen on the board's screen, no reply or build of
+#   the agent's at work. A page left open, or a room whose mixer sends only silence, stays on, but its file ages and the
+#   next deploy goes ahead, ending it (the line hands its transcript over when it starts again). A word or a stroke
+#   touches it again. LIVE_IDLE is longer than the board stays silent in a call it's still on (reading a page, trying a
+#   prototype), and short enough that a deploy doesn't wait long on a call left open.
+LIVE_QUIET = 120
+LIVE_IDLE = 20 * 60
+LIVE_EVERY = 30
+LIVE = set()  # the calls on the line, from their start to their end
+
+
+async def watch_live(every=LIVE_EVERY):
+    while True:
+        for call in list(LIVE):
+            now = call.wiring.monotonic()
+            if call.turn and not call.turn.done() or call.builders:  # (the agent at work)
+                call.active = now
+            quiet, idle = now - call.signal, now - call.active
+            if quiet < LIVE_QUIET:
+                if idle < LIVE_IDLE:
+                    try:
+                        # (never made again: its end may just have taken it)
+                        os.utime(call.wiring.paths.live / call.file.stem)
+                    except FileNotFoundError:
+                        pass
+                elif idle < LIVE_IDLE + every:  # (said on the pass that finds it idle)
+                    print(f'call: {call.agent}: nothing on the call for {idle:.0f} s, a deploy no longer waits for it',
+                          flush=True)
+                continue
+            print(f'call: {call.agent}: nothing from its line for {quiet:.0f} s, the line ends the call', flush=True)
+            try:
+                await asyncio.to_thread(call.end)
+            except Exception as err:  # (it's over all the same: end's own finally. The watch goes on.)
+                print(f'call: {call.agent}: its end failed ({err!r})', flush=True)
+            if call.close_line:  # (not awaited: a hung connection's close waits out its timeout)
+                asyncio.create_task(call.close_line())
+        await asyncio.sleep(every)
 
 
 async def hang_up_later(cid):
@@ -2803,7 +3239,13 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
     if ws.request.headers.get('Origin') != ORIGIN:  # a preview page is the same site: only HQ itself may call
         return await ws.close(1008, 'origin')
     first = json.loads(await ws.recv())
-    if cid := first.get('resume'):
+    # (a dial that comes back into the agent's call still on is the board calling back in.)
+    cid, back = first.get('resume'), first.get('back') is True
+    if not cid and (cid := held(first)):
+        back = True
+        print('call: a new dial came back into the call still on', flush=True)
+    resumed = bool(cid)
+    if cid:
         e = CALLS.get(str(cid))
         if not e:
             return await ws.close(4000, 'gone')
@@ -2815,9 +3257,11 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             asyncio.create_task(old.close())
         call, line = e['call'], e['line']
         call.reconnected()
-        if first.get('back') is True:  # (the board called again: HQ's page is a new one)
+        if back:  # (the board called again: HQ's page is a new one)
             call.came_back()
-        print(f'call: {call.agent} {"called back in" if first.get("back") is True else "reconnected"}', flush=True)
+        if first.get('design') is True and call.design.start():  # (dialled with the Design session key)
+            print(f'call: {call.agent} is a design session', flush=True)
+        print(f'call: {call.agent} {"called back in" if back else "reconnected"}', flush=True)
     else:
         t0 = time.monotonic()
         agent, lang = re.sub(r'[^a-z0-9-]', '', str(first.get('agent') or '')), language(first.get('lang'))
@@ -2840,15 +3284,32 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
                     e['timer'].cancel()
                 await asyncio.to_thread(call.end)
                 await line.ws.close(4000, 'gone')
+
+        async def close_line():
+            """The line's watch ended the call (watch_live): HQ's page, if it's still there, hears it's gone."""
+            if (e := CALLS.get(cid)) and e['call'] is call:
+                CALLS.pop(cid)
+                if e['timer']:
+                    e['timer'].cancel()
+            await line.ws.close(4000, 'gone')
         # walk: HQ calls about a card's work to walk the board through it
         request = int(first.get('request') or 0)
         walk = first.get('walk') is True and request > 0
         call = make_call(lambda x: line.send(pcm(x)), lambda e: line.send(json.dumps(e)),
                          lambda: line.send(json.dumps({'type': 'clear'})), agent, lang, request, hang_up=hang_up,
                          walk=walk, wiring=wiring)
+        call.close_line = close_line
         CALLS[cid] = {'call': call, 'line': line, 'timer': None}
-        await call.start()
-        await call.ringing()  # (its hello comes with the pick-up)
+        if first.get('design') is True:  # (HQ's Design session key.)
+            call.design.start()
+            print(f'call: {agent} is a design session', flush=True)
+        try:
+            await call.start()
+            await call.ringing()  # (its hello comes with the pick-up)
+        except BaseException:  # (a call that never picked up is over too.)
+            CALLS.pop(cid, None)
+            await asyncio.to_thread(call.end)
+            raise
         print(f'call: {agent} picked up in {time.monotonic() - t0:.1f} s', flush=True)
     call.live_at = call.live_at or call.wiring.now() / 1000
     # id: the line's, to reconnect; call: HQ's calls row; key: HQ's picture uploads for that call carry it; heard: the
@@ -2857,11 +3318,11 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
     # (from the id on: HQ may hang up while the line rang, and the call must be ended or held then as at any drop)
     try:
         picked_up = {'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}
-        if first.get('back') is True:
+        if back:
             picked_up['said'] = call.said_so_far()
         await ws.send(json.dumps(picked_up))
         await call.retell()  # (what happened to its pictures while HQ was away)
-        if not first.get('resume'):
+        if not resumed:
             await call.greet()
         async for m in ws:
             if line.ws is not ws:  # (the call moved to a new connection, which counts from what the line has: heard)
@@ -2889,6 +3350,13 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             # (a mark on the call's notes page, as a note.)
             elif kind == 'mark' and isinstance(e.get('id'), int) and isinstance(e.get('updated'), str):
                 asyncio.create_task(call.mark(e['id'], e['updated']))
+            # (the board added a guest, in the room with it: the agent hears of them with its next message.)
+            elif kind == 'guest' and isinstance(e.get('name'), str) and call.voices:
+                call.voices.joined(e['name'])
+            elif kind == 'hand':  # (the board tapped the agent's raised hand.)
+                call.hand_tapped()
+            elif kind == 'screen' and e.get('state') in ('shown', 'paused', 'off'):
+                call.screen_shown(e['state'])
             elif kind == 'asked' and isinstance(e.get('id'), int):
                 call.drawing.asked(e['id'], e.get('answer'))
             elif kind == 'inked' and isinstance(e.get('id'), int):
@@ -2949,6 +3417,7 @@ async def phone_call(ws, make_call=Call, wiring=Wiring()):
                     call, limit = await care_call(ws, send, clear, ok, care_sid, care, make_call, wiring)
                     if not call:
                         return
+                    call.close_line = ws.close
                     continue
                 # (the agent hung up: closing the stream ends the phone call, as Twilio goes on to the TwiML after its
                 # <Connect>, and there is none: phone.ts)
@@ -2957,6 +3426,8 @@ async def phone_call(ws, make_call=Call, wiring=Wiring()):
                 call = make_call(send, lambda ev: asyncio.sleep(0), lambda: ws.send(json.dumps({'event': 'clear', 'streamSid': sid})),
                                  ok['agent'], language(ok.get('lang')), phone=True, hang_up=ws.close, callout=callout,
                                  wiring=wiring)
+                # (closing the stream ends the phone call, as the agent's hang-up does.)
+                call.close_line = ws.close
                 await call.start()
                 await call.greet()
             elif e.get('event') == 'media' and call:
@@ -3054,8 +3525,10 @@ async def main():
     shutil.rmtree(paths.live, ignore_errors=True)  # (the calls a crash or restart cut off are over.)
     paths.live.mkdir(parents=True)
     forget(paths.sessions)
-    for f in paths.calls.glob('*.json'):  # calls a crash or restart cut off: their transcripts still count
-        await asyncio.to_thread(hand_over, f, wiring.hq)
+    # (kept: a task nobody holds can be collected.)
+    held = asyncio.create_task(hand_over_held(paths, wiring.hq))
+    watched = asyncio.create_task(watch_live())  # (kept, as held.)
+    keeping = asyncio.create_task(kept_in_hq(wiring))  # (kept, as held.)
     async with await serve_screens(paths.screen_socket), serve(functools.partial(route, wiring=wiring), '0.0.0.0', 8080, max_size=1 << 20, ping_interval=20):
         print('Voice line ready', flush=True)
         await asyncio.Future()

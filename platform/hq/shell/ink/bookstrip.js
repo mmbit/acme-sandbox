@@ -77,7 +77,8 @@ function sliding(el, pick) {
   el.addEventListener('pointerup', lift);
   el.addEventListener('pointercancel', lift);
 }
-// (only the click that comes with the lift: a tap right after it is a tap)
+// (only the click that comes with the lift: a tap right after it is a tap. That click follows its pointerup at once, so
+// 60 ms holds it and no tap is that quick; the page's arrows hold theirs longer, bookcontrols.js arrowKey().
 function noClick(el) {
   const stop = c => {
     if (!c.isTrusted) return;

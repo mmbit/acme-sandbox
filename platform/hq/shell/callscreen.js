@@ -15,6 +15,7 @@ import { scene, capFps, CALL_FPS, REST_FPS } from './stage.js';
 import { icon } from './icons.js';
 import { tell } from './desk.js';
 import { addGuest } from './callguest.js';
+import { paintHand } from './callhand.js';
 
 const $ = s => document.querySelector(s);
 const PICTURE = icon('picture');
@@ -51,10 +52,10 @@ export function openLayer(c) {
       </div>
       <!-- pictures on a call: the strip and the attach button -->
       <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
-      <!-- Add a guest's card: their name and address, then a QR code and link (callguest.js) -->
+      <!-- Join from an iPad's card: the call's QR code and link (callguest.js.) -->
       <div class="guest-card" id="call-guest-card" role="status" hidden></div>
-      <!-- the board interrupts by speaking: Show my screen has the bottom row's middle, Hang up its symbol on a phone -->
-      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW.words}</span><span class="short">${SHOW.short}</span></button><button class="mic attach" id="call-guest" title="Add a guest" aria-label="Add a guest" disabled>${GUEST}</button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
+      <!-- the board interrupts by speaking: like shapes together, the round keys (a picture, Join from an iPad) then Show my screen and Hang up, its symbol on a phone -->
+      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button class="mic attach" id="call-guest" title="Join from an iPad" aria-label="Join from an iPad" disabled>${GUEST}</button><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW.words}</span><span class="short">${SHOW.short}</span></button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
     </div></div>
   </div>`;
   document.querySelector('#call-layer')?.remove(); // (the last call's, still switching off: closeLayer)
@@ -161,6 +162,7 @@ export async function minimise(c) {
   c.bubble ??= newBubble(c);
   c.bubble.state(c.live ? 'listening' : '');
   c.bubble.show(from);
+  paintHand(c); // (a raised hand on the bubble too.)
   cue('minimise');
   c.layer.classList.add('leaving');
   await device
@@ -324,6 +326,16 @@ function showWatching(c) {
   c.bubble?.watching(state);
   if (c.watch) unshown(c, state === 'unseen' ? UNSEEN(c.name) : '');
   shareKey(c);
+  screenToLine(c);
+}
+// The line hears whether the screen is shown, paused or off the moment that changes, and again each time it picks up
+// (again: call.js), not only from a turn's look at the screen that came in time (call #258: one that didn't had the agent
+// say it saw nothing, the screen shown for 19 s).
+export function screenToLine(c, again = false) {
+  const state = !c.watch ? 'off' : c.paused ? 'paused' : 'shown';
+  if ((state === c.screenSaid && !again) || c.ws?.readyState !== WebSocket.OPEN) return;
+  c.screenSaid = state;
+  c.ws.send(JSON.stringify({ type: 'screen', state }));
 }
 // The key says what it does next, and waits for the call to pick up (call.js asks again then)
 export function shareKey(c) {

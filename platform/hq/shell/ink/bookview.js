@@ -35,7 +35,8 @@ export const fitOf = page => page?.scale ?? 1;
 export const zoomOf = (book, s) => {
   const page = viewOf(book)?.page;
   if (!page) return s;
-  return isCanvas(page.chapter) ? zoomWithin(s, page, book.size) : unitsZoom(s, fitOf(page));
+  // (isCanvas takes the page)
+  return isCanvas(page) ? zoomWithin(s, page, book.size) : unitsZoom(s, fitOf(page));
 };
 
 // The view set: the page panned to pan at zoom scale, kept on the page, drawn. (a
@@ -52,7 +53,8 @@ export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   book.scale = scale;
   // (scrolled on past the page's foot by about a screen, never moved there by itself: a unit's room dragged shorter
   // leaves the page where it is, past its end, and from there it scrolls back up but no further down.)
-  const reach = isCanvas(v.page.chapter)
+  // (isCanvas takes the page)
+  const reach = isCanvas(v.page)
       ? canvasPans(v.page, book.size, scale, FOOT_SHOWN)
       : unitsPans(v.page, book.size, scale, FOOT_SHOWN),
     held = v.page.resizing || book.heldPastEnd === v.page ? book.pan.y : -Infinity,

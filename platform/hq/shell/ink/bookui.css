@@ -173,6 +173,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* (one set: an icon's accent, the Archive box's gold lid, in the menu's ink as the rest.) */
+.bk-menu svg.icon .accent {
+  fill: currentColor;
+}
 @media (hover: hover) {
   .bk-menu > * > button:hover,
   .bk-menu > button:hover {

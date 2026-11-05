@@ -221,7 +221,7 @@
   }
 }
 /* (a phone on its side: at its foot, the bookmarks at the top below HQ's keys, bookmarks.css; beside HQ's page
-   elsewhere the bookmarks sit just above it) */
+   elsewhere the bookmarks sit a clear gap above it) */
 @media (orientation: landscape) and (max-height: 520px) {
   #book:not([data-mode='spread']) .bk-lip {
     top: calc(var(--app-h, 100dvh) - 44px);

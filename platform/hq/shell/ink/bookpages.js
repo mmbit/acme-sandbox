@@ -275,7 +275,8 @@ function show1(book, i, place = null) {
   if (!v) return;
   // (at a place on it, or as it was left this visit, or at its top-left, below the blur)
   const cam = place ? null : book.cams.get(v.page),
-    opening = isCanvas(v.page.chapter) ? opensAt(contentOf(book).w) : 1,
+    // (isCanvas takes the page)
+    opening = isCanvas(v.page) ? opensAt(contentOf(book).w) : 1,
     scale = zoomOf(book, ((place ? place.z : cam?.z) ?? opening) * fitOf(v.page));
   setView(book, { pan: cam?.pan ?? panTo(book, { x: place?.x ?? 0, y: place?.y ?? 0 }, scale), scale });
   if (!v.page.ink) read(book, v);

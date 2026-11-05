@@ -37,7 +37,8 @@
   pointer-events: none;
 }
 
-/* ---- an agent's face (an answer still coming, a try's versions) */
+/* ---- an agent's face (an answer still coming, a try's versions, the seen mark: bookfaces.js), HQ's looks' small
+   sprite of them drawn sharp. */
 #book .bk-answer-face {
   flex: none;
   display: grid;
@@ -46,6 +47,7 @@
   height: 22px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--ink) 14%, #fff) center / cover no-repeat;
+  image-rendering: pixelated;
   box-shadow:
     0 0 0 1.5px #fff,
     0 0 0 2.5px color-mix(in srgb, var(--ink) 35%, transparent);

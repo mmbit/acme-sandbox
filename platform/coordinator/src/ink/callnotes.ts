@@ -105,12 +105,19 @@ function openPage(call: number) {
   return open?.id;
 }
 
-// POST /api/notebooks/call { call, page? }: the live call's notes page, for HQ to open as the call starts; page: one of
-// the board's pages brought to the call by its folded corner, put on it as its first scrap (once)
+// POST /api/notebooks/call { call, page?, design? }: the live call's notes page, for HQ to open as the call starts;
+// page: one of the board's pages brought to the call by its folded corner, put on it as its first scrap (once); design
+// (true): it's a design session's, a sketch page from now on (notebook.ts sketch), its units so far pinned where the
+// masonry laid them as HQ first lays it as a canvas (sketchcanvas.js).
 export async function openFor(b: any) {
   const call = Number(b?.call);
   const p = Number.isInteger(call) && call > 0 ? pageFor(call) : null;
   if (!p) return [404, 'no live call of yours by that number'] as Refused;
+  if (b.design != null && b.design !== true) return [400, 'design is true'] as Refused;
+  if (b.design && !p.sketch) {
+    db.prepare('update book_pages set sketch = 1 where id = ?').run(p.id);
+    changed(p.notebook, p.id);
+  }
   const brought = b.page == null ? null : (pageRow(Number(b.page), BOARD) ?? null);
   if (b.page != null && !brought) return [404, 'no such page to bring'] as Refused;
   if (brought && brought.id !== p.id && !hasGroups(p.id)) await bring(p, brought);

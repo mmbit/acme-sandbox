@@ -122,12 +122,20 @@ const HQ_HOST = new URL(ORIGIN).host;
 // sent from, if the share opens it.
 function reviewerOn(req: IncomingMessage) {
   if (String(req.headers.host ?? '').toLowerCase() === HQ_HOST) return isAuthed(req) ? { slug: HQ, host: HQ_HOST, base: '', share: null } : null;
+  const own = ownHost(req);
+  if (own) return { slug: own, host: own, base: '', share: null, own: true };
   const p = productOf(req);
   if (!p) return null;
   if (boardOn(req, p.host)) return { ...p, share: null };
   const share = shares.fromSession(cookie(req, 'ps'), p.host);
   return share && !share.view ? { ...p, share } : null;
 }
+// A host a module serves itself, where the board marks pages on a call (callprototypes.ts: a call's prototypes): the
+// tool and its parts, but no notes of its own (reviewPost): its marks go to the call's page. find: the host, when the
+// request is the board's on one.
+const ownHosts: ((req: IncomingMessage) => string | null)[] = [];
+export const addReviewHost = (find: (req: IncomingMessage) => string | null) => void ownHosts.push(find);
+const ownHost = (req: IncomingMessage) => ownHosts.map(find => find(req)).find(Boolean) ?? null;
 const noteOpens = (share: shares.Session, host: string, page: unknown) => {
   try { const u = new URL(String(page)); return u.host === host && shares.opens(share, host, u.pathname); } catch { return false; }
 };
@@ -244,6 +252,7 @@ async function reviewPart(req: IncomingMessage, res: ServerResponse, path: strin
 async function reviewPost(req: IncomingMessage, res: ServerResponse, post: string) {
   const p = reviewerOn(req);
   if (!p) return json(res, 403, { error: 'review mode is for the board' });
+  if ('own' in p) return json(res, 403, { error: "a mark here goes on the call's page, never a note of its own" });
   // SameSite=Lax keeps the cookie off cross-site posts, but other products share the site: the page must be this one.
   if (req.headers.origin !== (p.slug === HQ ? ORIGIN : `https://${p.host}`)) return json(res, 403, { error: 'origin' });
   if (post === 'voice') { const r = await voice(p.slug, req, !!p.share); return typeof r === 'number' ? json(res, r, { error: 'voice' }) : json(res, 200, r); }

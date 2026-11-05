@@ -243,17 +243,19 @@ async function main([cmd, ...paths]) {
   } else if (cmd === 'keep') for (const p of paths) keep(p);
   else if (cmd === 'adopt') for (const p of paths) adopt(p);
   else {
-    console.error(
-      readFileSync(fileURLToPath(import.meta.url), 'utf8')
-        .split('\nimport')[0]
-        .replace(/^#!.*\n/, '')
-        .replace(/^\/\/ ?/gm, ''),
-    );
+    console.error(usage(import.meta.url));
     process.exitCode = 1;
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+// A tool's opening comment, which it prints as its usage
+export const usage = url =>
+  readFileSync(fileURLToPath(url), 'utf8')
+    .split('\nimport')[0]
+    .replace(/^#!.*\n/, '')
+    .replace(/^\/\/ ?/gm, '');
+
+if (import.meta.main)
   await main(process.argv.slice(2)).catch(e => {
     console.error(e.message);
     process.exitCode = 1;

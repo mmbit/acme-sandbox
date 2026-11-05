@@ -1,7 +1,9 @@
 // A drawing an agent writes as SVG, drawn as a picture in the company's look, in the coordinator's own Chromium: its
 // shapes and words styled by the stylesheet theme/hq.yaml's `drawing` names (a file of the company's under kits/ or
 // theme/), with the platform's plain lines without one. The frame gives every drawing the same few words to style by,
-// which the call's draw_picture tool names: accent, shade, arrow, thin and muted.
+// which the call's draw_picture tool names: accent, shade, arrow, thin and muted. Its ground is clear: on the page it's
+// lines on its post-it, not a card of its own in it (bookgroups.css .bk-photo[data-drawing]), unless the company's
+// stylesheet gives it one.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, posix } from 'node:path';
 import { launch, type Tab } from '../../../shared/chromium/chromium.ts';
@@ -64,7 +66,7 @@ function framePage(svg: string) {
 const PLAIN = `
 body { margin: 0; }
 .defs { position: absolute; }
-main { display: inline-block; padding: 16px; background: #fff; color: #000; font: 28px sans-serif; }
+main { display: inline-block; padding: 16px; color: #000; font: 28px sans-serif; }
 main > svg { display: block; width: ${DRAWN_PX}px; height: auto; overflow: visible; }
 main :is(rect, circle, ellipse, line, polyline, polygon, path) {
   fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
@@ -88,6 +90,8 @@ async function pictured(tab: Tab) {
     deviceScaleFactor: 1,
     mobile: false,
   });
+  // (the page's own white made clear, so only what's drawn is in the picture)
+  await tab.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
   const navigated = await tab.send('Page.navigate', { url: `${FRAME}/` });
   if (navigated.errorText) throw new Error(`The drawing's frame didn't open: ${navigated.errorText}`);
   const box = await evaluate(tab, MEASURED);

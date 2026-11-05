@@ -125,6 +125,7 @@ import * as bookcalls from './ink/bookcalls.ts';   // and calls' pages
 import * as booksearch from './ink/booksearch.ts';   // and its Search.
 import './ink/bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
 import * as booktyped from './ink/booktyped.ts';   // and a question typed on its page, answered under it
+import { REST_MS, judgeRested } from './ink/bookjudge.ts';   // and every note of the board's read once it rests.
 import './ink/sketchmigration.ts';   // and the Sketchbook's old sketches, folded in at start
 import * as notebookguests from './notebookguests.ts';
 import { managedPage } from './notebookaccess.ts';
@@ -141,6 +142,7 @@ import './notebookunits.ts';   // the groups from before scrap units carried int
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
 import * as trypreview from './ink/trypreview.ts';
 import * as earlierVersions from './earlier.ts';
+import * as callprototypes from './callprototypes.ts';
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
 import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers there, a call's agent's too
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
@@ -153,9 +155,11 @@ import { NOTE_MAX, SAVE_MAX, isRefused } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
 import * as language from './language.ts';   // the board's language
 import * as messages from './messages.ts';
+import * as callmessages from './callmessages.ts';
 import { oneLine } from './agreements.ts';
 import * as memory from './memory.ts';
 import * as merged from './merged.ts';
+import { readCostJobsAhead } from './costjobs.ts';
 import * as estimates from './estimates.ts';
 import * as when from './when.ts';
 import * as forecast from './forecast.ts';
@@ -321,10 +325,18 @@ const send = (res: ServerResponse, code: number, body: unknown, type = 'applicat
   res.end(typeof body === 'string' || body instanceof Buffer ? body : JSON.stringify(body));
 };
 
-// the routes whose JSON carries files (cardfiles.ts JSON_MAX): a card's, and a guest checklist's items' (guests.ts)
-const FILE_ROUTES = new Set(['POST /api/agent/request', 'POST /api/agent/guest', 'POST /api/agent/guest-add']);
-// a version of a workspace's file, in base64 (workspaces.ts FILE_MAX_BYTES)
-const WORKSPACE_PUT = 'POST /api/agent/workspaces/put';
+const PROTOTYPE_PUT = 'POST /api/agent/prototype';
+// The routes whose JSON may be bigger than SIGNED_IN_MAX, and how big.
+const JSON_MAXES: Record<string, number> = {
+  // (files: a card's, and a guest checklist's items', guests.ts)
+  'POST /api/agent/request': cardFiles.JSON_MAX,
+  'POST /api/agent/guest': cardFiles.JSON_MAX,
+  'POST /api/agent/guest-add': cardFiles.JSON_MAX,
+  [PROTOTYPE_PUT]: callprototypes.JSON_MAX,
+  'POST /api/voice/prototype': callprototypes.PAGE_JSON_MAX,
+  // (a version of a workspace's file, in base64: workspaces.ts FILE_MAX_BYTES)
+  'POST /api/agent/workspaces/put': workspaces.ENTRIES_JSON_MAX,
+};
 // Streams a file, honouring a single byte range: Safari won't play a video without one (the cycle presentations).
 // Its tag (size and modified time) lets a browser check a copy it holds: a no-cache file it already has comes back as a
 // bodiless 304, never sent again. (Its lookup, findFile, is shared with cyclePage. files.ts)
@@ -425,8 +437,9 @@ const api: Record<string, BoardRoute> = {
   'GET /api/calls': () => call.calls(),
   // "We missed something": one item the board adds to a call, and the call is followed up again (ledger.ts missed())
   'POST /api/calls/item': (q, s, b) => ledger.missed(Number(b.call), b.what),
-  // the board's guest on its live call, with a pen on the call's page: their door's link (callguests.ts).
-  'POST /api/calls/guest': (q, s, b) => refusal(callguests.addGuest(b)),
+  // the board's guests on its live call, each with a pen on the call's page: the call's join link, for its QR code
+  // (callguests.ts).
+  'POST /api/calls/guest': (q, s, b) => refusal(callguests.joinLink(b)),
   // a watch-along on the board's live call, by the call's key (watchalong.ts).
   'POST /api/watchalong/start': (q, s, b) => watchalong.startOnCall(Number(b.call), String(b.key ?? '')),
   'POST /api/chat': (q, s, b) => refusal(chat.fromBoard(String(b.text ?? ''), b.pictures)),
@@ -1603,6 +1616,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/sketches': (b, me) => bookreads.listForAgent(b.archived === '1', me),
   'GET /api/agent/sketch': async (b, me) => refusal(await bookreads.getForAgent(Number(b.id), me)),
   'POST /api/agent/answer': (b, me) => refusal(bookanswer.answer(b, me)), // (bookanswer.ts)
+  // hq prototype: a colleague's quick job's prototype for the board's live call (callprototypes.ts).
+  [PROTOTYPE_PUT]: async (b, me) => refusal(await callprototypes.fromJob(b, me)),
   // hq say: a message to a colleague (org.yaml or alumni), stored, and queued for its running Claude job or made a job
   // (messages.ts); hq inbox --hook (the worker's hook) takes this job's own, then acknowledges the ones it printed (only
   // that marks them delivered); hq sent says what became of yours.
@@ -1611,7 +1626,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me), to = String(b.to ?? '');
     if (b.needsAnswer !== undefined && typeof b.needsAnswer !== 'boolean') return 400;
     const r = !agent ? 403 : !assignable(to) ? 404 : messages.send({ agent, job: me.id }, to, String(b.text ?? ''), undefined, undefined, b.needsAnswer === true);
-    return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : r; },
+    // (and to the call with the board the recipient is on: callmessages.ts.)
+    return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : typeof r === 'object' ? { ...r, ...callmessages.offer(r.id, to) } : r; },
   // (a meeting seat's lines, and the server's memory: lowmemory.ts)
   'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...chat.take(me.id), ...meetingseats.take(me.id), ...lowmemory.take(me.id, b.stopping === true), ...diskwarnings.take(me.id, b.stopping === true)],
   // (and the meeting lines it printed, lines)
@@ -1771,6 +1787,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/call-context': b => b.callout != null ? callline.context(b) : call.context(String(b.agent ?? ceo()), String(b.lang ?? 'en'), Number(b.request) || 0, String(b.token ?? ''),
     b.phone === true, b.walk === true),   // (walk)
   'POST /api/voice/call-end': b => b.callout != null ? callline.handOver(b) : call.handOver(String(b.agent ?? ''), Array.isArray(b.lines) ? b.lines.map(String) : [], Number(b.request) || 0, String(b.token ?? ''), b.times),
+  // (the transcript so far, while the call goes on.)
+  'POST /api/voice/call-lines': b => call.kept(String(b.agent ?? ''), Array.isArray(b.lines) ? b.lines.map(String) : undefined, String(b.token ?? ''), b.times),
   'POST /api/voice/call-ticket': b => callline.redeem(String(b.ticket ?? '')) ?? phone.redeem(String(b.ticket ?? '')),
   'POST /api/voice/phone-done': b => phone.phoneDone(String(b.call ?? '')),   // the agent on the shop's line hung up
   'POST /api/voice/join-ticket': b => callline.joinTicket(String(b.token ?? '')),
@@ -1795,6 +1813,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/change': b => refusal(callpage.change(b)),
   // (a drawing of its own, as a picture in the company's look: drawing.ts.)
   'POST /api/voice/drawing': async b => refusal(await callpage.drawing(b)),
+  // (a prototype of its own, shown on both iPads: callprototypes.ts.)
+  'POST /api/voice/prototype': async b => refusal(await callprototypes.fromVoice(b)),
   // (its versions to pick from)
   'POST /api/voice/try': b => refusal(callpage.versions(b)),
   // (the voices the board's calls recognise by name, and what to tell a person before saving theirs: voiceprints.ts.)
@@ -1820,6 +1840,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   // An earlier version of a cycles page, the same way
   const back = earlierVersions.backAt(String(req.headers.host ?? ''));
   if (back !== null && path !== '/api/preview/check' && path !== '/__preview') return earlierVersions.serveEarlier(req, res);
+  // A call's prototypes, the same way
+  const protoCall = callprototypes.callAt(String(req.headers.host ?? ''));
+  if (protoCall !== null && path !== '/api/preview/check' && path !== '/__preview') return callprototypes.serve(req, res, protoCall);
   res.setHeader('content-security-policy', PAGE_CSP[path] ?? (/^\/(knowledge|cycles)\//.test(path) ? 'sandbox'
     : path.startsWith('/pay/imitation/') ? checkoutCsp : HQ_CSP)); // the test checkout: its own inline style, and Pay redirects to the product
   return anyHost(req, res, url);
@@ -1888,15 +1911,14 @@ const forWorker: Wrap<(b: any) => unknown> = (key, handle) => request => {
     key !== 'POST /api/worker/heartbeat');
 };
 const forVoice: Wrap<(b: any) => unknown> = (key, handle) => request =>
-  voiceAuthed(request.req.headers.authorization) ? answered(request, afterScrub(handle)) : send(request.res, 401, { error: 'voice token' });
+  voiceAuthed(request.req.headers.authorization) ? answered(request, afterScrub(handle), JSON_MAXES[key]) : send(request.res, 401, { error: 'voice token' });
 const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => {
   const me = agentOf(bearer(request.req.headers.authorization));
   if (!me) return send(request.res, 401, { error: 'agent token' });
   // (a call's agent repeats the refusal to the board, so it says why.)
   if (me.call && !CALL_ROUTES.has(key)) return send(request.res, 403, { error: "a call can't do this, as none of the call's tools reaches it: the call's follow-up does it" });
   if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
-  // (a card's files come in its JSON: cardfiles.ts JSON_MAX)
-  return answered(request, afterScrub(b => handle(b, me)), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : key === WORKSPACE_PUT ? workspaces.ENTRIES_JSON_MAX : undefined, () => me.id || undefined);
+  return answered(request, afterScrub(b => handle(b, me)), JSON_MAXES[key], () => me.id || undefined);
 };
 // A job's token, a live call's (call.ts) or a call out's (callline.ts)
 function agentOf(token: string): Me | undefined {
@@ -1945,7 +1967,8 @@ const anyHost = routes({
   // (an earlier version's host too)
   'GET /api/preview/try-host': ({ res, url }) => {
     const domain = url.searchParams.get('domain') ?? '';
-    return send(res, earlierVersions.backAt(domain) !== null ? 200 : trypreview.tryHost(domain), {});
+    // (a call's prototypes' host too.)
+    return send(res, earlierVersions.backAt(domain) !== null || callprototypes.hasHost(domain) ? 200 : trypreview.tryHost(domain), {});
   },
   '* /__preview': ({ req, res }) => preview.accept(req, res),
   // ...and a page's link for another device, from the page's own origin
@@ -2035,6 +2058,8 @@ const board: RouteTable = {
   'POST /api/notebooks/groups/create': boardJson((q, s, b) => refusal(notebookgroups.createGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/edit': boardJson((q, s, b) => refusal(notebookgroups.editGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/scrap': boardJson((q, s, b) => refusal(createScrap(b)), NOTE_MAX),
+  // (the board's mark on a call's prototype from a screen not on the call.)
+  'POST /api/calls/prototype-mark': boardJson((q, s, b) => refusal(callprototypes.markOnCall(b)), NOTE_MAX),
   'POST /api/notebooks/groups/reply': boardJson(async (q, s, b) => refusal(await notebooksend.replyTo(b)), NOTE_MAX),
   'POST /api/notebooks/pictures': ({ req, res }) => notebookpictures.uploadPicture(req, res),
   'GET /api/notebooks/pictures': ({ req, res }) => notebookpictures.servePicture(req, res),
@@ -2160,6 +2185,8 @@ const hq = routes({
   'GET /pair/look.css': ({ res }) => send(res, 200, guests.signInCss(), TYPES['.css']),
   // The guest desk (guests.ts): an outside colleague's page (and its script), opened by its link and a code by email, never by the board's session
   ...wrapped(guests.passkeyRoutes, (key, handle) => sameOrigin(handle)),
+  // (a call's QR code: its join page, for whoever is in the room, callguests.ts.)
+  '* /guest/scan/*': sameOrigin(({ req, res }) => callguests.joinPage(req, res)),
   '* /guest/*': sameOrigin(({ req, res }) => guests.page(req, res)),
   // A call out's join link (callouts.ts): its page by its token, never the board's session
   'GET /join/*': ({ req, res }) => callline.joinRoute(req, res),
@@ -2282,6 +2309,7 @@ const reviveSweep = () => review.reviveRounds().catch(err => console.error('Coul
 const voiceprintsYearly = () => { try { voiceprints.yearly(); } catch (err) { console.error("Could not check the saved voices' year:", err); } };
 const stuckSweep = () => review.settleStuck().catch(err => console.error('Could not look at stuck pull requests:', err));
 const idleSweep = () => review.settleIdle().catch(err => console.error('Could not look at idle pull requests:', err));
+const restedSweep = () => { try { judgeRested(); } catch (err) { console.error("The book's judge: the rested notes weren't looked at:", err); } };
 const server = createServer({ shouldUpgradeCallback: feedback.dictates }, app);
 // The only upgrade: review mode's live dictation (feedback.ts dictate).
 server.on('upgrade', (req, socket, head) => {
@@ -2304,6 +2332,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   startSchedule();
   memory.start(); // the search index (hq search): at start, then every 2 minutes, in the background
   merged.start(); // each merged pull request's lines, from the checkout's merges, for the sizer
+  readCostJobsAhead().catch(err => console.error("Could not read the cost book's jobs ahead:", err));
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
   bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone
@@ -2357,6 +2386,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   reviveSweep(); setInterval(reviveSweep, 5 * 60_000); // a round whose hand-off to the panel was lost comes back
   stuckSweep(); setInterval(stuckSweep, 5 * 60_000); // a stuck one whose work landed through another pull request is merged
   idleSweep(); setInterval(idleSweep, 5 * 60_000); // idle open pull requests are checked against GitHub hourly
+  restedSweep(); setInterval(restedSweep, REST_MS / 2); // the board's notes judged once they rest (bookjudge.ts).
   optimize(); setInterval(optimize, 60 * 60_000); // the query planner's statistics (db.ts)
   voiceprintsYearly(); setInterval(voiceprintsYearly, 24 * 3_600_000); // a saved voice unheard for a year: the board's card (voiceprints.ts)
   reins.start(); // a job past its share of HQ's time is held (reins.ts)

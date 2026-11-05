@@ -20,7 +20,8 @@ export function unitFor(page, [x, y], box, mark = box) {
     near = () => inkApart(page, on, start, { x0: x, y0: y, x1: x, y1: y }) <= NEAR;
   if (on !== undefined && (!drawing(page, on) || (near() && takes(page, on, box)))) return on;
   // (a canvas has no columns: what's drawn beside a scrap is the board's own)
-  const beside = () => (isCanvas(page.chapter) ? undefined : scrapBeside(page, box));
+  // (isCanvas takes the page)
+  const beside = () => (isCanvas(page) ? undefined : scrapBeside(page, box));
   return scrapAcross(page, box) ?? nearDrawing(page, box, mark) ?? beside() ?? newUnit(page, box);
 }
 // The scrap a box (page px) is drawn across, the one it covers most; undefined when it covers none

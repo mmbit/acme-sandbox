@@ -96,3 +96,15 @@ test('off a call only the CEO records urgency, and invalid input leaves work unc
     assert.equal((await h.agent('urgent', ceo.token, body)).status, 400);
   assert.equal(urgency.projectUrgent('office'), false);
 });
+
+test("one job's urgency is read through its own thread and project, never a view built of every thread", async () => {
+  const { db } = await import('./db.ts');
+  for (const view of ['urgent_tasks', 'urgent_work']) {
+    const plan = (
+      db.prepare(`explain query plan select urgent from ${view} where id = ?`).all(1) as { detail: string }[]
+    )
+      .map(step => step.detail)
+      .join('\n');
+    assert.doesNotMatch(plan, /MATERIALIZE|SCAN|AUTOMATIC/, `${view}:\n${plan}`);
+  }
+});
