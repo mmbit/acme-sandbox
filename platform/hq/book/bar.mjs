@@ -1,12 +1,13 @@
 // book-check.mjs's story of the book's two islands over its paper (shell/ink/bookui.js, bookstrip.js,
 // bookcontrols.js, bookrail.js): on a phone (under a home-screen app's blurred strip) and an iPad mini both ways and a
 // desktop with the notebook wide and narrow. The tools upright at the paper's right, centred in the room above the bar,
-// in their order with one pen, and well under half a phone's height; the bar along the foot, Undo and Redo at its left,
-// the page's arrows and where it is ("3 / 12") in its very middle, the overview and its dots at its right, New page in
-// the dots menu at every size, every row of which does what it says. The bar's spacing smaller inward: its margin at
-// its ends the largest, then the room each side of a rule, alike at every rule, then the gap between two keys, alike
-// in every group. No island scrolls or leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's
-// written ends left of the tools. Undo, Redo and the page's keys never move. A tool's card opens left of the tools and
+// in their order with one pen, and well under half a phone's height; the bar along the foot, the overview at its left,
+// the page's arrows and where it is ("3 / 12") in its very middle, its dots at its right, Undo and Redo a pill of their
+// own left of it (above its left end where there's no room), New page in the dots menu at every size, every row of
+// which does what it says. The bar's spacing smaller inward: its margin at its ends the largest, then the room each
+// side of a rule, alike at every rule, then the gap between two keys, alike in every group. No island scrolls or
+// leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's written ends left
+// of the tools. Undo, Redo and the page's keys never move. A tool's card opens left of the tools and
 // the bar's above the bar, whole. Press and slide: a press on the pen slid down to Text picks Text the moment it lifts,
 // with no hold (the mouse, and a finger). No long press: a tool held picks it and opens nothing. Run with
 // --webkit for the same in the iPad's engine. (the blur set by islands.mjs) (at rest once its slide is over)
@@ -121,9 +122,9 @@ export async function press(page, name) {
 
 // ---- the bar's spacing
 
-// The bar's spacing, smaller inward: its margin at either end the largest; then the room each side of a rule (Undo and
-// Redo's, the page's arrows', the overview's), alike at every rule, so the parts sit apart alike on both sides of the
-// middle; then the gap between two keys, alike in every group (the Ink README, The book's frame)
+// The bar's spacing, smaller inward: its margin at either end the largest; then the room each side of a rule (the
+// overview's, the page's arrows'), alike at every rule, so the parts sit apart alike on both sides of the middle; then
+// the gap between two keys, alike in every group (the Ink README, The book's frame)
 async function spaced(page) {
   const { outer, rules, keys } = await page.evaluate(barGaps),
     alike = list => Math.max(...list) - Math.min(...list) <= 0.5,
@@ -165,17 +166,18 @@ function barGaps() {
 
 // ---- what stays where it was
 
-// Undo, Redo and the page's keys (the bar's left and middle), where they are on the screen (px)
+// Undo, Redo and the page's keys (the pill, the bar's left and middle), where they are on the screen (px)
 const keysOf = page =>
+  // (Undo and Redo a pill of their own beside the bar: the Ink README, The book's frame.)
   page.evaluate(() =>
-    [...document.querySelectorAll('#book .bk-bar :is(.bk-bar-start, .bk-bar-middle) .bk-btn')].map(b => {
+    [...document.querySelectorAll('#book :is(.bk-undo-pill, .bk-bar-start, .bk-bar-middle) .bk-btn')].map(b => {
       const r = b.getBoundingClientRect();
       return [b.className.split(' ').find(n => n !== 'bk-btn') ?? '', ...[r.x, r.y, r.width, r.height].map(Math.round)];
     }),
   );
 // Undo, Redo and the page's keys never move, so a tap does what the board meant: where they were at rest with another
-// tool in use and with each card open; and in the overview the bar only its own key, pressed, which brings the page
-// back with them where they were
+// tool in use and with each card open; and in the overview no bar (it's all the pages already), its page's tile
+// bringing the page back with them where they were
 async function keysStay(page, size) {
   const rest = await keysOf(page),
     stays = async state =>
@@ -201,12 +203,12 @@ async function keysStay(page, size) {
   await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
   const far = await page.evaluate(() => ({
     tools: document.querySelector('#book .bk-strip').checkVisibility(),
-    bar: [...document.querySelectorAll('#book .bk-bar .bk-btn')]
+    bar: [...document.querySelectorAll('#book :is(.bk-bar, .bk-undo-pill) .bk-btn')]
       .filter(b => b.checkVisibility({ visibilityProperty: true }))
-      .map(b => [b.getAttribute('aria-label'), b.getAttribute('aria-pressed')]),
+      .map(b => b.getAttribute('aria-label')),
   }));
-  assert.deepEqual(far, { tools: false, bar: [[OVERVIEW, 'true']] }, 'the overview: its own key alone, pressed');
-  await press(page, OVERVIEW);
+  assert.deepEqual(far, { tools: false, bar: [] }, 'the overview: no bar, no All pages');
+  await page.locator('#book .bk-tile[aria-current="page"] .bk-tile-open').first().click();
   await until(() => page.evaluate(() => !document.querySelector('#book[data-far]')), 'the page back');
   await atRest(page);
   await stays('back from the overview');

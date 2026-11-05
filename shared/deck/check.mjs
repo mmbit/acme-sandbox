@@ -13,7 +13,7 @@
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { dirname, join, resolve, relative, extname, basename, sep } from 'node:path';
+import { dirname, join, resolve, relative, extname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';

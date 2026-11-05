@@ -2,7 +2,8 @@
 // page), a hair of an edge and a strip of tape whole across its top edge, no card or shadow of its own (README, Our
 // scraps), and a picture file made ready for the store (at most UPLOAD_SIDE a side). Kept from the old Sketchbook's
 // scraps, gone with its app. A scrap here: { x, y, w, h, tilt, img } in its page's units (its box, the photo inset in
-// it by its margin; tilt in degrees).
+// it by its margin; tilt in degrees; drawing: an agent's drawing on a clear ground, its lines straight on what's under it,
+// no edge and no tape.).
 
 // a picture as HQ uploads it: at most this long a side, and a PNG only while it's this small
 const UPLOAD_SIDE = 2000,
@@ -31,6 +32,7 @@ export function drawScrap(g, s) {
   g.translate(s.x + s.w / 2, s.y + s.h / 2);
   g.rotate((s.tilt * Math.PI) / 180);
   if (s.img?.complete && s.img.naturalWidth) g.drawImage(s.img, -w / 2, -h / 2, w, h);
+  if (s.drawing) return g.restore();
   g.strokeStyle = 'rgb(80 60 10 / 14%)';
   g.lineWidth = 1;
   g.strokeRect(-w / 2 - 0.5, -h / 2 - 0.5, w + 1, h + 1);

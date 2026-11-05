@@ -1,6 +1,6 @@
 // node --test src/ink/bookjudge.test.ts   (the book's judge on the real server: a board's note or group judged by the
 // small model through the worker's claim and answer, its verdict kept with its why and routed to an answer or a try, a
-// guest's never judged, the same words not judged twice, the day's bound)
+// guest's never judged, the same words not judged twice, ink alone judged once it rests, the day's bound)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
@@ -117,6 +117,77 @@ test('an edit with the same words isn’t judged again; new words are, and only 
   assert.match(c.content.at(-1).text, /waarom een foto/);
   await say(c, 'answer', 'a plain why');
   await until(() => started({ grp: g.id }).asked !== null);
+});
+
+test('a drawing in ink alone is judged once the pen rests, and its seen tick holds only for what was read', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const rest = () => t.mock.timers.tick(judge.REST_MS);
+  const notebook = (await h.board('/api/notebooks')).body.shelf[0].id;
+  const page = (await h.board('/api/notebooks/pages/create', { notebook })).body.id;
+  const seen = async (id: number) =>
+    ((await h.board(`/api/notebooks/pages/groups?page=${page}`)).body.groups as any[]).find(g => g.id === id).seen;
+  const stroke = (y: number) => ({
+    color: '#2B2230',
+    size: 6,
+    points: [
+      [20, y, 0.5, 0],
+      [100, y + 20, 0.6, 16],
+    ],
+  });
+  judge.judgeRested();
+  // "Hi Juno! You there?", written by hand: no words but its ink
+  const hi = (await h.board('/api/notebooks/groups/create', { page, ink: [stroke(20)] })).body;
+  judge.judgeRested();
+  assert.equal(await judged(5), null, 'the pen may go on: not read yet');
+  rest();
+  judge.judgeRested();
+  const c = (await judged())!;
+  const rested = () =>
+    (db.prepare("select value from settings where key = 'ink.rested'").get() as { value: string }).value;
+  assert.ok(rested() < groups.row(hi.id)!.updated, 'not judged yet: a restart reads it again');
+  assert.equal(c.content[0].type, 'image', 'its ink in the picture');
+  assert.match(c.content.at(-1).text, /It has no typed or said words: any handwriting is in the picture/);
+  await say(c, 'none', 'a greeting');
+  await until(() => !!judge.verdictOf({ grp: hi.id }) && rested() >= groups.row(hi.id)!.updated);
+  assert.deepEqual(await seen(hi.id), { by: 'juno', name: 'Juno' }, 'read: the tick of whom it went to');
+
+  // More ink on it: the tick goes until that's read too
+  const more = await h.board('/api/notebooks/groups/edit', {
+    id: hi.id,
+    since: groups.row(hi.id)!.updated,
+    ink: [stroke(20), stroke(80)],
+  });
+  assert.equal(more.status, 200);
+  assert.equal(await seen(hi.id), null, 'the new line unread');
+  rest();
+  judge.judgeRested();
+  await say((await judged())!, 'none', 'a greeting');
+  await until(() => verdicts().filter(v => v.grp === hi.id).length === 2);
+  assert.deepEqual(await seen(hi.id), { by: 'juno', name: 'Juno' });
+
+  // Moved on its page, nothing new on it: not judged again
+  const g = groups.row(hi.id)!;
+  await h.board('/api/notebooks/groups/edit', { id: hi.id, since: g.updated, ink: JSON.parse(g.ink) });
+  rest();
+  judge.judgeRested();
+  assert.equal(await judged(5), null, 'what it read already');
+  assert.deepEqual(await seen(hi.id), { by: 'juno', name: 'Juno' });
+});
+
+test('a group the sweep finds still being judged for its words holds the cursor until that verdict is kept', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * judge.REST_MS });
+  const rested = () =>
+    (db.prepare("select value from settings where key = 'ink.rested'").get() as { value: string }).value;
+  judge.judgeRested();
+  const g = (await scrap('is this live yet')).body;
+  const c = (await judged())!;
+  t.mock.timers.tick(judge.REST_MS);
+  judge.judgeRested();
+  assert.equal(await judged(5), null, 'the same read, not a second');
+  assert.ok(rested() < groups.row(g.id)!.updated, 'its verdict not kept yet: a restart reads it again');
+  await say(c, 'none', 'asks nothing');
+  await until(() => rested() >= groups.row(g.id)!.updated);
+  assert.equal(judge.verdictOf({ grp: g.id })?.reply, 'none');
 });
 
 test('an old-book note is judged with what it replies to; a guest’s note never', async () => {

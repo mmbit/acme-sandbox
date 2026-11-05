@@ -58,8 +58,24 @@ test("A board call is every agent's: search finds its words and its summary, and
   assert.match((await h.hq(juno, 'search', 'kakapodesk')).out, new RegExp(`\n  hq call ${c.id}  \\[call\\]\n`));
   // still the agent's own history only: Juno's lists no call of Kit's
   assert.deepEqual((await agent('history', juno.token)).body.calls, []);
-  // a call still going on is nobody's yet
-  assert.equal((await agent(`call?id=${(await voice('call-context?agent=kit')).body.call}`, juno.token)).status, 404);
+  // a call still going on is nobody's yet but the CEO's, as far as the voice line has kept it in HQ (call-lines: job
+  // #24358, call #257's lines stayed on the line)
+  const live = (await voice('call-context?agent=kit')).body, bolt = await at('bolt');
+  assert.equal((await agent(`call?id=${live.call}`, bolt.token)).status, 404);
+  assert.equal((await voice('call-lines', { agent: 'kit', token: 'not its token', lines: ['Board: no'] })).status, 404);
+  const kept = await voice('call-lines', { agent: 'kit', token: live.token, lines: ['Board: the frog goes on the mug.'] });
+  assert.deepEqual(kept.body, { ok: true, messages: [] });
+  const now = (await agent(`call?id=${live.call}`, juno.token)).body;
+  assert.deepEqual([now.lines, now.summary_left_out], [['Board: the frog goes on the mug.'], 'the call is still going on: these are its lines so far']);
+  assert.equal((await agent(`call?id=${live.call}`, bolt.token)).status, 404, 'still only the CEO');
+  // a colleague's word to kit reaches the call too, once, with the line's next round (lines unchanged: none sent)
+  assert.equal((await agent('message', bolt.token, { to: 'kit', text: 'The mug proof is in.' })).body.call, live.call);
+  assert.deepEqual((await voice('call-lines', { agent: 'kit', token: live.token })).body.messages, [{ from: 'bolt', job: bolt.id, text: 'The mug proof is in.' }]);
+  assert.deepEqual((await voice('call-lines', { agent: 'kit', token: live.token })).body.messages, []);
+  assert.deepEqual((await agent(`call?id=${live.call}`, juno.token)).body.lines, ['Board: the frog goes on the mug.']);
+  // the hand-over ends it with the whole transcript
+  assert.equal((await voice('call-end', { agent: 'kit', token: live.token, lines: ['Board: the frog goes on the mug.', 'Kit: noted.'] })).status, 200);
+  assert.deepEqual((await agent(`call?id=${live.call}`, bolt.token)).body.lines, ['Board: the frog goes on the mug.', 'Kit: noted.']);
 });
 
 test("A call about a card for keys is its own agent's, transcript and report; one about a customer card is the jobs' working on it; every other call is shared whole", async () => {

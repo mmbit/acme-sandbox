@@ -21,6 +21,7 @@ import {
   minimise,
   expand,
   shareKey,
+  screenToLine,
   transcribe,
   turnEnded,
   turnTakenBack,
@@ -30,7 +31,8 @@ import { startDrop, stopDrop } from './calldrop.js';
 import { forgetHeard, heldCall, holdCall, letCallGo, lostCall, rejoined, resend, sendFrame } from './callheld.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './ink/calldraw.js'; // (Ink's folder)
 import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
-import { guestKey } from './callguest.js';
+import { guestKey, guestsToLine } from './callguest.js'; // (guestsToLine)
+import { handFromLine } from './callhand.js';
 import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComing, tell, watchCall } from './desk.js';
 
 const $ = s => document.querySelector(s);
@@ -55,18 +57,20 @@ export const callName = () => call?.name ?? null;
 // the card it's about.
 // walk: from a card's Walk me through it (calldraw.js). pictures: Files (or promises of them, or a promise of their
 // list: callpictures.js showPictures) the agent is shown once the line picks up,
+// design: a design session, the call's page a sketch page opened at once (calldraw.js)
 // a page of the Notebook shared by its corner (bookshare.js); with a call already on, they go into that one. page: that page's id, brought to the call's notes page as its first scrap (calldraw.js). (request and the rest named; pictures)
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),
-  { request = 0, walk = false, pictures = [], page = 0 } = {},
+  { request = 0, walk = false, pictures = [], page = 0, design = false } = {},
 ) {
   if (intercomOpen()) closeTool();
   if (call) {
     expand(call);
     return showPictures(call, pictures);
   }
-  const c = (call = { agent, name, request, walk, brought: page, voiced: [], kept: [], keptFrom: 0 });
+  // (design: its page a sketch page, calldraw.js.)
+  const c = (call = { agent, name, request, walk, design, brought: page, voiced: [], kept: [], keptFrom: 0 });
   c.hangUp = () => endCall();
   c.audio = audioOf(c);
   openLayer(c);
@@ -101,7 +105,7 @@ export async function callAgent(
     if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`);
   }, 30000);
   // (walk)
-  c.dial = { agent, lang: l.lang, request: c.request, ...(walk && c.request ? { walk } : {}) };
+  c.dial = { agent, lang: l.lang, request: c.request, design, ...(walk && c.request ? { walk } : {}) };
   connect(c, held ? { resume: held.id, back: true } : c.dial);
 }
 
@@ -148,7 +152,7 @@ function connect(c, hello) {
   ws.onclose = e => {
     if (call !== c || c.ws !== ws) return;
     if (hello.back && !c.id && e.code === 4000) return connect(c, c.dial); // (the call it would rejoin is over)
-    // the call waits 30 s on the other end: keep trying to get back to it
+    // the call waits on the other end (callheld.js HOLD_MS): keep trying to get back to it
     const lost = c.id && e.code !== 4000;
     if (lost && !c.tries) lostCall(c); // (from the first try on)
     if (lost && (c.tries = (c.tries ?? 0) + 1) <= 12) {
@@ -193,7 +197,9 @@ const FROM_LINE = {
     c.face.lit(true); // (the agent's little screen switches on)
     picturesLive(c);
     shareKey(c); // (Show my screen, once picked up)
+    screenToLine(c, true);
     guestKey(c);
+    guestsToLine(c);
     startDrawing(c);
   },
   state(c, ev) {
@@ -244,7 +250,9 @@ const FROM_LINE = {
   mark: DRAWING.mark,
   ask: DRAWING.ask,
   ink: DRAWING.ink,
+  design: DRAWING.design,
   open: DRIVING.open,
+  hand: handFromLine, // (the agent's raised hand in a design session.)
   drive: DRIVING.drive,
   // the agent hung up once the board had said goodbye: as the Hang up button does
   hangup: () => endCall(),

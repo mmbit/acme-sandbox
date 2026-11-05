@@ -28,10 +28,13 @@ Live calls with the team, streamed both ways (`server.py`). One call is one WebS
   the line has, and HQ sends the rest first, with a ping from when each half second of it was made: the baseline stays
   across connections (the same two clocks), so it reads as late and the line answers everything the board said once it
   is in, as after a burst. Each reconnect is logged (`call: ada reconnected`). A page that reloaded or left mid-call
-  calls back into the call when the board calls the same agent again within `HOLD` (30 s): its first message is
-  `{resume, back: true}`, its `call` event carries the transcript so far (`said`), and the agent hears the board dropped
+  calls back into the call when the board calls the same agent again within `HOLD` (10 minutes, enough to close a
+  frozen browser and open HQ again): its first message is `{resume, back: true}`, or a plain dial with either key that
+  the line matches to the agent's call still on (`held`, even while a frozen page's connection is still open, which the
+  new one replaces). Its `call` event carries the transcript so far (`said`), and the agent hears the board dropped
   out and is back with its next turn, or in a turn of its own once the line is quiet (`BACK_WORDS`, `Call.came_back`;
-  logged `call: ada called back in`). HQ's call screen says "Weak connection"
+  logged `call: ada called back in`). The new page's clock starts again, so its pings start a fresh baseline (the old
+  one would read them as late as the old page was old). HQ's call screen says "Weak connection"
   while the line hears the board over 1.5 s late, nothing has come back from it for 4 s (its reply's audio counts: the
   pongs come behind it) or HQ's own frames wait unsent, and its timeline has each spell (`lagging`, `caught up`). At
   hang-up the line logs how late the board's audio came at most and how many answers waited (`call: ada line: ...`). A
@@ -46,12 +49,17 @@ Live calls with the team, streamed both ways (`server.py`). One call is one WebS
 The loop: Silero VAD cuts the board's words at pauses, Parakeet v3 transcribes them, a warm Claude session per
 call answers (streamed; it reads what a job reads but has no shell: the company's files, every branch and the status report, the web, and its own tools (Trust, below) (a call out: its partner tools only, below); its prompt from the coordinator: who the agent is, the team, what's going on,
 and the desk phone request the call is about, if any), and each sentence is spoken as it arrives: Pocket TTS 3.3.0
-in the agent's own voice in English, Dutch and German (`pockets`, all three preloaded and pinned by sha256).
+in the agent's own voice in English and German (`pockets`, all three languages preloaded and pinned by sha256), and Dutch
+in Piper's alex (`DUTCH`) unless the company names a voice (a care ticket's `voices`).
 The coordinator's `voiceOf` uses org.yaml's `voice` when set, otherwise jane for she/her and alba for he/him.
 Other pronouns, or none, use the line's default.
 Measured before Dutch left Piper: Pocket's first audio 0.24 s against Piper's
 0.50, Parakeet heard it back as well (6.7% of words wrong against 7.2%), but `bill_boerst` garbles Dutch (15.9%, words
-dropped), so a voice in `NOT_IN_DUTCH` speaks Dutch through Piper; Pocket adds about 0.75 GB for the two languages.
+dropped); Pocket adds about 0.75 GB for the two languages. On the board's calls Pocket's Dutch said "hoi" as "how" in
+every voice and drifted between voices within a reply (call #255), so Dutch went back to alex (job #23954). In a Dutch
+or German reply the agent marks a word said the English way, ‹live› (call.ts's prompt): Piper says it from English
+espeak's sounds, each turned into the nearest its voice learnt (`NEAR`), Pocket TTS as written; the screen and the
+transcript show it unmarked.
 Neither reads a euro amount as money (Pocket TTS made "€4" "off or
 off"), "06" swallowed the words after it and "310" came out "three ten", so `aloud()` writes every number out in the
 call's language just before it's spoken: "€29,95" is "twenty-nine euros ninety-five" or "negenentwintig euro
@@ -72,8 +80,11 @@ board's; a piece of 1.5 s or more that is clearly unlike every voice so far (`NE
 cap. Until a second voice is heard, nothing changes: the agent's messages and the transcript are as on any call. From
 then on each line starts with its speaker ("Board: ...", "Voice 2: ..."), and the agent hears once what that means
 (act on the board's word; name a voice with `name_voice` once it knows who it is, which also swaps two names when
-someone else spoke first). Short words ("yes") go to the closest voice, so a new voice's first words can land on the
-board's. Nothing is stored but a saved voice (below). At hang-up the log says how many voices
+someone else spoke first). A guest the board adds on the call screen (HQ's Add a guest) reaches the line by name
+(`{type: 'guest', name}`, again after a reconnect), and the agent hears with its next message that they're in the room
+and its part while the two talk (listen, keep their thinking on the page, speak up now and then), before their voice
+opens or if it never does (`Voices.joined`). Short words ("yes") go to the
+closest voice, so a new voice's first words can land on the board's. Nothing is stored but a saved voice (below). At hang-up the log says how many voices
 and how unlike the others each opened (`call: ada voices: 2 (opened at 0.21)`), the numbers to tune `NEW` by. The
 phone and a call out's room have none (one caller; a microphone each).
 
@@ -90,6 +101,35 @@ otherwise). At hang-up the prints it heard surely are refined (a pieces-weighted
 only while the voice still sounds like it (`MATCH`).
 `forget_voice` deletes one ("forget my voice"), as the board's tap in Settings › Voices does. Prints never leave the
 server: not in a log, the browser, an agent's read or the off-site backup.
+
+A design session (`design.py`): the board's call as a brainstorm at the
+table. HQ's Design session key starts one (the hello's `design: true`), or the agent makes a call one when someone asks
+(`design_session`, which sends HQ `{type: 'design'}`: it opens the call's page as a free sketch page). The agent hears
+once how to take part (`DESIGN_WORDS`: no turns, `say_nothing` the usual reply, silence is thinking; keep an
+organised list of ideas and small sketches on the page, have prototypes built in the background, no tasks until the
+end, then the list and who does what as they agree it), with the hello's message or the tool's answer, and again in a restarted
+session. Its raised hand (`raise_hand`, with what it's about): HQ shows it on the call screen and the bubble with a
+soft beep (`{type: 'hand', up}`); the line gives the agent a turn of its own once the room has been quiet
+`HAND_PAUSE_SECONDS` past `idle()`, or at once when the board taps the hand (`{type: 'hand'}` from HQ), with words
+saying which (`HAND_WORDS`). The hand comes down when the agent says anything in a later reply, lowers it, or has its
+moment; a reconnect hears both again (`Design.retell`).
+
+Saying nothing and building in the background. The line hands the agent all it
+hears, and a model asked something writes something back, a stage direction read aloud. `say_nothing` passes the turn:
+the line reads it from the stream (`SAY_NOTHING_TOOL`), says nothing more of the reply and plays no tick for its later
+steps, so the tick only ever holds a reply someone waits on. `prototype` with a `brief` instead of a page starts a
+builder (`Call.build`): the CLI once on the call's seat, no tools, no HQ token, `BUILD_EFFORT`, the builder's own
+`BUILD_WORDS`, the version before under that name to build on. Its page is saved as the agent's would be, and the line
+raises the agent's hand with its name and version (`Design.built`, `HAND_WORDS['built …']`); a failed one the agent
+hears of with its next message. The call's end cancels a build under way.
+
+Made once they're done. A whole sentence is often followed by more (call #262:
+a card for the first sentence, then a second for the rest). The line still hands the agent each pause Smart Turn hears
+as finished, so a short answer comes quickly and its words are taken back if they go on (`cut_in`). What the agent
+makes can't be, so in a session its making asks on the socket (`MAKES`: draw_picture, mark_notes, change_note, try,
+prototype, write_down) wait in `Call.done` until the room is quiet `MAKE_QUIET` since the last words (longer after a
+piece that sounded unfinished), nothing heard still to answer or on its way and the pen at rest. Talking on first takes
+the turn back with their words: nothing is made (`MADE_WORDS`) and the agent hears the whole thought as one message.
 
 Talking over the agent (`Call.hear`): the reply plays on while the line makes sure it's the board. It stops as soon
 as the words read as an interruption (`stray()`, English, Dutch and German): a word that means stop ("wait", "no",
@@ -144,8 +184,12 @@ the phone has no screen and never asks), and the coordinator keeps a live mirror
 With each of the caller's turns (an unprompted pictures-only one too) the line asks the
 coordinator's `screen-turn` (`{purpose, ref, after, seen, briefed}`: `call` and the call's number, or `callout` and the
 call out's) within 1.5 s, as it sits between the caller's last word and the model: no answer in time, or a refusal,
-and the turn goes as it would have, with one log line, and an agent that has seen the screen this session hears it
-couldn't be read (its moments come with the next turn). With a watch-along on, the turn's message carries, in front of
+and the turn goes as it would have, with one log line, and an agent that has seen the screen this session, or whose
+board's HQ page says its screen is shown, hears it couldn't be read (its moments come with the next turn). HQ's page
+says whether the board's screen is `shown`, `paused` or `off` (`{type: 'screen', state}` on the call's WebSocket) as
+that changes and each time the line picks up, so the line knows a share at once, not only from a screen-turn that came
+in time, and the agent can't ask to see a screen that's shown (call #258: a turn's screen-turn failed 19 s into a
+share, and the agent said it saw nothing). With a watch-along on, the turn's message carries, in front of
 the caller's words, the coordinator's briefing until the session has had it, then the moments since the agent's last
 turn as lines (`#12 17:03:12 tapped "Add to basket" (button)`), and, after any shared pictures, a picture of the screen
 as their turn ended when it changed since the last one the session has.
@@ -201,7 +245,12 @@ too: `read_notes` lists what's on it, `mark_notes` draws a rectangle, ellipse, l
 takes back: that takes back only the board's own (board, call 174). `draw_picture` puts a drawing of the agent's own
 there, a diagram or a chart it writes as SVG, which the coordinator draws in the company's look (`drawing.ts`, theme/hq.yaml
 `drawing`) and lays at the page's end as a picture the board can draw on; the picture comes back to the agent with its
-line, so it sees what the board sees. `try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
+line, so it sees what the board sees. `prototype` saves a throwaway page of the agent's own (one HTML page, everything
+inline) with the call, its next version under a name it has already (`POST prototype`: the coordinator's
+`callprototypes.ts`, which takes its picture and shows it on the call's page and the iPads); its picture comes back with
+its line and the call's number, which a colleague's quick job needs to save one for the call with `hq prototype --call
+<n>`. The socket's line limit fits a prototype's page (`ASK_BYTES`).
+`try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
 try run builds each and it lands under it (`ink/booktry.ts`). All go through the
 screen socket to the coordinator's Ink store (`POST write-down`, `POST title`: `ink/callnotes.ts`; `POST page`, `POST mark`,
 `POST change`, `POST drawing`, `POST try`: `ink/callpage.ts`), never to
@@ -211,7 +260,14 @@ The transcript is written to the line's volume as the call goes, the board's wor
 not answered yet: while the board talks on, a pause that sounds finished sends the message so far and its next words take it back, so a
 long message may exist nowhere else until the board stops. If the line restarts mid-call, it hands that transcript over
 when it starts again. A deploy doesn't recreate the line while a call is on: the line keeps a file per live call in
-`/data/live`, and `infra/sync.sh` waits until there's none.
+`/data/live`, and `infra/sync.sh` waits until there's none touched in the last 5 minutes (its status report goes on
+meanwhile). The line touches a call's file every 30 s while the call's audio (or HQ's pings) still comes and the call
+is in use (`watch_live`). A call whose line sent nothing for 2 minutes (a connection that hung, a page that froze) is
+ended, and its connection closed by its own route: HQ's page hears it's gone, the phone's stream and a room close. A
+call with nothing on it for 20 minutes (no words heard, no pen on the board's screen, no reply or build of the agent's
+at work) stays on but stops holding deploys: a page left open, or a room whose mixer sends only silence, is ended by the
+next deploy, and its transcript handed over when the line starts again. A word or a stroke holds deploys again. Every
+way a call ends takes its file away and hands its transcript to HQ, even one whose end fails halfway.
 
 After the call the transcript goes back to the coordinator (`call.ts`), and the call gets one follow-up job: the job that
 asked the desk phone request the call was about, or a new "Follow up on your call with the board" job (the CEO's too). It
@@ -459,9 +515,13 @@ the transcription is part of it). Whether it sounds finished is Pipecat's Smart 
 8 MB, about 90 ms a pause on one core, beside the transcription): it hears the turn's last 8 s up to 0.2 s after its
 words (`TRAIL`), the voice trailing off mid-thought or ending, where the recogniser writes a full stop at almost every
 pause. Mid-thought, the line waits 1.5 s more before it asks (`WAIT_SECONDS['open']`). With the board's Pencil still
-moving as it stops talking (HQ says when it's down and lifted, while its screen is shown), the line waits for the pen to
-rest 1.5 s, review mode's own "the mark is done", at most 8 s (`PEN_REST_SECONDS`, `PEN_MOST_SECONDS`): the turn's
-picture has what was drawn while it spoke, and its words said meanwhile go with it. On Pipecat's test set (one of its nine
+moving as it stops talking (HQ says when it's down and lifted on a call), the line waits for the pen to
+rest 3 s, at most 8 s (`PEN_REST_SECONDS`, `PEN_MOST_SECONDS`): the turn's
+picture has what was drawn while it spoke, and its words said meanwhile go with it. A drawing is done once the pen
+rests, not at each stroke (a mark on the call's notes page counts as the pen lifted when it rested, for a guest too):
+until then nothing it drew goes to the agent alone and no hold sound plays, a turn of the agent's own on a drawing
+waits in silence, and the pen down again before it has said anything takes it back: the board is still drawing
+. On Pipecat's test set (one of its nine
 files: 873 English, 160 Dutch, 142 German clips, cut at Silero's pause as the line does) it calls a mid-thought pause
 finished 10, 13 and 15 times in 100, and a finished turn mid-thought 4, 2 and 1 times in 100; through 8 kHz (the phone
 line's band) it calls 14, 22 and 31 mid-thought pauses in 100 finished. On a

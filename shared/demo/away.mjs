@@ -10,7 +10,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { render, rendered } from './core.mjs';
 import * as drawn from './drawn.mjs';
 import { pricesFor } from './prices.mjs';
@@ -165,4 +164,4 @@ async function main(specFile) {
   await render(JSON.parse(readFileSync(specFile, 'utf8'))).catch(drawn.failed);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main(process.argv[2]);
+if (import.meta.main) await main(process.argv[2]);

@@ -9,17 +9,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { noteRender } from './renders.mjs';
 import { pathToFileURL } from 'node:url';
-import { render as foley, SOUNDS, MOVES, playedAt } from './foley.js';
+import { render as foley, SOUNDS, MOVES, playedAt, clamp, mulberry } from './foley.js';
 
 export const SR = 44100;
 const TAU = Math.PI * 2;
 const sec = s => Math.max(1, Math.ceil(s * SR));
-const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const dB = x => Math.pow(10, x / 20);
-function mulberry(a) {
-  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
 let rand = mulberry(7);
 const noise = () => rand() * 2 - 1;
 const panL = p => Math.cos(((clamp(p, -1, 1) + 1) * Math.PI) / 4);
@@ -478,7 +473,7 @@ export function renderNote(inst, note, { dur = 0.6, vel = 1, seed = 7 } = {}) {
   playNote(p, L, R, 0, dur, m, vel, 0);
   return { L, R, sr: SR, f0: hz(m + 12 * (p.oct || 0)) };
 }
-export function render(songIn, { solo = [], mute = [], log = () => {} } = {}) {
+export function render(songIn, { solo = [], mute = [] } = {}) {
   const song = songOf(songIn);
   rand = mulberry(song.seed ?? 7);
   const bpm = song.bpm ?? 120, meter = song.meter ?? 4, beat = 60 / bpm, bar = beat * meter, bars = song.bars ?? 4;

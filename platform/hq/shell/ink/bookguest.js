@@ -5,7 +5,10 @@
 // and work)
 import { coverPage, initBook } from './book.js';
 import { showBook, showShelf } from './bookguestshelf.js';
-import { showWork } from './bookguestwork.js';
+import { showPrototype, showWork } from './bookguestwork.js';
+import { prototypeCard } from './bookprototype.js';
+import { prototypeLink } from '../previews.js';
+import { local } from '../data.js';
 import { button, island } from './bookui.js';
 import { notebookRequest } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
@@ -92,6 +95,24 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
   document.querySelector('#book .bk-paper').append(status);
   let stopped = false;
   let signature = '';
+  // A call's prototypes: a card for each one saved since the page opened, and its clip's live preview opening it here,
+  // over the page.
+  const shownPrototypes = new Set((notebook.prototypes ?? []).map(p => p.id));
+  const openPrototype = link => showPrototype(link, text);
+  const newPrototypes = book => {
+    for (const p of [...(book.prototypes ?? [])].reverse()) {
+      if (shownPrototypes.has(p.id)) continue;
+      shownPrototypes.add(p.id);
+      prototypeCard(p, openPrototype);
+    }
+  };
+  if (notebook.kind === 'call')
+    document.addEventListener('click', e => {
+      const link = e.target.closest?.('a.bk-version-link');
+      if (!link || !prototypeLink(link.href, location.hostname, local)) return;
+      e.preventDefault();
+      openPrototype(link.href);
+    });
   const refresh = async () => {
     try {
       const current = await fetch(`${api}/list?notebook=${notebook.id}`);
@@ -103,6 +124,7 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
         return;
       }
       const page = book.pages[0];
+      newPrototypes(book);
       undo.hidden = !page?.canUndo;
       marked.hidden = !(page?.canUndo || page?.sent || page?.sending);
       status.textContent = book.kind === 'round' ? text.round[book.state] : '';

@@ -2,8 +2,10 @@
 // its order on the page, at the foot of the shortest column. Pure: a width and heights in, places out, no DOM.
 import { UNIT_W } from './scrapunit.js';
 
-// Between two columns, and between two units in a column, at scale 1 in CSS px: always some space between scraps
-export const GAP = 24;
+// Between two columns, and between two units in a column, at scale 1 in CSS px: clearly more than between a note and
+// what hangs under it (an answer, a slip, a prototype's versions: bookunder.js), so notes that just happen to stand
+// together never read as one.
+export const GAP = 48;
 // Round the grid, at scale 1: off the page's edges
 export const MARGIN = 24;
 

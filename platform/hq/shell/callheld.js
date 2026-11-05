@@ -5,14 +5,16 @@ import { transcribe, turnEnded } from './callscreen.js';
 
 // A call that ended without a hang-up (the page left or reloaded, or the line dropped) waits HOLD_MS on the line's end
 // (platform/voice, HOLD): calling the same agent again in that time, from any of HQ's pages on this browser, rejoins it.
+// (The line rejoins a dial to an agent whose call is still on by itself too, as from a page that froze and never said it
+// lost the call: this only says Rejoining.: it was 30 s)
 // Kept from pickup to hang-up as { id, agent, request, lost }, lost: when this page lost it (0 while it still has it).
-const HOLD_MS = 30000,
+const HOLD_MS = 600000,
   HELD = 'heldCall';
 
 const keep = (c, lost) => store.set(HELD, { id: c.id, agent: c.agent, request: c.request, lost });
 // The call on this page is up: it's this page's until it's lost
 export const holdCall = c => keep(c, 0);
-// The page lost the call (it left, or the line dropped): its 30 s count from now
+// The page lost the call (it left, or the line dropped): its HOLD_MS count from now
 export const lostCall = c => keep(c, Date.now());
 // Hung up: nothing to rejoin
 export const letCallGo = () => store.set(HELD, null);
@@ -37,7 +39,7 @@ export function rejoined(c, ev) {
 // the line says it has it (`heard`: its samples so far, all call, with each pong): what was still queued in a socket
 // that dropped, and what the microphone made while reconnecting. None is dropped unheard: the pongs clear it twice a
 // second while connected, it grows only as the socket's own queue does on a weak uplink, and a reconnect ends within
-// the line's 30 s hold. The line's `call` on the new connection says what it has; the rest goes first, with a ping
+// the line's hold (HOLD_MS). The line's `call` on the new connection says what it has; the rest goes first, with a ping
 // from when it was made every pingMs (call.js PING_MS), so the line reads it as late and waits for all of it before it
 // answers (platform/voice, LATE). (An older line says nothing: none is kept.).
 const FRAME = 320;

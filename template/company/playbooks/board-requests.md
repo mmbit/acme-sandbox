@@ -19,8 +19,12 @@ A credential, a real-world action (signing up for a service), a decision or an a
    presentation card (`hq ask ... --product <slug>`) once it's on its preview and its checks have passed. It never
    waits for a go-live step like the domain: the approval to go live is a card of its own.
 4. **Keep moving around the blocker.** Build against a test environment, a mock or a stub behind the same interface.
+   **What can run without harm runs now:** when only one part is blocked (one ad channel, one market, one product),
+   switch the rest on and tell the board about the blocked part in a notice, never "this or nothing" on one card. A
+   request asks only for what only the board can give (a key, a link), and the rest never waits on it.
 5. **The CEO batches.** Several small requests become one. Reminders are gentle and rare. Finished work waits for the
-   next digest too.
+   next digest too. Ongoing work that runs for days or weeks gathers what it needs from the board into one moment
+   (one card whose few points are its fields, a short deck, or one call), never a card per run.
 
 ## What rings the board
 

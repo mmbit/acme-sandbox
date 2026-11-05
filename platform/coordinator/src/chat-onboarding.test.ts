@@ -31,6 +31,11 @@ test("a new company's intercom asks the language first, then its CEO follows the
     const job = await turn();
     assert.equal(job.kind, 'chat');
     assert.match(job.prompt as string, /company\/playbooks\/intake\.md/);
+    // a time it gives: the plan's one time, no margin of its own, doubt with its reason (call 256)
+    assert.match(
+      job.prompt as string,
+      /Give the board one plain time: the plan's time to tell the board[^\n]*never put a second, later time beside it/,
+    );
     await h.finish(job, { result: 'Welkom!' });
   } finally {
     writeFileSync(orgFile, org);

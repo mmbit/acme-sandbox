@@ -1069,6 +1069,31 @@ test("a keys call's asks stay with its agent: a scrap naming another is refused,
   assert.deepEqual(sentTo(page), [], "the board's words and the agent's scrap, for the follow-up");
 });
 
+test("a design session's call page is a sketch page: a canvas from then on, still a call's page under Calls", async () => {
+  const placeOn = (page: number, id: number) =>
+    h.board('/api/notebooks/groups/place', { page, places: [{ id, x: 40, y: 60 }] });
+  const { call } = await h.liveCall('juno');
+  const page = (await h.board('/api/notebooks/call', { call })).body.page;
+  assert.equal(page.sketch, undefined, 'a call page is notes, a masonry');
+  assert.equal(page.chapter, 'calls');
+  const note = await h.voice('write-down', { call, words: 'A bigger header', goal: GOAL });
+  assert.equal(note.status, 200);
+  assert.equal((await placeOn(page.id, note.body.id)).status, 400, 'no place on an ordinary call page');
+  // the design session's switch: the same page, a canvas, its note so far placed where HQ first lays it
+  assert.equal((await h.board('/api/notebooks/call', { call, design: 'yes' })).status, 400);
+  const sketch = (await h.board('/api/notebooks/call', { call, design: true })).body.page;
+  assert.equal(sketch.id, page.id);
+  assert.equal(sketch.sketch, true);
+  assert.equal(sketch.chapter, 'calls', 'it stays a call page');
+  const placed = await placeOn(page.id, note.body.id);
+  assert.equal(placed.status, 200);
+  assert.deepEqual(placed.body.groups[0].place, { x: 40, y: 60 });
+  // never unset: asked for again without design, it's still one
+  assert.equal((await h.board('/api/notebooks/call', { call })).body.page.sketch, true);
+  const shelf = (await h.board(`/api/notebooks/pages?notebook=${page.notebook}`)).body;
+  assert.equal(JSON.stringify(shelf).includes('"sketch":true'), true, 'the page record HQ reads carries it');
+});
+
 test("the call engine's split: the watch-along, the screen and the line's drawing and driving read nothing of Ink", () => {
   const root = new URL('../../../../', import.meta.url).pathname;
   const engine = [

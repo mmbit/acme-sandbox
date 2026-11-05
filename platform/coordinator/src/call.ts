@@ -11,6 +11,7 @@ import * as chat from './chat.ts';
 import * as intercom from './intercom.ts';
 import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob } from './jobs.ts';
 import * as messages from './messages.ts';
+import { forCall } from './callmessages.ts';
 import * as ledger from './ledger.ts';
 import * as review from './review.ts';   // (reach)
 import * as pictures from './pictures.ts';
@@ -22,7 +23,7 @@ import * as goals from './goals.ts';
 import { pad } from './pad.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
-import { DEFAULT_ESTIMATE_SCALE } from '../../worker/hq/estimating.ts';
+import { DEFAULT_ESTIMATE_SCALE, ONE_TIME } from '../../worker/hq/estimating.ts';
 import { PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 
 // The streaming voice line (platform/voice) asks for the prompt, and hands the transcript over the same way.
@@ -239,13 +240,18 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
 // one a line (calls.line_times).
 export function handOver(agent: string, lines: string[], request = 0, token = '', times?: unknown) {
   const bound = token ? (db.prepare('select call from call_tokens where hash = ?').get(sha256(token)) as { call: number | null } | undefined)?.call : undefined;
-  if (token) db.prepare('delete from call_tokens where hash = ?').run(sha256(token));
+  // The token stops working here but is kept its day (context() clears it), so a repeat finds its call. The voice line
+  // sends an end again when HQ's reply was lost.
+  if (token) db.prepare('update call_tokens set expires = min(expires, ?) where hash = ?').run(Date.now(), sha256(token));
   const was = bound ? db.prepare('select id, status, lines from calls where id = ? and agent = ?').get(bound, agent) as { id: number; status: string; lines: string } | undefined : undefined;
+  // (a repeat of an end HQ took, the call ended or failed since: no second row, no second follow-up.
+  if (was && was.status !== 'live' && was.lines !== '[]') return { ok: true };
   // A late transcript (the sweep ended the call) goes to that call (ledger.late); one whose call isn't found (its token
   // unknown, or swept a day after it expired) gets a new row.
   const req = about(agent, request);
   const said = lineTimes(lines, times);
-  if (was?.status === 'ended' && was.lines === '[]' && lines?.length) { ledger.late(was.id, lines, said); return { ok: true }; }
+  // (the sweep's call may hold the lines kept() had before the line lost it: the whole transcript takes their place)
+  if (was?.status === 'ended' && lines?.length) { ledger.late(was.id, lines, said); return { ok: true }; }
   const live = was?.status === 'live' ? was.id : undefined;
   // (its notes page stays in My journal as the board left it, or is deleted if nothing is on it.)
   if (live) ledger.callEnded(live);
@@ -261,6 +267,19 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   watchalong.endCall(id);
   ledger.followUp(id);
   return { ok: true };
+}
+
+// The transcript so far, while the call goes on (the voice line sends it as it grows): a call that loses its line keeps
+// what was said in HQ, and the CEO reads a call still going on (memory.ts canRead). Only the call's own live row, by
+// its token; the hand-over still ends it. Its answer carries the colleagues' messages for the call since the last
+// (callmessages.ts forCall).
+// lines: none when they haven't changed since the last (only the messages, then).
+export function kept(agent: string, lines: string[] | undefined, token = '', times?: unknown) {
+  const bound = token ? (db.prepare(`select t.call from call_tokens t join calls c on c.id = t.call
+    where t.hash = ? and c.agent = ? and c.status = 'live'`).get(sha256(token), agent) as { call: number } | undefined)?.call : undefined;
+  if (!bound) return 404;
+  if (lines) db.prepare('update calls set lines = ?, line_times = ? where id = ?').run(JSON.stringify(lines), lineTimes(lines, times), bound);
+  return { ok: true, messages: forCall(bound) };
 }
 
 const lineTimes = (lines: string[], times: unknown) =>
@@ -282,7 +301,9 @@ export const calls = () => (db.prepare(`select c.id, c.ts, c.agent, c.request, c
 // carries on from (carriedOn()), and `call` this one. On a call in HQ it says when to use which of the notes page's tools
 // (a change about what the board shows comes with its crop by default), and that the board's scribbles are for the agent to judge.
 function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, phone = false, carried: number[] = [], call = restarted) {
+  // (its number: a colleague's quick job saves a prototype for it by that.)
   const head = `${instructions(lang, agent, phone)}
+This call is #${call}.
 ## You
 ${profile(read(`company/people/${agent.replace(/[^a-z0-9-]/g, '')}.md`))}
 
@@ -337,19 +358,35 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // WebSearch is enabled by guard.TOOLS. Its reply ends in a Sources list a call would read aloud (voice server.py
   // spoken() drops only the links), so the prompt says never.
   // report, git and WebFetch: the agent reads what a job reads, but no shell (voice reads.py, guard.TOOLS).
+  // One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME, board, call 256).
   // Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when
   // missed, once.
   // Shifted work: the job and when tools give each agreed deadline's facts (deadlines.ts); the board hears of shifts
   // only when a time it set itself will be missed or it asks; whether one is safe or tight and where new work goes is the
   // agent's judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
+  // Talk between the board and someone in the room with it is let be, never "I didn't catch that", with say_nothing.
+  // The call's language is the line's, one value for its voice, its ears and these words, and it holds against any
+  // other language in the briefing (talk of a meeting in Dutch on an English call). Only the line's Dutch voice is
+  // Piper's (voice server.py DUTCH), which says a word marked ‹live› in English sounds (MARKED); its German and English
+  // are Pocket TTS's, which reads the word as written, so only a Dutch call is asked to mark. An answer is what we'll
+  // do, the rest when asked.
+  const spokenIn = LANGUAGES[lang].name;
   return `You are ${name}${pron}, ${role} at ${names().name}, an AI-run company. You're on a live voice call with the board (the human owner).
-Your words are spoken aloud: reply in one to three short spoken sentences, in plain words, the answer first. No
-lists, markdown, emoji or links. Be warm and direct, and ask one question when you need to. Speak ${LANGUAGES[lang].name}.
+The call's language is ${spokenIn}: HQ's language setting, in which the line voices your words and hears the board.
+Speak ${spokenIn} from your first word to your last, whatever language the briefing, the intercom, earlier calls or
+the work are in: talk of a meeting in another language is about that meeting, not this call. To have a call in another
+language, the board changes HQ's language and calls again.
+${lang !== 'nl' ? '' : `Its ${spokenIn} voice says every word the ${spokenIn} way ("live" as "lieve"): put a word you'd say the
+English way between ‹ and ›, as in "Het staat ‹live›." The marks are never shown or heard.
+`}Your words are spoken aloud: reply in one to three short spoken sentences, in plain words, the answer first. No
+lists, markdown, emoji or links. Be warm and direct, and ask one question when you need to. When the board raises a
+problem or asks for something, say what we'll do about it, and stop there: not who it goes to, what you don't know
+yet, your guesses at the cause or how the work will go, unless the board asks. Every extra sentence is one it waits through.
 When you give a time, say it plainly in one short natural sentence, never a bare time: "Ada's fix should be live by about
 twenty-five past two." Then only what the board must know about it (a real risk, a choice it has), never the working
 behind it (how many rounds, what the plan counts, how far along someone is). Say it in the board's own time: ${boardClock()}
 Never say a number for work aloud (a job, card, pull request, call, item or pin), not even once: the board can't see
-them on a call, and hearing them makes the call run long. Say what the work is and whose it is. The numbers in this
+them on a call, and hearing them makes the call run long. Say what the work is. The numbers in this
 briefing and in your tools' answers are for your tools, and your written follow-up carries them.
 Answer directly without deliberating: the board hears every second before your first word, and the careful work is
 your follow-up's, after the call.
@@ -389,9 +426,9 @@ plays it into the plan, every seat and window counted (an AI hour is one agent w
 give it by: only when the work doesn't make it, say what would. When the board wants something by a time, that time is
 yours to make: set its window as you queue it or release it (a resume or a lifted hold too, with manage's window), and
 check it with when or eta before you tell the board anything. A time far past the board's is a problem to solve on the
-call, never news to report: the tool's answer then says what to check. Give one plain time: the time to tell the board
-the tool gives (live four times in five), never a "done about", an ETA or a planned finish, which are as likely late as
-early. When you tell the board a time,
+call, never news to report: the tool's answer then says what to check.
+${ONE_TIME}
+When you tell the board a time,
 write it down with write_down, and give the job that does it its item, or, for work already under way (a review, a
 running job), name that job in it: it becomes the window of the work's deliverable at once, while you're still on the line,
 so HQ orders its work by it. A time you give or offer is ours, even one the board takes: its slips are ours to plan
@@ -426,7 +463,8 @@ Fixes to how the company itself works (calls and this phone line, hand-offs, orc
 the coordinator) are the Process team's to build, through the normal review: they go to ${findAgent(roles().process)?.name ?? roles().process} as a job. Never offer to
 write a brief for the board's own Claude Code; that's for quick fixes the board chooses to make itself.
 The board's words reach you through speech recognition, which can turn background noise or other people talking
-into words: if what you hear seems garbled, unrelated or not addressed to you, say you didn't catch that.
+into words: if what you hear seems garbled or unrelated, say you didn't catch that. Words someone in the room says to
+the board, or the board to them, aren't for you: let them be (say_nothing), never "I didn't catch that".
 ${phone ? '' : `The board can also show you pictures on screen during the call: they come with its words, or on their own with a short note.
 You see its screen only while it shows it to you. When the board talks about something on its screen that you can't see,
 ask to see it with ask_to_see then and there: that one step asks, and the board answers yes or no. Never tell it which

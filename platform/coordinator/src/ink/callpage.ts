@@ -36,7 +36,7 @@ import { asksOf, ownLines, rewrote } from './callasks.ts';
 import { WHAT } from '../ledger.ts';
 import { MARKERS, MARKER_ALPHA, WIDTHS, shape } from '../../../hq/shell/ink/bookinkmath.js';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
-import { UNIT_W, retypedNote, unitOf } from '../../../hq/shell/ink/scrapunit.js';
+import { POSTIT, UNIT_W, retypedNote, unitOf } from '../../../hq/shell/ink/scrapunit.js';
 import { tryNow } from './booktry.ts';
 import { readInk, type Reading } from './inkread.ts';
 
@@ -48,8 +48,8 @@ const ROOM = 12,
   T_STEP = 16;
 const ENDED = [404, 'This call has ended: its notes have gone in.'] as Refused;
 
-// The live call and its notes page (made if it has none yet). Its answers in plain words
-function callPage(b: any) {
+// The live call and its notes page (made if it has none yet). Its answers in plain words (callprototypes.ts too.
+export function callPage(b: any) {
   const call = Number(b?.call);
   const c = Number.isInteger(call) && call > 0 ? liveCall(call) : undefined;
   const p = c && pageFor(call);
@@ -188,8 +188,9 @@ const pointsOf = (v: unknown) =>
     : null;
 
 // POST /api/voice/drawing { call, svg }: a drawing of the agent's own (a diagram, a chart) drawn as a picture in the
-// company's look (drawing.ts) and put on the page as its last scrap, for the board to draw on as on any picture. It
-// asks for nothing. Its answer carries the picture at half its size, for the agent to see what the board sees.
+// company's look (drawing.ts) and put on the page as its last scrap, its lines straight on the post-it, for the board to
+// draw on as on any picture. It asks for nothing. Its answer carries the picture at half its size on the post-it's
+// yellow, for the agent to see what the board sees.
 export async function drawing(b: any) {
   const live = callPage(b);
   if (isRefused(live)) return live;
@@ -199,10 +200,11 @@ export async function drawing(b: any) {
   // (the call may have ended while it was drawn)
   const at = callPage(b);
   if (isRefused(at)) return at;
-  const g = addPicture(at.page, at.agent, { type: 'image/png', clean: picture.png }, NOTHING_SAID);
+  const g = addPicture(at.page, at.agent, { type: 'image/png', clean: picture.png }, NOTHING_SAID, true);
   if (isRefused(g)) return g;
   const seen = await sharp(picture.png)
     .resize({ width: picture.width >> 1 })
+    .flatten({ background: POSTIT })
     .jpeg({ quality: 85 })
     .toBuffer();
   return {

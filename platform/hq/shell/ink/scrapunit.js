@@ -13,6 +13,8 @@ export const UNIT_W = 320;
 export const WORDS_IN = 12;
 // Where a typed note's words sit on its unit, in the post-it's ink (shared/review/postit.js)
 export const NOTE_TEXT = { x: WORDS_IN, w: UNIT_W - 2 * WORDS_IN, color: '#1d1a2f' };
+// The post-it's yellow, as HQ's page lays it (bookgroups.css --bk-postit).
+export const POSTIT = '#fdf1a9';
 // A note's lines with its own (mine: some of them, a call's agent's) typed again in new words where they stood: from
 // their x, no nearer the unit's sides than HQ's page lays words and as wide as the unit leaves them, so the page has
 // nothing to lay anew and save as the board's; the lines under them moved by the difference in height. lined: a new

@@ -8,7 +8,7 @@ and a clock that moves with the audio (32 ms a VAD window). The Call tests need 
 `python3 -m venv /tmp/v && /tmp/v/bin/pip install numpy`, then run this with /tmp/v/bin/python); without it only stray()
 is tested. replay.py runs the same kind of call through the real models.
 """
-import asyncio, base64, contextlib, io, json, os, re, sys, tempfile, threading, time, types, unittest, unittest.mock
+import asyncio, base64, contextlib, dataclasses, io, json, os, re, sys, tempfile, threading, time, types, unittest, unittest.mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -74,13 +74,23 @@ class Pocket:
             yield NS(numpy=lambda: np.full(8000, 0.01, np.float32))
 
 
-class Piper:
-    __hash__ = None  # (as piper's PiperVoice, a dataclass)
+@dataclasses.dataclass
+class PiperConfig:
+    espeak_voice: str = 'nl'
+
+
+@dataclasses.dataclass
+class Piper:  # (as piper's PiperVoice, a dataclass)
+    config: PiperConfig = dataclasses.field(default_factory=PiperConfig)
 
     def synthesize(self, text):  # (Dutch: 2 s a sentence too, at 16 kHz)
         SPOKEN.append(text)
         for _ in range(4):
             yield NS(audio_int16_bytes=np.full(8000, 300, np.int16).tobytes(), sample_rate=16000)
+
+    def phonemize(self, text):  # (espeak's sounds, by sentence: English's for "live" and "review", as espeak gives them)
+        said = {'en-us': {'live': 'lˈaɪv', 'review': 'ɹᵻvjˈuː'}}.get(self.config.espeak_voice, {})
+        return [list(' '.join(said.get(w, w) for w in text.split()))]
 
 
 def stub(name, **attrs):
@@ -532,11 +542,9 @@ class German(unittest.IsolatedAsyncioTestCase):
     async def test_every_language_in_the_agents_own_voice_and_ai_as_each_says_it(self):
         self.assertEqual(await self.speak('de', 'alba', 'Ich bin eine AI, ein KI-Assistent. Die MAIL und AIDA.'),
                          (['Ich bin eine Ka-I, ein Ka-I-Assistent.', 'Die MAIL und AIDA.'], [('german', 'alba')] * 2))
-        self.assertEqual(await self.speak('nl', 'jane', 'Ik ben een AI-assistent.'),
-                         (['Ik ben een aa-ie-assistent.'], [('dutch', 'jane')]))
         self.assertEqual(await self.speak('en', 'eve', "I'm an AI assistant."), (["I'm an AI assistant."], [('english', 'eve')]))
-        # (a voice that garbles Dutch speaks it with Piper, which reads "AI" right as it is)
-        self.assertEqual(await self.speak('nl', 'bill_boerst', 'Ik ben een AI-assistent.'), (['Ik ben een AI-assistent.'], []))
+        # (Dutch is Piper's alex in every voice, which reads "AI" right as it is: DUTCH)
+        self.assertEqual(await self.speak('nl', 'jane', 'Ik ben een AI-assistent.'), (['Ik ben een AI-assistent.'], []))
 
     def test_little_words_and_stop_words_in_german(self):
         for text in ('Ja.', 'Genau.', 'Ja, genau.', 'Okay.', 'Alles klar.', 'Danke schön.', 'Ach so.', 'Mhm.', 'Ja, bitte.', 'Ähm.'):
@@ -559,11 +567,32 @@ class German(unittest.IsolatedAsyncioTestCase):
         respell = {'en': {'Acme': 'Ak-mee'}}
         self.assertEqual(await self.speak('en', 'eve', "Acme's first week. ACME, Acmes!", respell),
                          (["Ak-mee's first week.", 'Ak-mee, Acmes!'], [('english', 'eve')] * 2))
-        self.assertEqual(await self.speak('nl', 'jane', 'Acme is af.', respell), (['Acme is af.'], [('dutch', 'jane')]))
+        self.assertEqual(await self.speak('nl', 'jane', 'Acme is af.', respell), (['Acme is af.'], []))
         # a word's end, a compound's last part too
         respell = {'nl': {'-poster': 'pooster', '-posters': 'poosters'}}
         self.assertEqual(await self.speak('nl', 'jane', 'Een Geboorteposter, twee posters. Impostor.', respell),
-                         (['Een Geboortepooster, twee poosters.', 'Impostor.'], [('dutch', 'jane')] * 2))
+                         (['Een Geboortepooster, twee poosters.', 'Impostor.'], []))
+
+    @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+    async def test_an_english_word_the_agent_marks_is_said_the_english_way_and_shown_unmarked(self):
+        # (Piper: English espeak's sounds, each the nearest a Dutch voice learnt, ɹ as r and ᵻ as ɪ.)
+        self.assertEqual(await self.speak('nl', 'alba', 'Het staat ‹live› na de ‹review›.'),
+                         (['Het staat [[ lˈaɪv ]] na de [[ rɪvjˈuː ]].'], []))
+        # Pocket TTS reads letters: as written
+        self.assertEqual(await self.speak('de', 'alba', 'Es ist ‹live›.'), (['Es ist live.'], [('german', 'alba')]))
+        # an empty mark, or the agent's own brackets, are no sounds
+        self.assertEqual(await self.speak('nl', 'alba', 'Het staat ‹› [[klaar]].'), (['Het staat  klaar.'], []))
+        brain, events = Brain(), []
+        brain.voice, brain.reply = 'alba', 'Het staat ‹live›.'
+
+        async def event(e):
+            events.append(e)
+        with tempfile.TemporaryDirectory() as d:
+            call = server.Call(lambda x: asyncio.sleep(0), event, lambda: asyncio.sleep(0), 'juno', 'nl', brain=brain,
+                               wiring=server.Wiring(hq=no_screen(server.hq), paths=server.Paths(calls=Path(d)), monotonic=ticked))
+            await call.answer('Hallo?', None)
+        self.assertEqual([e['text'] for e in events if e['type'] == 'said'], ['Het staat live.'])
+        self.assertEqual(call.lines[-1], 'Juno: Het staat live.')
 
     @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
     async def test_a_german_call_speaks_german_in_the_agents_own_voice(self):
@@ -1191,6 +1220,19 @@ class Hold(Juno):
                                               "orders?\" reached me. Answer my whole message instead.) Can you check the orders? tonight.")
         self.assertEqual(self.call.lines, ['Board: Can you check the orders? tonight.', f'Juno: {REPLY}'])
 
+    async def test_a_design_session_waits_for_the_first_words_in_silence(self):
+        """In a design session the room's silence is thinking too, and most replies say nothing: no thinking sound
+        while the agent thinks."""
+        self.call.design.start()
+        self.brain.thinking = asyncio.Event()
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(150)  # (past HUSH, and two of the sound's gaps)
+        await asyncio.sleep(0.3)
+        self.assertEqual(len(self.brain.asked), 1)
+        self.assertEqual(self.audio, [])
+        self.brain.thinking.set()
+        await self.settle()
+
     async def test_a_pause_mid_sentence_plays_no_sound_over_the_board(self):
         """The line asks the model after a short pause, but the board carries on: no sound in that pause, and the reply
         is taken back unheard."""
@@ -1245,6 +1287,56 @@ class Hold(Juno):
         tool.set()
         await self.settle()
         self.assertEqual(self.call.lines[1], 'Juno: One moment It says a warmer world.')
+
+    async def test_say_nothing_passes_the_turn_with_no_word_and_no_tick(self):
+        """The board talks to someone else (its cat): the agent passes its turn (say_nothing). Nothing of the
+        reply is said, the stage direction it writes after the pass included, nothing goes in the transcript, and the
+        work it does after it (a sketch) plays no tick, however long it takes."""
+        for design in (False, True):
+            self.call.design.on = design
+            self.audio[:], self.events[:], tool = [], [], asyncio.Event()
+            self.brain.reply = [server.Step('mcp__hq__say_nothing'), '(luistert)', server.Step('mcp__hq__draw_picture'),
+                                tool, 'Done.']
+            await self.talk('Where are you, puss?', 30)
+            await self.quiet(20)
+            await self.asked_times(1 + design)
+            await self.quiet(200)  # (past HUSH, and 2 s after it again and again: a tick would have played)
+            await asyncio.sleep(0.3)
+            tool.set()
+            await self.settle()
+            await self.quiet(100)
+            await asyncio.sleep(0.1)
+            self.assertEqual((self.audio, [e for e in self.events if e['type'] in ('said', 'tick')]), ([], []))
+            self.assertEqual(self.call.lines[-1], 'Board: Where are you, puss?')
+            self.assertEqual(self.events[-1], {'type': 'state', 'state': 'listening'})
+
+    async def test_in_a_design_session_the_tick_plays_while_someone_waits_and_not_for_work_in_the_background(self):
+        """A design session: asked something, the agent's tool steps tick as on any call (they wait on it); work it
+        does after passing its turn (a prototype mentioned in passing) plays none."""
+        self.call.design.start()
+        self.call.design.told()
+        tool = asyncio.Event()
+        self.brain.reply = [server.Step('mcp__hq__search'), tool, 'Gevonden.']
+        await self.talk('Juno, wat is onze missie?', 30)
+        await self.quiet(20)
+        await self.asked_times(1)
+        await self.quiet(100)
+        await asyncio.sleep(0.3)
+        self.assertGreater(self.ticks(), 0)
+        tool.set()
+        await self.settle()
+        await self.quiet(100)
+        ticks, tool = self.ticks(), asyncio.Event()
+        self.brain.reply = [server.Step('mcp__hq__say_nothing'), server.Step('mcp__hq__prototype'), tool]
+        await self.talk('Wouldn\'t a little cat game be fun?', 30)
+        await self.quiet(20)
+        await self.asked_times(2)
+        await self.quiet(200)
+        await asyncio.sleep(0.3)
+        tool.set()
+        await self.settle()
+        self.assertEqual(self.ticks(), ticks)
+        self.assertEqual(self.call.lines[-1], "Board: Wouldn't a little cat game be fun?")
 
     async def test_euro_amounts_are_spoken_as_words_and_shown_as_written(self):
         for lang, spoken in (('en', ['A mug is twenty-nine euros ninety-five.', 'The extra one is four euros off.']),
@@ -1417,6 +1509,36 @@ class Late(Juno):
         self.assertEqual(self.call.lateness(),
                          "call: juno line: the board's audio came up to 20.0 s late; "
                          '1 answer waited for it to catch up')
+
+    async def test_a_page_that_calls_back_in_pings_from_its_own_clock(self):
+        """The board's page left and a new one called back in: the new page's clock starts again at 0, an
+        hour behind the old one's. Its pings are on time, and its words answered at once, not 3600 s late."""
+        self.call.pinged(3_600_000)  # (the old page's clock: open for an hour)
+        await self.quiet(10)
+        self.call.reconnected()
+        self.call.came_back()
+        self.call.pinged(500)  # (the new page, half a second old)
+        self.assertEqual((self.call.late, self.call.behind()), (0.0, False))
+        await self.quiet(15)
+        self.call.pinged(1000)
+        await self.talk('Can you hear me?', 30)
+        await self.quiet(20)
+        await self.settle()
+        self.assertTrue(self.brain.asked and self.brain.asked[-1].endswith('Can you hear me?'), self.brain.asked)
+        self.assertLess(self.call.latest, 1)
+
+    async def test_a_page_that_left_mid_stroke_holds_nothing_once_the_board_calls_back_in(self):
+        """The old page sent the pen down and left before its lift: the new page sends no pen until it draws, so the
+        back notice goes out on its own once the line is quiet."""
+        self.call.penned(True)
+        self.call.reconnected()
+        self.call.came_back()
+        self.assertFalse(self.call.inking())
+        await self.quiet(round(server.SHOWN_SECONDS / server.WINDOW) + 10)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(len(self.brain.asked), 1, 'the back notice, unprompted')
+        self.assertTrue(self.brain.asked[0].startswith(server.BACK_WORDS), self.brain.asked)
 
     async def test_an_uplink_that_never_catches_up_is_answered_once_the_quiet_after_the_words_is_in(self):
         """The quiet after the words still comes 20 s late: the line answers once 20 s of it has come, not never."""
@@ -1858,6 +1980,27 @@ class RoomVoices(Juno):
         self.assertEqual(self.brain.asked[2], 'Board: Thanks.')  # (told once)
         self.assertEqual(self.call.voices.report('juno'), 'call: juno voices: 2 (opened at 0.00)')
 
+    async def test_a_guest_joined_brings_the_agent_its_part_before_their_voice_opens(self):
+        self.assertTrue(self.call.voices.joined('Esmee'))
+        self.assertFalse(self.call.voices.joined(' esmee '))  # (each guest once: HQ sends them again after a reconnect)
+        self.assertFalse(self.call.voices.joined(' : '))
+        await self.say('Shall we start with the cover?', 60, self.BOARD)
+        await self.heard_out()
+        await self.say('Yes, the cover first.', 60, self.BOARD)  # (hers, in a voice the line hasn't told apart)
+        await self.heard_out()
+        told, said = self.brain.asked[0].split('\n\n')
+        self.assertIn("Esmee joined the call as Board's guest", told)
+        self.assertIn("what you hear comes as Board's, whoever said it", told)
+        self.assertIn("never say you didn't catch it", told)
+        self.assertNotIn('Voice 2', told)
+        self.assertEqual(said, 'Shall we start with the cover?')
+        self.assertEqual(self.brain.asked[1], 'Yes, the cover first.')  # (told once)
+        await self.say('And the prices too.', 60, self.GUEST)  # (her voice opens later: the voices, not her again)
+        await self.heard_out()
+        told = self.brain.asked[2].split('\n\n')[0]
+        self.assertIn('Voice 2', told)
+        self.assertNotIn('Esmee', told)
+
     async def test_both_in_one_message_each_on_their_own_line(self):
         await self.say('What about the basket', 60, self.BOARD)
         await self.quiet(5)  # (a pause the VAD cuts at, too short to answer)
@@ -1905,6 +2048,149 @@ class RoomVoices(Juno):
     async def test_a_room_and_the_phone_have_none(self):
         self.assertIsNone(self.make_call(*self.sends, 'juno', 'en', phone=True).voices)
         self.assertIsNone(self.make_call(*self.sends, 'juno', 'en', callout=5).voices)
+
+
+class DesignSession(RoomVoices):
+    """A design session at the board's table (design.py): the agent hears how to take part once, and its raised hand
+    waits for a natural pause, or a tap, for a turn of its own."""
+    def hands(self):
+        return [e for e in self.events if e.get('type') == 'hand']
+
+    async def test_started_from_hq_the_agent_hears_the_session_once(self):
+        self.assertTrue(self.call.design.start())
+        self.assertFalse(self.call.design.start())
+        await self.say("Let's start with the cover.", 60, self.BOARD)
+        await self.heard_out()
+        await self.say('Or the spine.', 60, self.BOARD)
+        await self.heard_out()
+        self.assertIn('This call is a design session', self.brain.asked[0])
+        self.assertIn('raise_hand', self.brain.asked[0])
+        self.assertTrue(self.brain.asked[0].endswith("Let's start with the cover."))
+        self.assertEqual(self.brain.asked[1], 'Or the spine.')  # (told once)
+        self.call.design.fresh()  # (a restarted session hears it again)
+        self.assertIn('design session', self.call.design.told())
+
+    async def test_the_agent_makes_it_one_on_the_call_and_hq_opens_its_page(self):
+        got = await self.call.design_tool({'design_session': {}})
+        self.assertIn('design session now', got['ok'])
+        self.assertIn('raise_hand', got['ok'])  # (its words in the answer: not again with the next message)
+        self.assertIn({'type': 'design'}, self.events)
+        self.assertEqual(await self.call.design_tool({'design_session': {}}), {'ok': server.DESIGN_TOOL_WORDS['already']})
+        self.assertEqual(self.call.design.told(), '')
+
+    async def test_a_raised_hand_waits_for_a_pause_then_has_its_turn(self):
+        self.call.design.start()
+        self.call.design.told()
+        self.brain.reply = ''  # (they talk to each other: no words)
+        await self.say('What if the pages fold out?', 60, self.BOARD)
+        got = await self.call.hand_tool({'raise_hand': {'about': 'a fold-out spread  for maps'}})
+        self.assertEqual(got, {'ok': server.HAND_TOOL_WORDS['up']})
+        self.assertEqual(self.hands(), [{'type': 'hand', 'up': True, 'about': 'a fold-out spread for maps'}])
+        await self.quiet(20)
+        await self.settle()
+        await self.say('Like a map, yes.', 60, self.GUEST)  # (still talking: the hand stays up)
+        await self.quiet(20)
+        await self.settle()
+        self.assertEqual(len(self.hands()), 1)
+        self.assertEqual(len(self.brain.asked), 2)
+        self.brain.reply = 'A fold-out spread could hold the trip map.'
+        await self.quiet(100)  # (a natural pause: about 3 s)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(self.hands()[-1], {'type': 'hand', 'up': False})
+        self.assertIn('A natural pause now, with your hand raised to add: a fold-out spread for maps', self.brain.asked[2])
+        self.assertIn('Juno: A fold-out spread could hold the trip map.', self.call.lines)
+
+    async def test_a_tap_gives_the_hand_its_turn_at_once(self):
+        self.call.design.start()
+        self.call.design.told()
+        await self.call.hand_tool({'raise_hand': {'about': 'a prototype is ready'}})
+        self.call.hand_tapped()
+        await self.quiet(5)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertIn('They tapped your raised hand', self.brain.asked[0])
+        self.assertEqual(self.hands()[-1], {'type': 'hand', 'up': False})
+
+    async def test_speaking_lowers_the_hand_and_down_lowers_it_too(self):
+        self.call.design.start()
+        self.call.design.told()
+        await self.call.hand_tool({'raise_hand': {'about': 'the cover'}})
+        self.call.hand_waits.cancel()  # (no pause comes in this test: someone asks the agent first)
+        await self.say('Juno, what do you think?', 60, self.BOARD)
+        await self.heard_out()
+        self.assertEqual(self.hands()[-1], {'type': 'hand', 'up': False})
+        await self.call.hand_tool({'raise_hand': {'about': 'the spine'}})
+        self.assertEqual(await self.call.hand_tool({'raise_hand': {'down': True}}), {'ok': server.HAND_TOOL_WORDS['down']})
+        self.assertEqual(await self.call.hand_tool({'raise_hand': {'down': True}}), {'ok': server.HAND_TOOL_WORDS['none']})
+        self.assertEqual(await self.call.hand_tool({'raise_hand': {}}), {'error': server.HAND_TOOL_WORDS['shape']})
+
+    async def test_a_resumed_connection_hears_the_session_and_the_hand(self):
+        self.call.design.start()
+        await self.call.hand_tool({'raise_hand': {'about': 'the cover'}})
+        self.call.hand_waits.cancel()
+        self.events.clear()
+        await self.call.retell()
+        self.assertEqual([e for e in self.events if e['type'] in ('design', 'hand')],
+                         [{'type': 'design'}, {'type': 'hand', 'up': True, 'about': 'the cover'}])
+
+
+    async def test_what_the_agent_makes_waits_until_they_are_done_and_talking_on_takes_it_back(self):
+        """Call #262: the board's first whole sentence went to the agent, which put a card on the page while the board
+        went on; the rest asked for something else, and a second card came beside the first."""
+        self.call.design.start()
+        self.call.design.told()
+        made, thinking = [], asyncio.Event()
+
+        async def draw(asked):
+            made.append(asked)
+            return {'line': 'Drawn.'}
+
+        self.brain.reply = [thinking]  # (the agent's turn still running as its drawing step comes)
+        await self.say('Put a card on the page with two choices.', 60, self.BOARD)
+        await self.quiet(5)  # (its words go to the agent at once: they sound finished)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.brain.asked, ['Put a card on the page with two choices.'])
+        drawing = asyncio.create_task(self.call.made(draw, {'draw_picture': {'svg': 'one'}}))
+        await asyncio.sleep(0.3)
+        self.assertEqual(made, [], 'the room has been quiet for less than a moment')
+        await self.say('Three variants of the button, I mean.', 60, self.BOARD)  # (they go on: the turn is taken back)
+        self.assertEqual(await drawing, {'error': server.MADE_WORDS})
+        thinking.set()
+        await self.quiet(5)
+        await self.settle()
+        self.assertEqual(made, [])
+        self.assertIn('Put a card on the page with two choices. Three variants of the button, I mean.',
+                      self.brain.asked[-1])
+        self.assertIn("I wasn't finished", self.brain.asked[-1])  # (the whole thought, as one message)
+        drawing = asyncio.create_task(self.call.made(draw, {'draw_picture': {'svg': 'three'}}))
+        await asyncio.sleep(0.3)
+        self.assertEqual(made, [])
+        await self.quiet(50)  # (done: quiet for a moment)
+        await asyncio.sleep(0.2)
+        self.assertEqual(await drawing, {'line': 'Drawn.'})
+        self.assertEqual(made, [{'draw_picture': {'svg': 'three'}}])
+
+    async def test_a_pause_that_sounds_unfinished_waits_longer_in_a_session(self):
+        self.new_call(design_open_seconds=0.3)
+        self.call.design.start()
+        self.call.design.told()
+        self.sounds = {}
+        x = self.utterance('So the first thing I want', 60)
+        self.sounds[self.level] = False  # (Smart Turn: not finished)
+        await self.feed(x, 2048)
+        await self.quiet(5)
+        await asyncio.sleep(0.1)  # (past a call's own wait for the rest, 0.02 s here)
+        self.assertEqual(self.brain.asked, [])
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(self.brain.asked, ['So the first thing I want'])
+
+    async def test_off_a_design_session_what_the_agent_makes_is_made_at_once(self):
+        async def draw(asked):
+            return {'line': 'Drawn.'}
+
+        self.assertEqual(await asyncio.wait_for(self.call.made(draw, {}), 0.5), {'line': 'Drawn.'})
 
 
 class SavedVoices(RoomVoices):
@@ -2621,6 +2907,33 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(end[0]['lines'][-2:], ['Board: Can you build the page?', 'Juno: Yes, I will build it.'])
         self.assertEqual(self.live, set(), 'no token outlives the call')
 
+    async def test_a_held_transcript_reaches_hq_at_the_start_and_one_hq_refused_on_the_next_sweep(self):
+        """The line holds a cut-off call's transcript (its file, no live call): it goes to HQ whole as the line starts.
+        One HQ didn't take goes on the next sweep, and a call still on the line keeps its own."""
+        lines = [f'Board: idea {n}' for n in range(400)]
+        held, refused, on = (self.paths.calls / f'{name}.json' for name in ('cut', 'refused', 'on'))
+        held.write_text(json.dumps({'agent': 'juno', 'lines': lines, 'request': 0, 'token': 't257', 'times': []}))
+        refused.write_text(json.dumps({'agent': 'juno', 'lines': ['Board: hi'], 'request': 0, 'token': 't258', 'times': []}))
+        on.write_text(json.dumps({'agent': 'juno', 'lines': ['Board: still here'], 'request': 0, 'token': 't259', 'times': []}))
+        (self.paths.live / 'on').touch()
+        answer, down = self.coordinator, [True]  # (HQ refuses t258's first hand-over)
+
+        def coordinator(method, path, body=None):
+            if path == 'call-end' and body['token'] == 't258' and down:
+                down.pop()
+                raise HTTPError(f'{server.HQ}/api/voice/call-end', 502, 'Bad Gateway', None, None)
+            return answer(method, path, body)
+        self.coordinator = coordinator
+        sweep = asyncio.create_task(server.hand_over_held(self.paths, self.wiring.hq, every=0.01))
+        async with asyncio.timeout(10):  # (only a line that never hands them over waits this long)
+            while held.exists() or refused.exists():
+                await asyncio.sleep(0.01)
+        sweep.cancel()
+        end = [b for m, p, b in self.asked if p == 'call-end']
+        self.assertEqual(end[0]['lines'], lines, 'whole')
+        self.assertEqual((down, sorted(b['token'] for b in end)), ([], ['t257', 't258']), 'once each, the refused one again')
+        self.assertEqual((held.exists(), refused.exists(), on.exists()), (False, False, True))
+
     async def test_a_reply_lost_with_its_session_that_cannot_restart_says_so_and_the_line_listens(self):
         """The call agent dies mid-reply and the coordinator refuses the restart:
         the line says why, and the turn ends as any does, with HQ's call screen back on listening."""
@@ -2804,6 +3117,70 @@ class Restart(unittest.IsolatedAsyncioTestCase):
                 timer.cancel()
             call.end()
 
+    async def test_a_new_dial_with_either_key_comes_back_into_the_agents_call_still_on(self):
+        """The board's iPad froze mid-call, it closed the browser and dialled again with the Design session key: the
+        line knows the agent's call is still on (its old connection still open, or dropped) and takes it to the new
+        connection, as a call back, the old one closed. A dial about another card doesn't. (call #257's drop)"""
+        self.procs = [Proc(['Nice shop.', 'Welcome back.'])]
+        call = self.call(lambda e: line.send(json.dumps(e)))
+        line = server.Line(Socket([]))
+        await call.start()
+        await call.answer('This is the shop.', None)
+        call.live_at = 1.0
+        frozen = line.ws  # (still open: the frozen page never said it left)
+        server.CALLS['c1'] = {'call': call, 'line': line, 'timer': None}
+        self.assertIsNone(server.held({'agent': 'juno', 'request': 31}), 'a call about another card is another call')
+        again = Socket([json.dumps({'agent': 'juno', 'lang': 'en', 'design': True})])
+        try:
+            await server.app_call(again, self.make_call, self.wiring)
+            picked_up = json.loads(again.sent[0])
+            self.assertEqual((picked_up['type'], picked_up['call']), ('call', call.brain.call))
+            self.assertEqual(picked_up['said'][:2], [{'who': 'board', 'text': 'This is the shop.'},
+                                                     {'who': 'agent', 'text': 'Nice shop.'}])
+            self.assertEqual(len(self.calls), 1, 'no second call')
+            await asyncio.sleep(0)
+            self.assertTrue(frozen.closed, "the frozen page's connection is let go")
+            self.assertTrue(call.design.on, 'the Design session key makes it one')
+            self.assertIn({'type': 'design'}, [json.loads(m) for m in again.sent if isinstance(m, str)])
+            await call.answer('Sorry, I dropped.', None)
+            told = self.started[0].heard_messages[1]['content'][-1]['text']
+            self.assertTrue(told.startswith(server.BACK_WORDS), told)
+        finally:
+            if timer := server.CALLS.pop('c1')['timer']:
+                timer.cancel()
+            call.end()
+
+    async def test_the_transcript_reaches_hq_as_it_grows_and_a_colleagues_message_reaches_the_call(self):
+        """Each round, a live call's lines go to HQ when they changed (call-lines, with its token), and only the call's
+        token when not, for HQ's messages; a call that's over is left to hand_over_held. A message HQ has for the call is
+        in its transcript and goes with the agent's next message."""
+        self.procs = [Proc(['Nice shop.', 'Bolt says it is merged.'])]
+        call = self.call()
+        await call.start()
+        await call.answer('This is the shop.', None)
+        lost = self.paths.calls / 'lost.json'  # (a call over whose hand-over failed: no live file)
+        lost.write_text(json.dumps({'agent': 'juno', 'lines': ['Board: Hi.'], 'request': 0, 'token': 'old'}))
+        answers = {'call-lines': {'ok': True, 'messages': [{'from': 'bolt', 'job': 7, 'text': 'Merged.'}]}}
+        coordinator = self.coordinator
+        self.coordinator = lambda method, path, body=None: coordinator(method, path, body) or answers.get(path)
+        sent = {}
+        heard = server.keep_in_hq(self.wiring, sent)
+        posts = {p: b for m, p, b in self.asked if p in ('call-lines', 'call-end')}
+        self.assertNotIn('call-end', posts)
+        self.assertTrue(lost.exists(), "hand_over_held's")
+        self.assertEqual((posts['call-lines']['token'], posts['call-lines']['lines']),
+                         ('t1', ['Board: This is the shop.', 'Juno: Nice shop.']))
+        server.keep_in_hq(self.wiring, sent)
+        self.assertNotIn('lines', self.asked[-1][2], 'unchanged: the token alone, for the messages')
+        self.assertEqual(heard, [(call.file.name, [{'from': 'bolt', 'job': 7, 'text': 'Merged.'}])])
+        call.messaged(heard[0][1])
+        self.assertIn("(A message from Bolt's job #7 reached the call.)", call.lines)
+        await call.answer('Anything new?', None)
+        told = self.started[0].heard_messages[1]['content'][-1]['text']
+        self.assertIn('A message from Bolt\'s job #7 reached you on this call: "Merged."', told)
+        self.assertEqual(call.messages, [], 'heard once')
+        call.end()
+
     async def picked_up(self, call):
         """Once the line has picked up and the agent's hello (Call.hello) has gone out."""
         for _ in range(300):
@@ -2872,6 +3249,24 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((made.result()[0], len(made.result()[1])), ('Hi, Juno here.', 4))
         self.assertEqual(SPOKEN, ['Hi, Juno here.'], 'made once, while it rang')
         self.assertEqual(call.lines, ['Juno: Hi, Juno here.'])
+        ws.put(json.dumps({'type': 'bye'}))
+        await asyncio.wait_for(task, 5)
+
+    async def test_a_call_dialled_in_dutch_says_its_hello_in_the_dutch_voice_and_asks_for_dutch(self):
+        """HQ dials in the board's language: the prompt the line asks for and the voice that says the hello are both
+        that one language."""
+        SPOKEN.clear(), VOICED.clear()
+        self.procs, self.calls = [Proc(['Hoi, met Juno.'])], []
+        ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'nl'}))
+        task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if self.calls:
+                break
+        await self.picked_up(self.calls[-1])
+        asked = [body for _, path, body in self.asked if path.split('?')[0] == 'call-context']
+        self.assertEqual([b['lang'] for b in asked], ['nl'], 'the prompt in the language HQ dialled in')
+        self.assertEqual((SPOKEN, VOICED), (['Hoi, met Juno.'], []), "Piper's alex, never Pocket TTS's English")
         ws.put(json.dumps({'type': 'bye'}))
         await asyncio.wait_for(task, 5)
 
@@ -2988,6 +3383,171 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, 5)
         self.ended()
         self.assertTrue(ws.closed)
+
+    # Every way a call ends takes its file out of live, so a deploy stops waiting for it, and closes its call in HQ.
+    def over(self, call):
+        """Over on the line and in HQ: its file gone from live, its transcript handed over, its token back."""
+        self.assertFalse((self.paths.live / call.file.stem).exists(), 'a deploy no longer waits for it')
+        self.assertNotIn(call, server.LIVE)
+        self.assertFalse(call.file.exists(), 'its transcript is in HQ')
+        self.assertNotIn(call.brain.token, self.live, 'HQ closed its call')
+        self.assertFalse([e for e in server.CALLS.values() if e['call'] is call])
+
+    async def dialled(self, **hello):
+        """HQ dials Juno (these in its hello) and the line picks up: the route's task, its connection and its call."""
+        self.procs = [Proc(['Hello.'])]
+        ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en', **hello}))
+        task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if self.calls:
+                break
+        call = self.calls[-1]
+        await self.picked_up(call)
+        self.assertTrue((self.paths.live / call.file.stem).exists(), 'live')
+        return task, ws, call
+
+    async def test_the_board_hanging_up_ends_the_call(self):
+        task, ws, call = await self.dialled()
+        ws.put(json.dumps({'type': 'bye'}))
+        await asyncio.wait_for(task, 5)
+        self.over(call)
+
+    async def test_a_dropped_connection_that_never_comes_back_ends_the_call(self):
+        with unittest.mock.patch.object(server, 'HOLD', 0.1):
+            task, ws, call = await self.dialled()
+            await ws.close()
+            await asyncio.wait_for(task, 5)
+            self.assertTrue((self.paths.live / call.file.stem).exists(), 'live while held for its reconnect')
+            await asyncio.sleep(0.3)
+        self.over(call)
+
+    async def test_a_design_session_ends_as_any_call(self):
+        """Dialled with HQ's Design session key, or made one by the agent mid-call."""
+        for hello in ({'design': True}, {}):
+            task, ws, call = await self.dialled(**hello)
+            if not hello:
+                await call.design_tool({})
+            self.assertTrue(call.design.on)
+            ws.put(json.dumps({'type': 'bye'}))
+            await asyncio.wait_for(task, 5)
+            self.over(call)
+
+    async def test_a_call_whose_end_fails_midway_still_leaves_the_line_and_hq_once(self):
+        self.procs = [Proc(['Sure.'])]
+        call = self.call()
+        await call.start()
+        await call.answer('Can you build the page?', None)
+        call.drawing.end = unittest.mock.Mock(side_effect=RuntimeError('broken'))
+        with self.assertRaises(RuntimeError):
+            call.end()
+        self.over(call)
+        call.end()
+        self.assertEqual(len([b for m, p, b in self.asked if p == 'call-end']), 1, 'handed over once')
+
+    async def test_a_call_that_fails_before_it_picks_up_is_over(self):
+        self.procs = [Proc(['Hello.'])]
+        ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en'}))
+        broken = unittest.mock.AsyncMock(side_effect=RuntimeError('broken'))
+        with unittest.mock.patch.object(server.Call, 'ringing', broken):
+            with self.assertRaises(RuntimeError):
+                await server.app_call(ws, self.make_call, self.wiring)
+        self.over(self.calls[-1])
+
+    async def watched(self):
+        """The line's watch (watch_live) runs its passes for 0.1 s."""
+        watch = asyncio.create_task(server.watch_live(every=0.01))
+        try:
+            await asyncio.sleep(0.1)
+        finally:
+            watch.cancel()
+
+    def started_calls(self, n):
+        """n calls started, each with its own token, their lines last heard from LIVE_QUIET ago and their files old."""
+        async def start_cli(*args, **kw):
+            self.started.append(self.procs.pop(0))
+            return self.started[-1]
+        self.wiring = self.wiring._replace(start_cli=start_cli)
+        self.procs = [Proc([]) for _ in range(n)]
+        return [self.call() for _ in range(n)]
+
+    def touched(self, call):
+        return (self.paths.live / call.file.stem).stat().st_mtime > time.time() - 60
+
+    async def test_the_line_ends_a_call_whose_line_went_quiet_and_keeps_the_live_ones_touched(self):
+        """A call whose audio still comes (or pings) and one just back from a dropped connection stay live, their files
+        touched; one whose line sent nothing for LIVE_QUIET is ended, and its route closes its connection."""
+        with unittest.mock.patch.object(server, 'LIVE', set()):
+            heard, pinged, back, quiet = calls = self.started_calls(4)
+            for call in calls:
+                await call.start()
+                call.signal = CLOCK[0] - server.LIVE_QUIET - 1
+                os.utime(self.paths.live / call.file.stem, (0, 0))
+            await heard.hear(np.zeros(server.FRAME, np.float32))
+            pinged.pinged(1000.0)
+            back.away = True
+            back.reconnected()  # (before its first audio)
+            quiet.close_line = unittest.mock.AsyncMock()
+            await self.watched()
+            self.over(quiet)
+            quiet.close_line.assert_awaited_once()
+            for call in (heard, pinged, back):
+                self.assertIn(call, server.LIVE)
+                self.assertTrue(self.touched(call))
+                call.end()
+                self.over(call)
+
+    async def test_a_call_whose_line_went_quiet_is_closed_by_its_route(self):
+        """HQ's page hears it's gone; the phone's stream closes, so the phone call ends."""
+        with unittest.mock.patch.object(server, 'LIVE', set()):
+            task, ws, call = await self.dialled()
+            call.signal = CLOCK[0] - server.LIVE_QUIET - 1
+            await self.watched()
+            await asyncio.wait_for(task, 5)
+            self.over(call)
+            self.assertEqual(ws.code, 4000)
+
+            self.procs = [Proc(['Hello.'])]
+            ws = LiveSocket(json.dumps({'event': 'start', 'start': {'streamSid': 'MZ1', 'customParameters': {'ticket': 'tk'}}}), queued=True)
+            task = asyncio.create_task(server.phone_call(ws, self.make_call, self.wiring))
+            for _ in range(300):
+                await asyncio.sleep(0.01)
+                if self.calls[-1] is not call:
+                    break
+            call = self.calls[-1]
+            await self.picked_up(call)
+            call.signal = CLOCK[0] - server.LIVE_QUIET - 1
+            await self.watched()
+            await asyncio.wait_for(task, 5)
+            self.over(call)
+            self.assertTrue(ws.closed)
+
+    async def test_a_call_with_nothing_on_it_stops_holding_deploys_until_something_happens(self):
+        """Its line still sends (a page left open, a room's silence), but nothing was heard, drawn, answered or built for
+        LIVE_IDLE: its file isn't touched, so a deploy no longer waits for it, and the call goes on. A reply or a build
+        at work keeps a call in use, and the board's pen or words put it back in use."""
+        with unittest.mock.patch.object(server, 'LIVE', set()):
+            idle, replying, building = calls = self.started_calls(3)
+            for call in calls:
+                await call.start()
+                call.active = CLOCK[0] - server.LIVE_IDLE - 1
+                os.utime(self.paths.live / call.file.stem, (0, 0))
+            replying.turn = asyncio.create_task(asyncio.sleep(10))
+            building.builders.add(asyncio.create_task(asyncio.sleep(10)))
+            try:
+                await self.watched()
+                self.assertFalse(self.touched(idle))
+                self.assertIn(idle, server.LIVE)
+                self.assertTrue(self.touched(replying))
+                self.assertTrue(self.touched(building))
+                idle.penned(True)
+                await self.watched()
+                self.assertTrue(self.touched(idle))
+            finally:
+                replying.turn.cancel()
+                for call in calls:
+                    call.end()
+                    self.over(call)
 
     # An ended call stays ended: the board hangs up while a reply is being written, and the hang-up's kill looks to the
     # reply like its agent dying.
@@ -3744,6 +4304,36 @@ class Screen(Juno):
         self.assertEqual([line for line in self.call.lines if 'on screen' not in line][::2],
                          ['Board: One.', 'Board: Two.', 'Board: Three.', 'Board: Four.', 'Board: Five.', 'Board: Six.'])
 
+    async def hq_says(self, *states):
+        """HQ's page, connected to the call again, says the board's screen is in these states, one after another."""
+        await server.app_call(Socket([json.dumps({'resume': 'c1'}), *(json.dumps({'type': 'screen', 'state': state}) for state in states)]))
+        self.call.reconnected()
+
+    async def test_hqs_word_that_the_screen_is_shown_counts_before_a_screen_turn_answers_in_time(self):
+        """Call #258: the board's screen was shown for 19 s, but its turn's screen-turn didn't answer in time, so the agent
+        heard nothing of the screen and asked to see it. HQ's page says on the call's WebSocket that the screen is shown,
+        paused or off as that changes: the turn says it couldn't be read, and the agent can't ask to see a screen that is
+        shown."""
+        self.turns = [asyncio.TimeoutError(), self.on(1, MOMENTS, 13)]
+        self.new_call(screen_turn_seconds=0.05)
+        server.CALLS['c1'] = {'call': self.call, 'line': server.Line(Socket([])), 'timer': None}
+        self.call.send_event = lambda e: server.CALLS['c1']['line'].send(json.dumps(e))
+        try:
+            await self.hq_says('shown')
+            await self.turn('Can you see this?')
+            self.assertEqual(self.brain.asked[0], f"({server.SCREEN_WORDS['unread']})\n\nCan you see this?")
+            self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the page'}), {'error': server.ASK_WORDS['shown']})
+            await self.hq_says('paused')
+            self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['paused']})
+            await self.hq_says('shown', 'off')
+            self.assertIn('ok', await self.call.drawing.ask_tool({'ask_to_see': 'the page'}))
+            await self.hq_says('shown')
+            await self.turn('And now?')  # (the coordinator's answer in time comes with the turn, as before)
+            self.assertIn(MOMENTS[1], self.brain.asked[1])
+        finally:
+            if timer := server.CALLS.pop('c1')['timer']:
+                timer.cancel()
+
     async def test_the_screen_tool_reaches_its_call_through_the_lines_socket(self):
         socket_path = Path(self.tmp.name) / 'screen.sock'
         screens = await server.serve_screens(socket_path)
@@ -4127,6 +4717,113 @@ class BoardDrawing(Juno):
 
 
 
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class DrawingRests(Juno):
+    """The board draws on a call: what it drew reaches the agent once the drawing rests, not at each lift of
+    the pen, with no sound while it draws, and the pen down again takes back a turn of the agent's own that hasn't said
+    anything. The marks come from the coordinator's drawn route (MARKS)."""
+    def coordinator(self, method, path, body=None):
+        return MARKS[int(path.split('id=')[1].split('&')[0])]
+
+    async def stroke(self, change):
+        """A stroke on the call's notes page: the pen down a moment, lifted, and the mark as HQ sends it once it rests."""
+        self.call.penned(True)
+        await self.quiet(10)
+        self.call.penned(False)
+        await self.call.mark(52, f't{change}')
+
+    async def test_a_drawing_goes_to_the_agent_once_the_pen_rests_not_at_each_lift(self):
+        for change in range(3):  # (each lift 2.2 s: before, each went to the agent with its thinking sound)
+            await self.stroke(change)
+            await self.quiet(70)
+            await asyncio.sleep(0.3)
+            self.assertEqual(self.brain.asked, [], f'asked {change + 1} strokes in, the board still drawing')
+        await self.quiet(40)  # (the pen rested PEN_REST_SECONDS)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(len(self.brain.asked), 1)
+        self.assertIn('drew #52', self.brain.asked[0])
+        self.assertEqual(self.audio.count(len(server.thinking())), 0, 'a drawing asks nothing: no thinking sound')
+
+    async def test_a_guests_marks_alone_count_as_her_pen_lifted_as_they_rested(self):
+        """No pen events for a guest (or a screen not shown): each mark came MARK_REST_SECONDS after its stroke."""
+        await self.call.mark(51, 't1')
+        await self.quiet(round((server.PEN_REST_SECONDS - server.MARK_REST_SECONDS) / server.WINDOW) - 5)
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.brain.asked, [])
+        await self.quiet(30)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(len(self.brain.asked), 1)
+
+    async def test_the_pen_down_again_takes_back_a_turn_of_the_agents_own_that_hasnt_said_anything(self):
+        self.brain.thinking = asyncio.Event()
+        await self.stroke(1)
+        await self.quiet(110)
+        await asyncio.sleep(0.3)
+        self.assertEqual((len(self.brain.asked), self.brain.stopped), (1, 0))
+        self.call.penned(True)  # (the board draws on)
+        self.assertEqual(self.brain.stopped, 1)
+        self.brain.thinking.set()
+        await self.settle()
+        self.assertEqual([e for e in self.events if e['type'] == 'said'], [], 'nothing said over the drawing')
+        self.assertEqual(self.audio, [])
+        self.call.penned(False)
+        await self.call.mark(52, 't2')
+        await self.quiet(110)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(len(self.brain.asked), 2, 'once it rests, the drawing goes again')
+        self.assertTrue(self.audio, 'and the agent says what it has to say')
+
+    async def test_the_pen_down_takes_back_a_turn_whose_first_words_are_written_but_not_yet_heard(self):
+        """The agent's first fragment is in, short of a sentence, so nothing plays yet: the pen down still takes the turn
+        back."""
+        written = asyncio.Event()
+        self.brain.reply = ['I see ', written, 'a house.']
+        await self.stroke(1)
+        await self.quiet(110)
+        await asyncio.sleep(0.3)
+        self.assertEqual((len(self.brain.asked), self.brain.stopped, self.audio), (1, 0, []))
+        self.call.penned(True)
+        self.assertEqual(self.brain.stopped, 1)
+        written.set()
+        await self.settle()
+        self.assertEqual([e for e in self.events if e['type'] == 'said'], [], 'nothing said over the drawing')
+        self.assertEqual(self.audio, [])
+
+    async def test_the_pen_down_leaves_a_reply_to_the_boards_words_and_one_already_speaking(self):
+        self.brain.thinking = asyncio.Event()
+        await self.talk('Look at this.', 30)
+        await self.quiet(20)
+        await asyncio.sleep(0.3)
+        self.call.penned(True)
+        self.assertEqual(self.brain.stopped, 0, 'the board asked something: its answer stays')
+        self.call.penned(False)
+        self.brain.thinking.set()
+        await self.settle()
+        self.assertEqual(self.brain.asked, ['Look at this.'])
+
+    async def test_no_hold_sound_while_the_board_draws(self):
+        """The board asks, then draws while the agent thinks: the thinking sound waits for the pen to rest."""
+        self.brain.thinking = asyncio.Event()
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(20)
+        await asyncio.sleep(0.3)
+        for _ in range(4):  # (8 s of strokes, half a second apart, after the words)
+            self.call.penned(True)
+            await self.quiet(47)
+            self.call.penned(False)
+            await self.quiet(15)
+            await asyncio.sleep(0.2)
+        self.assertEqual(self.audio.count(len(server.thinking())), 0)
+        await self.quiet(round(server.PEN_REST_SECONDS / server.WINDOW) + 5)
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.audio.count(len(server.thinking())), 1, 'once it rests, the wait sounds as before')
+        self.brain.thinking.set()
+        await self.settle()
+
+
 
 # The call's notes page in the board's Notebook (callnotes.py)
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
@@ -4147,6 +4844,16 @@ class BoardCallNotes(Juno):
             self.asked.append((method, path, body))
             return {'ok': 'Your drawing is in the call\'s notes (#8).', 'id': 8,
                     'picture': {'type': 'image/jpeg', 'data': 'AAAA'}}
+        if path == 'prototype':
+            self.asked.append((method, path, body))
+            if body['name'] == 'Gone':
+                raise HTTPError('http://hq/api/voice/prototype', 404, 'Not Found', {}, io.BytesIO(b'{"error": "no live call #7"}'))
+            if body['name'] == 'Unseen':
+                raise HTTPError('http://hq/api/voice/prototype', 409, 'Conflict', {},
+                                io.BytesIO(b'{"error": "its picture couldn\'t be taken, so it isn\'t saved: no Chromium"}'))
+            version = sum(1 for _, path, b in self.asked if path == 'prototype' and b['name'] == body['name'])
+            return {'ok': f"{body['name']} v{version} is on the call's page.", 'id': 3, 'version': version,
+                    'link': None, 'picture': {'type': 'image/jpeg', 'data': 'AAAA'}}
         if path == 'try':
             self.asked.append((method, path, body))
             if body['id'] == 9:
@@ -4284,6 +4991,147 @@ class BoardCallNotes(Juno):
         self.assertEqual(await self.call.page.drawing_tool({'draw_picture': {'svg': svg}}),
                          {'error': server.DRAW_WORDS['none']})
         self.assertEqual(len(self.asked), 1)
+
+    async def test_in_a_design_session_the_agents_drawing_waits_on_the_socket_until_the_room_is_quiet(self):
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.call.new_screen_key()
+        self.call.design.start()
+        svg = '<svg viewBox="0 0 640 480"><rect x="10" y="10" width="200" height="80"/></svg>'
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        writer.write((json.dumps({'draw_picture': {'svg': svg}, 'key': self.call.screen_key}) + '\n').encode())
+        got = asyncio.create_task(reader.read())
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.asked, [])  # (no quiet heard yet)
+        await self.quiet(50)
+        self.assertIn('#8', json.loads(await asyncio.wait_for(got, 2))['line'])
+        writer.close()
+        self.assertEqual(self.asked, [('POST', 'drawing', {'call': 7, 'svg': svg})])
+
+    async def test_the_agents_prototype_goes_to_the_store_and_its_picture_and_the_calls_number_come_back(self):
+        """prototype: a whole page, far longer than a socket's default line, through the line's socket as its tool asks
+        and on to the store; the agent gets its picture with its line and the call's number, and the store's refusal in
+        its words (one whose picture couldn't be taken among them)."""
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.call.new_screen_key()
+        page = '<!doctype html><svg viewBox="0 0 640 480">' + '<circle r="9"/>' * 20_000 + '</svg>'
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        asked = {'prototype': {'name': 'Card  flip', 'html': f' {page}\n', 'about': ''}, 'key': self.call.screen_key}
+        writer.write((json.dumps(asked) + '\n').encode())
+        number = callnotes.PROTOTYPE_CALL.format(call=7)
+        self.assertEqual(json.loads(await reader.read()), {'line': f"Card flip v1 is on the call's page. {number}",
+                                                           'picture': {'type': 'image/jpeg', 'data': 'AAAA'},
+                                                           'version': 1})
+        writer.close()
+        self.assertEqual(self.asked, [('POST', 'prototype', {'call': 7, 'name': 'Card flip', 'html': page})])
+        tool = self.call.page.prototype_tool
+        self.assertEqual(await tool({'prototype': {'name': 'Unseen', 'html': page, 'about': 'Slower  flip'}}),
+                         {'error': "its picture couldn't be taken, so it isn't saved: no Chromium"})
+        self.assertEqual(self.asked[-1][2]['about'], 'Slower flip')
+        self.assertEqual(await tool({'prototype': {'name': 'Gone', 'html': page}}), {'error': 'no live call #7'})
+        asked = len(self.asked)
+        for wrong in ({'name': 'Card flip', 'html': 'a card that flips'}, {'name': ' ', 'html': page}, {'html': page},
+                      {'name': 'Card flip', 'html': page, 'files': {}}, {'name': 'Card flip', 'html': '<p>' * 400_000}):
+            self.assertEqual(await tool({'prototype': wrong}), {'error': server.PROTOTYPE_WORDS['shape']})
+        self.call.callout = 12
+        self.assertEqual(await tool({'prototype': {'name': 'Card flip', 'html': page}}), {'error': server.PROTOTYPE_WORDS['none']})
+        self.assertEqual(len(self.asked), asked)
+
+    async def test_a_brief_is_built_in_the_background_and_the_hand_goes_up_when_it_lands(self):
+        """prototype with a brief: the tool answers at once, a builder (the CLI once on the call's seat, no tools, no
+        HQ token) makes the page while the call goes on, it's saved as the agent's own would be, and the agent's hand
+        goes up for it; at its moment the agent hears what landed. A next version is built on the page before; one that
+        fails, the agent hears of."""
+        files = Path(self.tmp.name)
+        (files / 'seat').write_text('seat')
+        done, runs, started, answers = asyncio.Event(), [], [], []
+
+        class Builder:
+            returncode = None
+
+            async def communicate(self, ask):
+                runs.append(ask.decode())
+                await done.wait()
+                self.returncode = 0
+                return json.dumps({'type': 'result', 'is_error': False, 'result': answers.pop(0)}).encode(), b''
+
+            def kill(self):
+                self.returncode = -9
+
+        async def start_cli(*args, **kw):
+            fd = int(kw['env']['CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
+            started.append((args, kw['env']['HQ_TOKEN'], 'SCREEN_SOCKET' in kw['env'], os.read(fd, 99).decode()))
+            return Builder()
+
+        self.call.wiring = self.call.wiring._replace(paths=server.Paths(seat=files / 'seat', calls=files, live=files,
+                                                                        work=files), start_cli=start_cli)
+        self.call.lang = 'nl'
+        hands = lambda: [e for e in self.events if e.get('type') == 'hand']
+        page = '<!doctype html><svg><circle r="9"/></svg></html>'
+        answers.append(f'{page}\nTik op de kat en hij spint.')
+        got = await self.call.prototype_tool({'prototype': {'name': 'Kattengotchi', 'brief': 'A cat to feed and pet.'}})
+        self.assertEqual(got, {'ok': server.BUILD_TOOL_WORDS['started']})
+        await asyncio.sleep(0.05)
+        self.assertEqual(runs, ['Prototype: Kattengotchi\nIts words in Dutch.\n\nA cat to feed and pet.'])
+        args, token, screen, seat = started[0]
+        self.assertEqual((token, screen, seat), ('', False, 'seat'))
+        self.assertEqual(args[args.index('--tools') + 1], '')
+        self.assertEqual(args[args.index('--effort') + 1], server.BUILD_EFFORT)
+        self.assertNotIn('--mcp-config', args)
+        self.assertEqual((self.asked, hands()), ([], []))  # (still building)
+        done.set()
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.asked, [('POST', 'prototype', {'call': 7, 'name': 'Kattengotchi', 'html': page})])
+        self.assertEqual(hands(), [{'type': 'hand', 'up': True, 'about': 'Kattengotchi v1'}])
+        self.call.hand_waits.cancel()  # (its moment, at once)
+        await self.call.design.moment()
+        told = self.call.design.told()
+        self.assertIn('a prototype you had built is ready: Kattengotchi v1: Tik op de kat en hij spint.', told)
+        self.assertEqual(hands()[-1], {'type': 'hand', 'up': False})
+        answers.append('Sorry, no page this time.')  # (the next version: built on the last, and failing)
+        await self.call.prototype_tool({'prototype': {'name': 'Kattengotchi', 'brief': 'Feeding shows a bowl.'}})
+        await asyncio.sleep(0.05)
+        self.assertTrue(runs[1].endswith(f'Feeding shows a bowl.\n\nThe version before, to build on (keep what works, '
+                                         f'make it better):\n{page}'), runs[1])
+        self.assertEqual(len(self.asked), 1)
+        self.assertIn('Kattengotchi, the prototype you had built, failed: no whole page in its answer', self.call.design.told())
+        for wrong in ({'name': 'Cat', 'brief': ''}, {'name': '', 'brief': 'A cat.'}, {'name': 'Cat', 'brief': 'A cat.', 'html': page},
+                      {'name': 'Cat', 'brief': 'x' * 5000}):
+            self.assertEqual(await self.call.prototype_tool({'prototype': wrong}), {'error': server.BUILD_TOOL_WORDS['shape']})
+        self.call.callout = 12
+        self.assertEqual(await self.call.prototype_tool({'prototype': {'name': 'Cat', 'brief': 'A cat.'}}),
+                         {'error': server.PROTOTYPE_WORDS['none']})
+        self.assertEqual(len(runs), 2)
+
+    async def test_a_built_prototype_is_heard_of_however_its_hand_comes_down(self):
+        """A built prototype's hand shows the version the store gives, not a v-number read from its line (a name with
+        one in it). Its hand down by the agent's reply or replaced by a hand of its own, the agent hears of it with its
+        next message; at its moment, once."""
+        page = '<!doctype html><svg><circle r="9"/></svg></html>'
+
+        async def builder(ask):
+            return f'{page}\nAai de kat.'
+
+        self.call.builder = builder
+        hands = lambda: [e for e in self.events if e.get('type') == 'hand' and e['up']]
+        landed = "(Pet v2 idea v{}: Aai de kat. Its card is on their iPads.)"
+        for n, down in enumerate((self.call.design.lower, lambda: self.call.design.raise_hand('Een kleur'),
+                                  self.call.design.moment), 1):
+            await self.call.build('Pet v2 idea', 'A pet.')
+            self.assertEqual(hands()[-1]['about'], f'Pet v2 idea v{n}')
+            self.call.hand_waits.cancel()
+            await down()
+            told = self.call.design.told()
+            self.assertEqual(told.count(f'Pet v2 idea v{n}: Aai de kat.'), 1, told)
+            if n < 3:
+                self.assertEqual(told, landed.format(n))
+            await self.call.design.lower()
+            self.assertEqual(self.call.design.told(), '')
 
     def test_the_call_engine_reads_nothing_of_the_page(self):
         """The engine's split: the line's drawing and driving halves, and the screen tool, import nothing of the notes

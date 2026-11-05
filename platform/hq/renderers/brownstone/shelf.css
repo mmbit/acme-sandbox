@@ -2,9 +2,10 @@
    in pixel art, 3 px a pixel, framed as HQ's own windows are, in its ink outline and hard shadow. Its wood is flat
    stepped bands lit from the upper left, every board outlined in ink and casting a hard shade on the case's back. The
    shelf's name is on a sign in HQ's pixel type, and its Close is one of HQ's keys with HQ's pixel icon. The Archive's
-   box is pixel card, the plant a pixel snake plant in a clay pot. The books stay themselves: real covers on pixel
-   boards. Untinted, as Ink's README says (The book's frame, My shelf). Every rule leads with `body ~` to outrank the
-   shell's own `#book .bk-shelf-window` rules whichever loads last: a rule here without it wins only some of the time. */
+   box is pixel card, the plant a pixel snake plant in a clay pot. The books are pixel cloth too, in its ink outline,
+   their plates pixel paper in HQ's type (the board). Untinted, as Ink's README says (The book's frame, My shelf).
+   Every rule leads with `body ~` to outrank the shell's own `#book .bk-shelf-window` rules whichever loads last: a
+   rule here without it wins only some of the time. */
 body ~ #book .bk-shelf-window {
   --bk-shelf-ink: var(--ink);
   --bk-side: 15px;
@@ -128,9 +129,55 @@ body ~ #book .bk-shelf-window .bk-shelf-base {
     linear-gradient(var(--px-shade) 0 6px, transparent 6px) 0 var(--bk-row) / 100% var(--bk-row) repeat-y,
     var(--px-board) 0 0 / 120px var(--bk-row);
 }
-/* (a book's shade on the back: hard, as everything here) */
+/* ---- the books: pixel cloth in its ink outline, its spine a darker band lit along its edge, its shade on the back
+   hard as everything here; its plate pixel paper in HQ's type, the pen on a plate without a picture a pixel fountain
+   pen drawing its line, its asks a pixel tag */
 body ~ #book .bk-shelf-window .bk-cover {
-  box-shadow: 6px 6px 0 var(--px-cast);
+  box-sizing: border-box;
+  border: 3px solid var(--line);
+  border-radius: 0;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.32) 0 6px,
+      rgba(255, 255, 255, 0.2) 6px 9px,
+      rgba(0, 0, 0, 0.16) 9px 12px,
+      transparent 12px
+    ),
+    var(--bk-shelf-cloth);
+  box-shadow:
+    inset 0 3px 0 rgba(255, 255, 255, 0.16),
+    inset -3px -3px 0 rgba(0, 0, 0, 0.24),
+    6px 6px 0 var(--px-cast);
+}
+body ~ #book .bk-shelf-window .bk-cover-plate {
+  inset: 9cqi 6cqi 9cqi 15cqi;
+  border: 3px solid var(--line);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: inset -3px -3px 0 var(--px-paper-lo);
+  color: var(--ink);
+}
+body ~ #book .bk-shelf-window :is(.bk-cover-title, .bk-cover-line) {
+  font-family: var(--font);
+}
+body ~ #book .bk-shelf-window img.bk-cover-art {
+  box-sizing: border-box;
+  border: 3px solid var(--line);
+}
+/* (26 by 20 pixels, at 3 px a pixel, as the plant) */
+body ~ #book .bk-shelf-window svg.bk-cover-art {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 20' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M20 0h4v1H20zM19 1h1v1H19zM24 1h1v1H24zM18 2h1v1H18zM23 2h1v1H23zM17 3h1v1H17zM22 3h1v1H22zM16 4h1v1H16zM21 4h1v1H21zM15 5h1v1H15zM20 5h1v1H20zM14 6h1v1H14zM19 6h1v1H19zM13 7h1v1H13zM18 7h1v1H18zM12 8h1v1H12zM17 8h1v1H17zM11 9h1v1H11zM16 9h1v1H16zM10 10h1v1H10zM15 10h1v1H15zM9 11h6v1H9zM8 12h1v1H8zM13 12h1v1H13zM7 13h1v1H7zM10 13h1v1H10zM12 13h1v1H12zM6 14h1v1H6zM8 14h1v1H8zM10 14h1v1H10zM5 15h1v1H5zM7 15h2v1H7zM4 16h3v1H4zM12 17h6v1H12zM3 18h2v1H3zM9 18h3v1H9zM18 18h2v1H18zM5 19h4v1H5zM20 19h4v1H20z'/%3E%3Cpath fill='%23c96b3f' d='M21 1h2v1H21zM20 2h2v1H20zM19 3h2v1H19zM18 4h2v1H18zM15 7h2v1H15zM14 8h2v1H14zM13 9h2v1H13zM12 10h2v1H12z'/%3E%3Cpath fill='%23ec9a66' d='M20 1h1v1H20zM19 2h1v1H19zM18 3h1v1H18zM17 4h1v1H17zM14 7h1v1H14zM13 8h1v1H13zM12 9h1v1H12zM11 10h1v1H11z'/%3E%3Cpath fill='%238f4426' d='M23 1h1v1H23zM22 2h1v1H22zM21 3h1v1H21zM20 4h1v1H20zM17 7h1v1H17zM16 8h1v1H16zM15 9h1v1H15zM14 10h1v1H14z'/%3E%3Cpath fill='%23e7b57a' d='M16 5h3v1H16zM15 6h3v1H15zM9 12h3v1H9zM8 13h2v1H8zM7 14h1v1H7zM6 15h1v1H6z'/%3E%3Cpath fill='%23a1673a' d='M19 5h1v1H19zM18 6h1v1H18zM12 12h1v1H12zM11 13h1v1H11zM9 14h1v1H9z'/%3E%3C/svg%3E")
+    50% 50% / 78px 60px no-repeat;
+}
+body ~ #book .bk-shelf-window svg.bk-cover-art > g {
+  display: none;
+}
+body ~ #book .bk-shelf-window .bk-asks {
+  border: 3px solid var(--line);
+  border-radius: 0;
+  font-family: var(--font);
+  box-shadow: 3px 3px 0 var(--px-cast);
 }
 
 /* ---- the Archive: a lidded box of pixel card, its paper label in HQ's type, a hole to pull it by */

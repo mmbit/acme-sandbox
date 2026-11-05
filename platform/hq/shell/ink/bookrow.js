@@ -35,23 +35,26 @@ export const pageBox = page => {
 export const ZOOM_OUT = 0.25;
 export const zoomWithin = (s, page, view) =>
   Math.min(ZOOM_MAX, Math.max(Math.min(ZOOM_OUT, view.w / page.w, view.h / page.h), s));
-// How far a sketch page pans at a zoom of s: never above or left of its corner, 0,0, where the view's title lies at
-// rest (README, The book's frame), or of
-// what's drawn beyond it (drawnCorner), the paper's room above it (view.top, the status bar's blur) in sight; down till
-// only edge px (on screen) of its box (the first screen at least) is left at the paper's foot, so a screen of fresh
-// paper is always below what's drawn to draw on. Across only as far as it's zoomed past the paper's width or something
-// on it lies past the paper's right edge (drawnRight), never into the page box's spare paper: the board scrolls a
-// Notebook up and down, with no sideways wiggle (the board). view: the paper's
-// { w, h } and the room its content keeps clear of, { top, right } (CSS px). → { x0, x1, y0, y1 }, the pan's least
-// and most
+// How far a sketch page pans at a zoom of s. view: the paper's { w, h } and the room its content keeps clear of,
+// { top, right } (CSS px). → { x0, x1, y0, y1 }, the pan's least and most.
+// Left and up: never past its corner, 0,0, where the view's title lies at rest (README, The book's frame), or past
+// what's drawn beyond it (drawnReach). The paper's room above it (view.top, the status bar's blur) stays in sight.
+// Down: till only edge px (on screen) of its box is left at the paper's foot, the first screen at least. So a screen of
+// fresh paper is always below what's drawn, to draw on.
+// Across: as unitsPans does, only as far as it's zoomed past the paper left of the tools (view.right), or as far as
+// something on it lies past that (drawnReach). Never into the page box's spare paper: the board scrolls a Notebook up
+// and down, with no sideways wiggle (the board).
+// A page's ink is null until it's read (bookpage.js). Till then it pans across its box, so a place it's opened at,
+// remembered, is kept.
 export function canvasPans(page, view, s, edge) {
   const p = pageBox(page),
-    corner = drawnCorner(page),
+    reach = drawnReach(page),
+    seen = view.w - view.right,
     y1 = Math.max(view.h, p.y1);
   return {
-    x0: corner.x,
-    x1: Math.max(corner.x, Math.max(view.w, page.ink ? drawnRight(page) : p.x1) - view.w / s),
-    y0: corner.y - view.top / s,
+    x0: reach.x0,
+    x1: Math.max(reach.x0, Math.max(seen, page.ink ? reach.x1 : p.x1) - seen / s),
+    y0: reach.y0 - view.top / s,
     y1: y1 - Math.min(edge, view.h) / s,
   };
 }
@@ -61,42 +64,36 @@ export function canvasPans(page, view, s, edge) {
 const SNAP = 1.03;
 export const unitsZoom = (s, fit) => (s < fit * SNAP ? fit : Math.min(Math.max(ZOOM_MAX, fit), s));
 // How far a page of scraps pans at a zoom of s: never above or left of its top-left or of what's drawn beyond it
-// (drawnCorner), the room above it (view.top) in sight; across its width as far as it's zoomed past the paper's left of
+// (drawnReach), the room above it (view.top) in sight; across its width as far as it's zoomed past the paper's left of
 // the tools (view.right), and down to its foot with foot px (on screen) of it left. → { x0, x1, y0, y1 }, the pan's
 // least and most
 export function unitsPans(page, view, s, foot) {
-  const corner = drawnCorner(page);
+  const reach = drawnReach(page);
   return {
-    x0: corner.x,
+    x0: reach.x0,
     x1: Math.max(0, page.w - (view.w - view.right) / s),
-    y0: corner.y - view.top / s,
+    y0: reach.y0 - view.top / s,
     y1: page.h - Math.min(view.h, foot) / s,
   };
 }
-// The top-left a page pans to: 0,0, where the view's title lies at rest, or further where its ink or scraps, or what hangs under a unit
-// (its answer, past its row on a sketch page: sketchcanvas.js) with the margin a canvas keeps round it (bookunits.js
-// canvasSize), lie above or left of it. Their own reach, not the page's box: its ROOM_PX to spare would creep the limit
-// out with each line drawn at the edge. A page's ink is null until it's read (bookpage.js).
-function drawnCorner(page) {
-  const corner = { x: 0, y: 0 },
-    hung = (page.places ?? []).filter(p => p.hung).map(({ hung: h }) => ({ x0: h.x - MARGIN, y0: h.y - MARGIN }));
-  for (const box of [...(page.ink ?? []).map(boxOf), ...page.scraps.map(scrapBoxOf), ...hung]) {
-    corner.x = Math.min(corner.x, box.x0);
-    corner.y = Math.min(corner.y, box.y0);
+// How far what's on a page reaches, in its px: its ink, scraps, units at their places and what hangs under them (an
+// answer, past its row on a sketch page: sketchcanvas.js), the units with the margin a canvas keeps round them
+// (bookunits.js canvasSize). Their own reach, not the page's box: its ROOM_PX to spare would creep the limits out with
+// each line drawn at the edge. → { x0, y0 }, the top-left a page pans to, 0,0 (where the view's title lies at rest) or
+// further where they lie above or left of it, and x1, the right edge they reach, 0 at least. A page's ink is null until
+// it's read (bookpage.js).
+function drawnReach(page) {
+  const reach = { x0: 0, y0: 0, x1: 0 },
+    units = (page.places ?? []).flatMap(({ hung: h, ...p }) => [
+      { x0: p.x - MARGIN, y0: p.y - MARGIN, x1: p.x + UNIT_W + MARGIN },
+      ...(h ? [{ x0: h.x - MARGIN, y0: h.y - MARGIN, x1: h.x + h.w + MARGIN }] : []),
+    ]);
+  for (const box of [...(page.ink ?? []).map(boxOf), ...page.scraps.map(scrapBoxOf), ...units]) {
+    reach.x0 = Math.min(reach.x0, box.x0);
+    reach.y0 = Math.min(reach.y0, box.y0);
+    reach.x1 = Math.max(reach.x1, box.x1);
   }
-  return corner;
-}
-// The right edge of what's on a sketch page (its ink, scraps, units at their places and what hangs under them), in its px:
-// 0 for a page with nothing on it. (A page whose ink isn't read yet pans across its box till it is, so a place it's
-// opened at, remembered, is kept: canvasPans.)
-function drawnRight(page) {
-  const places = (page.places ?? []).flatMap(p => [p.x + UNIT_W, ...(p.hung ? [p.hung.x + p.hung.w] : [])]);
-  return Math.max(
-    0,
-    ...(page.ink ?? []).map(st => boxOf(st).x1),
-    ...page.scraps.map(sc => scrapBoxOf(sc).x1),
-    ...places,
-  );
+  return reach;
 }
 // The pan that keeps a point on the paper (CSS px from its top-left) over the same spot of the page as the zoom goes
 // from s0 to s1: a pinch's middle, the pointer under a trackpad's pinch

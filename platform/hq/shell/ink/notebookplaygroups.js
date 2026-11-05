@@ -186,7 +186,8 @@ function splitGroup(s, b) {
 
 // ---------------------------------------------------------------- shared
 // Whether a page is a canvas (sketchcanvas.js), and a place as one's unit keeps it ({ x, y }, the page's px)
-const onCanvas = (s, p) => isCanvas(chapterOf(p.kind, s.notebook(p.notebook)?.kind));
+// (a design session's call page too, p.sketch)
+const onCanvas = (s, p) => isCanvas({ chapter: chapterOf(p.kind, s.notebook(p.notebook)?.kind), sketch: p.sketch });
 function placeOf(v) {
   if (!isPlace(v)) refuse(400, 'a place is { x, y }');
   return { x: v.x, y: v.y };

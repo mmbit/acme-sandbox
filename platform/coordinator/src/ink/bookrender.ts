@@ -308,7 +308,7 @@ export async function typedHeight(t: Typed) {
 }
 
 // A scrap as the book tapes it (HQ's drawScrap) at k picture px a page px: its picture in a white border, the tape
-// across its top edge, turned by its tilt about its middle
+// across its top edge (an agent's drawing neither: its lines straight on the page.), turned by its tilt about its middle
 async function scrapAt(s: Scrap, k: number, file: string) {
   const w = Math.max(1, Math.round(s.w * k)),
     h = Math.max(1, Math.round(s.h * k)),
@@ -318,10 +318,11 @@ async function scrapAt(s: Scrap, k: number, file: string) {
     .toBuffer();
   const tape = { w: Math.min(s.w * 0.36, 70) * k, h: Math.max(9, Math.min(16, s.h * 0.09)) * k };
   const tapeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect x="${(w - tape.w) / 2}" y="${-tape.h / 2}" width="${tape.w}" height="${tape.h}" fill="${TAPE}" fill-opacity="${TAPE_ALPHA}" transform="rotate(-4 ${w / 2} 0)"/></svg>`;
-  const matted = await sharp({ create: { width: w, height: h, channels: 4, background: '#fff' } })
+  const ground = s.drawing ? { r: 0, g: 0, b: 0, alpha: 0 } : '#fff';
+  const matted = await sharp({ create: { width: w, height: h, channels: 4, background: ground } })
     .composite([
       { input: picture, left: m, top: m },
-      { input: Buffer.from(tapeSvg), left: 0, top: 0 },
+      ...(s.drawing ? [] : [{ input: Buffer.from(tapeSvg), left: 0, top: 0 }]),
     ])
     .png()
     .toBuffer();

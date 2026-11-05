@@ -342,7 +342,8 @@ const stampOf = page =>
         return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());
       }),
       lock: !!document.querySelector('#book .bk-locked')?.checkVisibility(),
-      history: [...document.querySelectorAll('#book .bk-bar :is(.bk-undo, .bk-redo)')]
+      // (Undo and Redo a pill of their own beside the bar: the Ink README, The book's frame.)
+      history: [...document.querySelectorAll('#book .bk-undo-pill :is(.bk-undo, .bk-redo)')]
         .filter(b => b.checkVisibility())
         .map(b => b.ariaLabel),
       toolsHidden: !document

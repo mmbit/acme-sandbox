@@ -107,7 +107,11 @@ test("a sketch page pans across only as far as it's zoomed past the paper or som
   const unit = { ...blank, places: [{ id: 1, x: 40, y: 72 }] };
   assert.equal(canvasPans(unit, view, 1, 120).x1, 0, 'a note within the paper: no sideways pan');
   const wide = { ...blank, places: [{ id: 1, x: 300, y: 72 }] };
-  assert.equal(canvasPans(wide, view, 1, 120).x1, 300 + UNIT_W - view.w, 'a note placed past its edge: as far as it');
+  assert.equal(
+    canvasPans(wide, view, 1, 120).x1,
+    300 + UNIT_W + MARGIN - view.w,
+    "a note placed past its edge: as far as it and a canvas's margin",
+  );
   const stroke = {
     size: 4,
     points: [
@@ -121,6 +125,10 @@ test("a sketch page pans across only as far as it's zoomed past the paper or som
     "a line past it: to the line's edge",
   );
   assert.equal(canvasPans({ ...blank, ink: null }, view, 1, 120).x1, 1200 - view.w, 'its ink not read yet: its box');
+  const tools = { ...view, right: 60 },
+    under = { ...blank, ink: [{ size: 4, points: [[440, 10]] }] };
+  assert.equal(canvasPans(under, tools, 1, 120).x1, 444 - 395, 'a line under the tools: out from under them');
+  assert.equal(canvasPans(blank, tools, 2, 120).x1, 395 / 2, 'zoomed in: across the paper left of the tools, zoomed');
 });
 
 test('a page with ink and a scrap above and left of its corner pans as far as they reach, and no further', () => {

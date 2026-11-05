@@ -175,6 +175,8 @@ class Room:
         self.ready, self.ended, self.failed, self.empty, self.tasks = asyncio.Event(), False, False, None, []
         self.started = False  # (its Call started: the link's one call is used, however the room ends)
         self.call = make_call(self.play, self.event, self.clear, ticket, self.hang_up, self.speaker)
+        # (the line's watch ends a room whose line went quiet: server.py watch_live.)
+        self.call.close_line = self.end
 
     async def start(self, clock=True):
         """The call's briefing and its agent, then the mixer's clock (clock=False: a test ticks it itself)."""

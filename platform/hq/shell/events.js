@@ -18,6 +18,12 @@ export function onEvent(ev) {
   if (ev.type === 'viewmarks') return void document.dispatchEvent(new CustomEvent('viewmarks', { detail: ev.marks }));
   if (ev.type === 'book' && ev.text === 'notebook')
     return void document.dispatchEvent(new CustomEvent('book:notebook', { detail: { page: ev.page ?? null } }));
+  // (a call's prototype saved: its card on every screen, bookprototype.js.)
+  if (ev.type === 'book' && ev.text === 'prototype')
+    return void document.dispatchEvent(new CustomEvent('call:prototype', { detail: ev.prototype }));
+  // (someone joined a call's page from its QR code: the call screen tells the line, callguest.js.)
+  if (ev.type === 'book' && ev.text === 'guest')
+    return void document.dispatchEvent(new CustomEvent('call:guest', { detail: ev.guest }));
   if (ev.type === 'book')
     return void document.dispatchEvent(new CustomEvent('book:changed', { detail: { page: ev.page ?? null } }));
   if (world.apply(ev).unknown) refreshOrg(); // someone new

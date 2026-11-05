@@ -14,7 +14,7 @@ import { STANDING } from './jobcodes.ts';
 import { ceo, roles, unstaffed } from './company.ts';
 import * as pictures from './pictures.ts';
 import * as tips from './tips.ts';
-import { DEFAULT_ESTIMATE_SCALE, TOKEN_ESTIMATE_GUIDANCE } from '../../worker/hq/estimating.ts';
+import { DEFAULT_ESTIMATE_SCALE, ONE_TIME, TOKEN_ESTIMATE_GUIDANCE } from '../../worker/hq/estimating.ts';
 import { isIntercom, quickRunEnded } from './quickruns.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
@@ -58,6 +58,7 @@ from wherever the conversation is now.`;
 // CEO's (call.ts says the same).
 // A long reply hears so in its next turn (LONG_REPLY).
 // A window puts work first, a pause only waits on a condition.
+// One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME, board, call 256).
 // Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when missed,
 // once.
 // Work only one engine and model do is marked as it's queued (hq job --only, org.yaml engineOnly: the call's job tool
@@ -83,8 +84,7 @@ why. Work of a kind in company/org.yaml \`engineOnly\` (each rule's \`what\` say
 ${TOKEN_ESTIMATE_GUIDANCE}
 The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
 \`hq when "..." --size <JSON>\` before telling the board when something will be done (\`--by\` the
-board's time: whether it makes it, and only if not, what would). Give one plain time: its time to tell the board
-(live four times in five), never a "done about" or a planned finish. A time you give is ours, even one the board takes:
+board's time: whether it makes it, and only if not, what would). ${ONE_TIME} A time you give is ours, even one the board takes:
 its slips are ours to plan with, and the board hears nothing of them. Only a time the board named itself, or asked for
 the work by, is the board's: set it with \`hq window ... --board-set\`, and its miss is told once. Then set the
 four-in-five time as its new window without --board-set: it is ours from then on. If the board heard of this miss on

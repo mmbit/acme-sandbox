@@ -1,15 +1,7 @@
 #!/bin/bash
-# Keeps the voice line's timing lines (the board's calls: which model, and how long each reply's first words took) in
-# a file of their own, because the voice container's log starts afresh when a deploy recreates it. The timing lines
-# only, nothing said on a call. Also how HQ played the voice, at hang-up (numbers only). sync.sh runs this before every
-# deploy and report.sh before every status report, so a call between the last report and a deploy is kept too.
-# And HQ's timeline of the playback (numbers only), to line a call that sounded wrong up with the replies'
-# times. And each turn's tokens and thinking from the call agents' own session records (platform/voice/turns.py, numbers
-# only), which the voice line logs as each session ends, then deletes (server.py forget).
-# And the browser and system each call came from, and how loud the agent's own voice came back in the board's microphone
-# (numbers only). And how late the board's audio reached the line, by HQ's pings, and how many of its pauses sounded
-# finished. And, on a care call, where each reply's wait went and when the
-# reply's language changed. And each time HQ's connection came back mid-call.
+# Keeps the voice line's call timing lines (models, reply waits, playback, echo, the board's audio, each session's turns)
+# in a file of their own, because the voice container's log starts afresh when a deploy recreates it. Never what was
+# said on a call. sync.sh runs it before every deploy and report.sh before every status report.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)   # the server's checkout
 # company/infra.env read as data (infra-env.sh), never sourced

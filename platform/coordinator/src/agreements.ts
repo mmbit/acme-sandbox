@@ -103,9 +103,9 @@ export const readyFor = (a: Pick<Agreement, 'status' | 'ready_at'>, now: number)
     ? `ready ${age(now - Date.parse(a.ready_at))}, open until the board says yes (hq item done)`
     : a.status;
 
-// Whether hq call would show a call to the CEO's job `reader` (memory.ts callAccess: not a live call's, one carried from
-// a card for keys or one marked as about a customer that it may not read), each call read once however many items it
-// has.
+// Whether hq call would show a call to the CEO's job `reader` (memory.ts callAccess: not one carried from a card for
+// keys or one marked as about a customer that it may not read; a live call's lines so far, since job #24358), each call
+// read once however many items it has.
 function callsShown(reader: jobs.Reader) {
   const shown = new Map<number, boolean>();
   return (call: number) => {

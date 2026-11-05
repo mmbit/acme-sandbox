@@ -1,5 +1,6 @@
 # Ink, in HQ's browser
 
+
 Ink is the pen platform as a whole: the Sketchbook you draw in, marks drawn anywhere and sent to it, the sheets that
 send them to agents, their answers, the call's view of the page, and one-time sign-in on another device. This folder
 is its browser side in HQ. The coordinator's side is `platform/coordinator/src/ink/`, the marks on any page are review
@@ -12,7 +13,7 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
 - `book.js` opens the book beside HQ's page. `bookpages.js`, `bookpage.js` and `booksave.js` draw and keep its pages,
   `bookgroups.js` a page's groups, a paperclip on each of two or more things, and the answers under them, `booktear.js` and `bookpagesend.js` a page torn off at its right edge, where the spine is, onto Submit, PDF or PNG (a guest's, its Send),
   `bookforyou.js` what's still the board's to answer (an open ask edged "for you", counted over the page's name, its arrows going to each),
-  `bookrail.js` Undo and Redo on the bar, `bookviewhead.js` the page's title and day on the view, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
+  `bookrail.js` Undo and Redo's pill beside the bar, `bookviewhead.js` the page's title and day on the view, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
 - `bookanswers*.js` draw a try's versions on a notebook page and what the board writes on them, and a slip's form
@@ -63,8 +64,8 @@ The board set these for Ink. Code and checks that keep one say it, or name it he
   it shows, and HQ's buttons never peek over it. Upright on an iPad mini it starts folded and opens as the spread.
 - **Only a deliberate pull moves the book.** A finger's swipe from the page's left edge closes it. The Pencil and the
   mouse write there as anywhere on the page.
-- **The rail floats.** The tools are toolbars floating over the paper's right edge, never a strip of it: Select, Pen,
-  Eraser, Shapes, Text, then Undo and Redo, with the page's controls at its foot.
+- **The rail floats.** The tools are toolbars floating over the paper's right edge, never a strip of it: the pen, shapes,
+  the eraser, Select and Text, with Undo and Redo and the page's controls at its foot.
 - **The page arrows stay put and within the tab.** They never move as pages turn, and they never turn on into the next
   tab. The page list shows only the tab's pages, numbered as its counter is.
 - **A sent page stays where it is.** No page is made after it, even after the last.
@@ -123,7 +124,7 @@ HQ's page share:
   bigger than the rest of the screen's. On paper too narrow for one column at
   `LEAST` with both margins (the narrowest book's, beside its tools), the margin at the notes' right gives way before
   their size does (`rightMarginOf`, in the page's scale `scaleOf`): the left one stays, under the title. The narrowest
-  book (`booklayout.js` `BOOK.min`, 400 px) leaves paper enough for that column at `LEAST`. Units keep their own width and grow down, always `GAP` apart. A note with ink beside it
+  book (`booklayout.js` `BOOK.min`, 400 px) leaves paper enough for that column at `LEAST`. Units keep their own width and grow down, always `GAP` apart, clearly more than a note and what hangs under it. A note with ink beside it
   takes every column that ink reaches into (its `w`), so a word written in that paper covers no note when the page
   widens. Ink on a note never widens it, so an arrow from one note
   onto the next moves neither. The board's own drawing has no paper, so all its ink counts. On a page drawn before
@@ -160,7 +161,9 @@ to us).
 - **Taped on:** a scrap is one post-it, glued at its top and lying on the page with its own real shadow, as the board's
   picked mock-up draws it (`bookgroups.css` `.bk-unit-paper`). Its photo is taped straight onto it, a strip of tape
   whole across the photo's top edge, with no card or shadow of its own (`bookpage.js` photos, `bookscrapdraw.js`), and
-  its words are written on the same paper. Under it is plain page, the room to write.
+  its words are written on the same paper. Under it is plain page, the room to write. An agent's drawing
+  (`drawing.ts`, its picture marked `drawing`) has a clear ground and no tape or edge: its lines are straight on the
+  post-it's yellow, not a card in a card (the board, call 257).
 - **Ink is on top:** the page's dry ink lies over everything on it, a scrap's photo, its words and typed words included
   (`bookdesk.css` `.bk-ink`). Our scraps' photos are the page's own elements under every unit's canvas, so no unit's
   ink lies under another's photo.
@@ -211,18 +214,20 @@ The board's rules for the book as a real book, seen from the side.
 - **Only the page pinch-zooms:** nothing else in the book lets the browser zoom the screen, the islands, their cards
   and the gaps between them included, so no pinch can push a control off the screen. A pinch begun on a control does
   nothing; a card's list still scrolls (`book.css`). HQ's own page beside the book zooms as ever.
-- **Two islands** float over the paper, HQ's own controls in HQ's look (`bookui.js`, `bookstrip.css`). Only the page is
-  paper. The tools stand on the right, upright and short: on a phone, well under half the screen's height. The bar runs
-  along the foot between the screen's corners: Undo and Redo at its left, the page's arrows and count exactly in its
-  middle, All pages and its dots menu at its right. What's written is laid left of the tools, but ink goes under and
-  beside them.
-- **The islands are glass:** the tools' island and the bar are lightly frosted glass over the page, in every look: the
+- **The islands** float over the paper, HQ's own controls in HQ's look (`bookui.js`, `bookstrip.css`). Only the page
+  is paper. The tools stand on the right, upright and short: on a phone, well under half the screen's height. The bar
+  runs along the foot between the screen's corners, as the board drew it: All pages at its left, the page's arrows and
+  count exactly in its middle, its dots menu at its right. Undo and Redo are a pill of their own left of the bar, or
+  above its left end where there's no room beside it (`bookrail.js`); on a locked page the pill goes and the bar stays
+  exactly where it was. The overview has no bar: it shows all the pages already, and a page opens by its tile. What's
+  written is laid left of the tools, but ink goes under and beside them.
+- **The islands are glass:** the tools' island, the bar and the pill are lightly frosted glass over the page, in every look: the
   look's panel two thirds opaque, what's under it blurred, a line of light on its top edge, the look's own edge kept
   (`bookstrip.css`, the renderers' skin.css). A dark panel dims what it lets through, so it stays dark and its keys
   read. While the book swings or its tab is held, the frost is off, so the swing keeps its frames. Never overdone: a
   hairline rim at most.
 - **The bar's spacing** gets smaller inward: its margin at its ends the largest, then the room each side of a rule,
-  alike at every rule, then the gap between two keys, alike in every group. Each end holds two keys at every size, New
+  alike at every rule, then the gap between two keys, alike in every group. Each end holds one key at every size, New
   page in the dots menu, so the parts sit against the middle alike on both sides (`bookstrip.css`).
 - **The tools,** in order: the pen, shapes, the eraser, Select, Text and the mic (`bookpalette.js`). The pen and the
   marker are one tool. Its card holds what draws, its colour and its width, one tap away. A tap picks a tool, and
@@ -269,7 +274,8 @@ The board's rules for the book as a real book, seen from the side.
   it: in Slate and Holo it's real wood, never a dark shelf, tinted slightly towards the look's colours and lettered in
   its own dark ink (`--bk-shelf-tint`, `--bk-shelf-tint-share`, `--bk-shelf-ink`, the renderers' skin.css); in
   Brownstone the same bookcase is pixel art, untinted, its name in HQ's pixel type and its Close HQ's own key
-  (`renderers/brownstone/shelf.css`). The books stay real books in every look. It opens whole: read ahead, and before
+  (`renderers/brownstone/shelf.css`), and its books pixel cloth with pixel-paper plates in HQ's type; in every other
+  look they stay real books. It opens whole: read ahead, and before
   its first read it stands with the boards it had last time, its things arriving on them. No menu on a cover. A book
   tapped opens on its All pages.
 
@@ -281,7 +287,9 @@ art, Holo's line, and Slate's from the brand guide (the kit's set) (board, call 
 its own. A new control names its icon, and its drawing goes in every style's folder (`icons/pixel/`, `icons/smooth/`
 and the company's kit): `icons.test.js` fails a name the code uses that a style lacks, and `icons-check.mjs` a book
 showing one missing. What lies on the paper stays the paper's, drawn by hand in every look: the stamps, a slip's clip,
-the bookmarks and the covers. A guest's book, with no look, wears the line set.
+the bookmarks and the covers. A guest's book, with no look, wears the line set. A pixel icon of a pen or a brush is
+drawn upright, tip down: low-res pixels can't draw a diagonal cleanly. Rename page wears the text tool's T, never a pen,
+which reads as drawing.
 
 ## What a page offers
 
@@ -311,9 +319,10 @@ under Calls, shut at hang-up and stamped Sent once the call's follow-up has hand
 
 The board's rules for them as real ribbon:
 
-- **Made by a person:** each a thin ribbon, notched at its end, with its icon alone on it in a deeper tone of its own
-  colour and no words (its name is its label). It sticks out about as far as the pull tab, and they sit just above it,
-  one group, never sprawling over HQ's page (`bookmarks.css`).
+- **Made by a person:** each a ribbon notched at its end, with its icon alone on it in a deeper tone of its own
+  colour and no words (its name is its label). Each is a finger's 44 px to the touch with its gap, its icon read at a
+  glance on an iPad, and it sticks out a little less than the pull tab; they sit just above it, one group, never
+  sprawling over HQ's page (`bookmarks.css`).
 - **No outline:** ribbon has no drawn edge. Their soft shade alone sets them off the paper or the table, as the book's
   labels and pull tab are (`bookmarks.css`).
 - **Out of the book while it swings:** on a page that is the whole screen, while the book swings open or shut they

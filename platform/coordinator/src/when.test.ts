@@ -177,7 +177,10 @@ test("each agreed deadline as the answer's play leaves it, against the plan with
   );
   // the time to tell the board: live four times in five, never sooner than the planned finish
   assert.ok(earliest.found && (await ask({ q: 'paint the harbour map' })).body.safe >= earliest.finish);
-  assert.match(out, /\nThe time to tell the board: live by .* UTC, four times in five\./);
+  assert.match(
+    out,
+    /\nThe time to tell the board: live \w{3} .* UTC, four times in five\. It is the one time it hears/,
+  );
   assert.doesNotMatch(out, /\b(safe|tight|moving):/, 'the facts, never a verdict');
 });
 

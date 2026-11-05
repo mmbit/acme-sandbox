@@ -7,7 +7,8 @@ note in the call's notes (ink/callnotes.ts), where the board sees it appear as i
 the call's follow-up hands it out. A note with no picture is the agent's words alone on a post-it. The agent works the
 notes as the board does too: reads them (read_notes), draws on them (mark_notes) and changes, moves or deletes what's
 there (change_note), none of it a step the board's Undo takes back (only the board's own are), puts a drawing of its own
-in them as a picture (draw_picture), and has versions of a note made for the board to pick from (try). title_notes
+in them as a picture (draw_picture), and has versions of a note made for the board to pick from (try). It makes
+throwaway prototypes the call keeps beside its notes (prototype). title_notes
 names their topic, after the call's date and time, and the agent is reminded every few turns until it has. Only on the
 board's own HQ call.
 The call engine's halves (drawing.py, driving.py, the screen tool) know nothing of the notes: this reads them, never the
@@ -131,6 +132,36 @@ def drawing_asked(a):
         return None
     svg = a['svg'].strip()
     return {'svg': svg} if svg.startswith('<svg') and svg.endswith('</svg>') else None
+
+
+# A throwaway page of the agent's own, made on the call to show an idea: the coordinator's callprototypes.ts keeps it
+# with the call, takes its picture and shows it on the call's page and the iPads. The most of its name, its page and its
+# line of what a version changes are callprototypes.ts NAME_MOST, HTML_MOST and ABOUT_MOST.
+PROTOTYPE_NAME, PROTOTYPE_HTML, PROTOTYPE_ABOUT = 60, 1_000_000, 200
+PROTOTYPE_WORDS = {
+    'shape': (f"prototype takes name (at most {PROTOTYPE_NAME} characters: the same name again makes its next "
+              f"version), html (one whole page, everything inline, at most {PROTOTYPE_HTML:,} characters) and about "
+              f"(what this version changes, one line of at most {PROTOTYPE_ABOUT} characters, if you like)"),
+    'none': "There are no prototypes on this call: only the board's own calls in HQ have them.",
+    'gone': WRITE_DOWN_WORDS['gone'],
+    'failed': "The prototype couldn't be saved just now",
+}
+# Its answer's last words: the call's number, which a colleague's brief needs to save one for it (hq prototype)
+PROTOTYPE_CALL = '(This call is #{call}: a colleague saves a prototype for it with hq prototype --call {call}.)'
+
+
+def prototype_asked(a):
+    """The prototype the agent gives ({name, html, about?}), as the coordinator takes it, or None if it isn't one."""
+    if not isinstance(a, dict) or set(a) - {'name', 'html', 'about'} or not isinstance(a.get('html'), str):
+        return None
+    name = one_line(a.get('name')) if isinstance(a.get('name'), str) else ''
+    about = one_line(a.get('about')) if isinstance(a.get('about', ''), str) else None
+    html = a['html'].strip()
+    if not 0 < len(name) <= PROTOTYPE_NAME or about is None or len(about) > PROTOTYPE_ABOUT:
+        return None
+    if not html.startswith('<') or len(html) > PROTOTYPE_HTML:
+        return None
+    return {'name': name, 'html': html, **({'about': about} if about else {})}
 
 
 def number(v):
@@ -273,6 +304,20 @@ class CallNotes:
             return {'error': DRAW_WORDS['shape']}
         got = await self.answer('drawing', drawing, DRAW_WORDS)
         return got if 'error' in got else {'line': one_line(got['ok']), 'picture': got['picture']}
+
+    async def prototype_tool(self, asked):
+        """The agent's prototype tool: its page kept with the call and shown on both iPads, and its picture back with
+        its line and the call's number."""
+        if refusal := self.refused(PROTOTYPE_WORDS):
+            return {'error': refusal}
+        if not (prototype := prototype_asked(asked.get('prototype'))):
+            return {'error': PROTOTYPE_WORDS['shape']}
+        got = await self.answer('prototype', prototype, PROTOTYPE_WORDS)
+        if 'error' in got:
+            return got
+        # (version: Call.build shows it.)
+        return {'line': f"{one_line(got['ok'])} {PROTOTYPE_CALL.format(call=self.call.brain.call)}",
+                'picture': got['picture'], 'version': got.get('version')}
 
     async def try_tool(self, asked):
         """The agent's try tool: versions of something on the call's notes page, made for the board to pick from."""

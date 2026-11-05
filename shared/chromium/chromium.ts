@@ -44,9 +44,9 @@ const SWITCHES = [
 
 export class ChromiumError extends Error {}
 
-// A request a page made, and how it's answered: a body with its type, or null to refuse it
+// A request a page made, and how it's answered: a body with its type (and any headers of its own), or null to refuse it
 export type Asked = { url: string; method: string };
-export type Answer = { type: string; body: Buffer } | null;
+export type Answer = { type: string; body: Buffer; headers?: Record<string, string> } | null;
 export type Listener = (method: string, params: any) => void;
 
 export type Tab = {
@@ -144,6 +144,7 @@ async function answered(send: Tab['send'], answer: (asked: Asked) => Promise<Ans
         responseHeaders: [
           { name: 'content-type', value: given.type },
           { name: 'access-control-allow-origin', value: '*' },
+          ...Object.entries(given.headers ?? {}).map(([name, value]) => ({ name, value })),
         ],
         body: given.body.toString('base64'),
       })

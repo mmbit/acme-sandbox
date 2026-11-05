@@ -333,3 +333,23 @@ body.bk-guest-working .passkey-prompt {
   background: transparent;
   color: var(--bk-ink, #2a2352);
 }
+/* a call's prototype over the whole screen in the top layer, the book under it (bookguestwork.js showPrototype). */
+.bk-guest-view.bk-guest-proto {
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.bk-guest-back {
+  all: unset;
+  cursor: pointer;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink);
+  font-weight: 600;
+}

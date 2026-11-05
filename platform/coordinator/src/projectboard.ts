@@ -47,13 +47,14 @@ export function listProjectBoard(t = Date.now()) {
     single = oneTasks();
   const jobsOf = (id: string) => byThread.get(id) ?? [];
   const ongoing = (th: Thread) => pending.has(th.id) || (th.status === 'open' && !jobsOf(th.id).length);
-  const listed = projects().list.map(project => {
+  const settings = projects(); // read once for every project's cover
+  const listed = settings.list.map(project => {
     const sentence = sentenceOf(project.id);
     const own = threads.filter(th => th.project === project.id);
     return {
       ...names.project(project),
       cost: costs.project(project.id),
-      ...coverOf(project),
+      ...coverOf(project, settings),
       ...(schedules.has(project.id) && { schedule: schedules.get(project.id) }),
       ...(isGoal(project.id) && { goal: true }),
       sentence: sentence

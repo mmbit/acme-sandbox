@@ -33,6 +33,13 @@
   -webkit-touch-callout: none;
   cursor: crosshair;
 }
+/* (under the overview, data-far: the page isn't drawn. Safari paints the overview's paper, its background scrolling
+   with it, onto what scrolls, so its bounce at the top uncovers what lies under it: the page would show through there,
+   its words and its own layers flickering black, where .bk-pages' paper should. A turning leaf's picture of the page is
+   a copy outside this rule.) */
+#book[data-far] .bk-pages > .bk-desk {
+  visibility: hidden;
+}
 #book .bk-desk[data-pan='ready'] {
   cursor: grab;
 }

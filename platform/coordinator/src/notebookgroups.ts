@@ -37,6 +37,8 @@ db.exec(`create table if not exists notebook_groups (id integer primary key auto
   said text, owner text, status text not null default 'open', note integer, created text not null, updated text not null,
   deleted integer, asked integer, expect integer, tried integer, reason integer, pos real, h integer);
   create index if not exists notebook_groups_page on notebook_groups (page)`);
+// The board's groups changed in a while, for the judge (ink/bookjudge.ts judgeRested).
+db.exec('create index if not exists notebook_groups_rested on notebook_groups (by, updated, deleted)');
 // (the answers' columns, as Group has them; tried: the try run making its versions, booktry.ts; reason: bookanswer.ts
 // noAnswer's; request: the desk-phone card an agent's design ask is, on its notebook's Asks page, ink/askpages.ts;
 // frame: a reply's on a version, the box its picture showed in as it was written, notebooksend.ts replyTo. No

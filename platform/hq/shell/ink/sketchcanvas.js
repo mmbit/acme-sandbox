@@ -6,9 +6,11 @@ import { UNIT_W } from './scrapunit.js';
 import { boxOf } from './notebookstack.js';
 import { shifted } from './notebookparts.js';
 
-// Whether a page in this chapter (notebookchapters.js) is a canvas: the board's own sketches are. A page of scraps (its
-// Asks, a call's notes, a round's guests) stays a masonry.
-export const isCanvas = chapter => chapter === 'sketch';
+// Whether a page ({ chapter, sketch? }: its chapter in notebookchapters.js) is a canvas: the board's own sketches are,
+// and a design session's call page (sketch: made one for it, never unmade). A page of scraps (its Asks, a call's notes,
+// a round's guests) stays a masonry.
+/** @param {{ chapter?: string, sketch?: boolean }} page */
+export const isCanvas = page => page.chapter === 'sketch' || !!page.sketch;
 // Whether a request's place is one: { x, y }, finite page px
 /** @param {any} v @returns {v is { x: number, y: number }} */
 export const isPlace = v => typeof v === 'object' && Number.isFinite(v?.x) && Number.isFinite(v?.y);

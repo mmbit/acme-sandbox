@@ -27,6 +27,8 @@ export type Event = {
   machines?: unknown;   // (machines: each machine live, runs.ts listMachines(); not kept in the events table either)
   marks?: { device: string; anchor: Anchor };
   studio?: unknown;
+  prototype?: unknown; // (a call's prototype saved: callprototypes.ts.)
+  guest?: { call: number; name: string }; // (someone joined a call's page from its QR code: callguests.ts.)
 };
 // since: when it set to work on its task (as HQ's world counts it, so one opened mid-job knows too)
 type Lines = { add: number; del: number };

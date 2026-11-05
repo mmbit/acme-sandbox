@@ -371,6 +371,23 @@ export function forDevice(scope: Scope, linked: Reach[], o: { linkMs: number; ac
   return handOff(s, '', '', s.host, s.start, o)!;
 }
 
+// A visitor's (callguests.ts: a call's scan, handed on to the call's prototypes, callprototypes.ts): the scope's one
+// view-only share as a pair code's, no address behind it, made when none is open long enough for a new session, its
+// one-time link and session carrying who, for the host's own check that they're still let in (callprototypes.ts
+// guestOn) on every request. One share, so handOff's allowance per person holds. → the link to url, or null when they
+// have too many open.
+export function forVisitor(scope: Scope, who: string, url: URL, o: { linkMs: number; accessMs: number }) {
+  const open = db
+    .prepare(
+      `select * from review_shares where about = ? and host = ? and prefix = ? and view = 1 and device = 1
+      and ended is null and ends > ? order by id desc`,
+    )
+    .get(scope.about, scope.host, scope.prefix, new Date(Date.now() + o.linkMs + o.accessMs).toISOString()) as
+    Share | undefined;
+  const s = open ?? create(scope, [], (2 * (o.linkMs + o.accessMs)) / 864e5, 'view', true);
+  return handOff(s, who, '', url.host, url.pathname + url.search + url.hash, o);
+}
+
 // Where a share reaches: its own host and path, and the previews its pages link to.
 export const reaches = (s: Share): Reach[] => [{ host: s.host, prefix: s.prefix }, ...JSON.parse(s.linked ?? '[]')];
 

@@ -1,16 +1,18 @@
 // book-check.mjs's story of the Notebook's look as the board found it on its iPad: in every HQ look, on an iPad mini on
 // its side and held upright. Each post-it one layer of paper; the page scrolls up and down, never sideways; the seen
 // mark the agent's own face with a tick drawn as the Notebook's, no HQ pixel icon on the paper; Rename page in the dots
-// menu and no pencil by the title; the bookmarks sticking out less than the pull tab, which hangs a clear gap below
-// them, and shut, out from the screen's edge further than before. Recorded with --shots: the page open, the pen's card,
-// the dots menu, and the book shut with its pull tab.
+// menu and no pencil by the title; the bookmarks sticking out less than the pull tab, which hangs below them, a press
+// anywhere on it the tab's, never a bookmark's; and shut, a finger's pull from the tab opens the book. Recorded with
+// --shots: the page open, the pen's card, the dots menu, and the book shut with its pull tab.
 import assert from 'node:assert/strict';
 import { LOOK_SCHEMES, say, until } from './kit.mjs';
 import { restsOpen } from './start.mjs';
+import { hands } from './hands.mjs';
+import { viewNow } from './canvas.mjs';
 import { shapeOf } from '../shell/ink/booklayout.js';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
 
-export const SIZES = { ipad: { width: 1133, height: 744 }, 'ipad-upright': { width: 744, height: 1133 } };
+const SIZES = { ipad: { width: 1133, height: 744 }, 'ipad-upright': { width: 744, height: 1133 } };
 const T0 = '2026-11-04T13:40:00.000Z';
 // a wave of the board's pen across a note, in its own px
 const wave = (h, color = '#2a2352') => [
@@ -25,7 +27,7 @@ const note = (id, words, more = {}) => ({
   ...{ texts: typedBoxes(words, { x: 0, w: 300, color: '#1d1a2f' }), status: 'sent', created: T0, updated: T0 },
   ...{ pos: id, h: 150, ...more },
 });
-export const SEED = {
+const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', archived: false, created: T0, updated: T0 }],
   pages: [
     { id: 1, notebook: 1, pos: 0, label: 'Test note to Juno', created: T0, updated: T0, w: 1200, h: 2400 },
@@ -38,7 +40,7 @@ export const SEED = {
 };
 
 // The book open at size in a look, its page as seeded (shut: the book folded as it last was)
-export async function lookAt(browser, c, { renderer, colorScheme }, size, { shut = false, seed = SEED } = {}) {
+async function lookAt(browser, c, { renderer, colorScheme }, size, { shut = false, seed = SEED } = {}) {
   const context = await c.hqIn(browser, size, {
     notebooks: structuredClone(seed),
     hasTouch: true,
@@ -93,9 +95,7 @@ export function notebookLookStories(c) {
             }
             const { context, p } = await lookAt(browser, c, how, size, { shut: true });
             await c.shot(`look-${at}-shut`, p);
-            const lip = await p.locator('#book .bk-lip').boundingBox();
-            assert.ok(size.width - lip.x >= 28, `${at}: shut, the pull tab ${size.width - lip.x} px in from the edge`);
-            assert.ok(lip.height >= 60, `${at}: shut, the pull tab ${lip.height} px tall`);
+            await pulledOpen(p, c, size);
             await context.close();
           }
       },
@@ -133,13 +133,14 @@ async function onePaper(p, at) {
 }
 // The seen mark: the agent's own face, no letter, a tick drawn as the Notebook's, no HQ icon on the tags
 async function seenFace(p, at) {
-  const tag = p.locator('#book .bk-tags .bk-tag[data-seen]');
+  const tag = p.locator('#book .bk-seen .bk-tag[data-seen]'); // (its own)
   await tag.waitFor();
   assert.equal(await tag.getAttribute('aria-label'), say('seenBy', { name: 'Juno' }), at);
-  const face = tag.locator('.bk-face[data-portrait]');
+  const face = tag.locator('.bk-answer-face');
   assert.match(await face.evaluate(el => el.style.backgroundImage), /^url\("data:image\//, `${at}: Juno's face`);
   assert.equal((await face.innerText()).trim(), '', `${at}: no letter`);
-  assert.equal(await p.locator('#book .bk-tags svg[data-icon]').count(), 0, `${at}: no HQ icon on the paper's tags`);
+  const icons = p.locator('#book :is(.bk-tags, .bk-seen) svg[data-icon]');
+  assert.equal(await icons.count(), 0, `${at}: no HQ icon on the paper's tags`);
   assert.equal(
     await p.locator('#book .bk-view-head svg, #book .bk-view-head button').count(),
     0,
@@ -148,11 +149,7 @@ async function seenFace(p, at) {
 }
 // A swipe and a trackpad's sideways scroll leave the page where it is across
 async function noSideways(p, at) {
-  const across = () =>
-    p.evaluate(() => {
-      const world = document.querySelector('#book .bk-desk [style*="translate3d"]');
-      return Number(world.style.transform.match(/translate3d\((-?[\d.]+)px/)[1]);
-    });
+  const across = async () => (await viewNow(p)).x;
   const was = await across();
   await p.evaluate(async () => {
     const desk = document.querySelector('#book .bk-desk'),
@@ -170,26 +167,43 @@ async function noSideways(p, at) {
   await p.waitForTimeout(400);
   assert.equal(await across(), was, `${at}: the page doesn't move sideways`);
 }
-// Beside HQ's page, the bookmarks stick out less than the pull tab, which hangs a clear gap below the last of them
+// Beside HQ's page, the bookmarks stick out less than the pull tab, which hangs below the last of them; a press
+// anywhere on the tab is the tab's, never a bookmark's
 async function clearOfMarks(p, at) {
-  const { tabs, lip, whole } = await p.evaluate(() => {
+  const { tabs, lip, whole, pressed } = await p.evaluate(() => {
     const box = el => {
       const r = el.getBoundingClientRect();
       return { x: r.left, y: r.top, right: r.right, bottom: r.bottom };
     };
+    const lip = document.querySelector('#book .bk-lip'),
+      r = lip.getBoundingClientRect(),
+      across = [0.1, 0.5, 0.9];
     return {
       tabs: [...document.querySelectorAll('#book .bk-marks .bk-mk-tab')].map(box),
-      lip: box(document.querySelector('#book .bk-lip')),
+      lip: box(lip),
       whole: 'whole' in document.querySelector('#book').dataset,
+      // (what a press takes, over the tab's whole face)
+      pressed: across.flatMap(fx =>
+        across.map(fy => {
+          const hit = document.elementFromPoint(r.left + fx * r.width, r.top + fy * r.height);
+          return hit?.closest('.bk-lip') ? 'tab' : hit?.closest('.bk-marks') ? 'a bookmark' : 'something else';
+        }),
+      ),
     };
   });
   assert.equal(tabs.length, 3, `${at}: the three bookmarks`);
+  assert.deepEqual(new Set(pressed), new Set(['tab']), `${at}: a press on the pull tab is the tab's (${pressed})`);
   const last = tabs.at(-1);
-  assert.ok(
-    lip.y - last.bottom >= 32,
-    `${at}: the pull tab a clear gap below the bookmarks (${last.bottom} to ${lip.y})`,
-  );
+  assert.ok(lip.y >= last.bottom, `${at}: the pull tab below the bookmarks (${last.bottom} to ${lip.y})`);
   if (whole) return;
-  for (const t of tabs)
-    assert.ok(lip.x < t.x - 8, `${at}: the pull tab out further than a bookmark (${lip.x}, ${t.x})`);
+  for (const t of tabs) assert.ok(lip.x < t.x, `${at}: the pull tab out further than a bookmark (${lip.x}, ${t.x})`);
+}
+// Shut, a finger's pull from the tab most of the way across the screen opens the book
+async function pulledOpen(p, c, size) {
+  const lip = await p.locator('#book .bk-lip').boundingBox(),
+    from = [lip.x + lip.width / 2, lip.y + lip.height / 2],
+    { touch } = await hands(p);
+  await touch.stroke([from], [[size.width / 5, from[1]]]);
+  // (open beside HQ's page, or upright as the spread over it, as restsOpen waits)
+  await c.settled(p, size.width > size.height ? 'open' : 'spread');
 }

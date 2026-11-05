@@ -79,13 +79,12 @@ function liftHost(r, reshow) {
 // The book's spread covers HQ's page, and with it what's drawn on it here: the ink and the strip on HQ's page, though
 // the host is in the top layer, are hidden under it (not the host in a popup over the book, whose ink is the popup's).
 // While a part is marked data-takes-ink (a book's paper given to HQ's pen), the ink and the strip show over the book.
+// (a part that shows: a closed popup marked so, the book's Shelf on a call, leaves them under it)
+const takingInk = () => [...document.querySelectorAll('[data-takes-ink]')].some(el => el.checkVisibility());
 function showSpread(r) {
   const spread = r.book && document.documentElement.dataset.book === 'spread';
   r.host.toggleAttribute('data-spread', spread);
-  r.host.toggleAttribute(
-    'data-under-book',
-    spread && r.host.parentNode === document.documentElement && !document.querySelector('[data-takes-ink]'),
-  );
+  r.host.toggleAttribute('data-under-book', spread && r.host.parentNode === document.documentElement && !takingInk());
 }
 function showHost(host, again) {
   host.popover = 'manual';

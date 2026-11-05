@@ -668,12 +668,15 @@ await faceOverArtifact();
 // The board's screen is shared only when it says so: minimising the call (its
 // key, before the line picks up too, the backdrop, Escape) starts no watch-along and the bubble shows no eye. The call
 // screen's Show my screen starts one, the bubble's eye shows it, and Stop showing pauses it (Show my screen again).
-// A start that fails says so on the call screen until the next try.
+// A start that fails says so on the call screen until the next try. The line hears the screen's state as it changes and
+// at pick-up (call #258.).
 async function shareScreen() {
   const { context, page, errors } = await callPage();
   let starts = 0, line = null, pickUp = null;
+  const states = [];
   await context.route(`${base}/api/watchalong/start`, r => ++starts === 1 ? r.fulfill({ status: 503, json: { error: 'down' } }) : r.fulfill({ json: { id: 1, events: null } }));
   await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    if (typeof m === 'string' && JSON.parse(m).type === 'screen') states.push(JSON.parse(m).state);
     if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
     line = ws;
     pickUp = () => { ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' })); };
@@ -717,12 +720,13 @@ async function shareScreen() {
   assert.deepEqual(seen.shown, [2, ['Stop showing', 'true', false], false], `Show my screen didn't start the watch-along: ${JSON.stringify(seen)}`);
   assert.equal(seen.watched, true, 'the bubble shows no eye while the screen is shown');
   assert.deepEqual([seen.stopped, seen.stoppedEye], [[2, ['Show my screen', 'false', false]], false], `Stop showing didn't stop it: ${JSON.stringify(seen)}`);
+  assert.deepEqual(states, ['off', 'shown', 'paused'], `the line didn't hear the screen's state as it changed: ${JSON.stringify(states)}`);
   console.log('ok: minimising shares nothing; Show my screen starts the watch-along (the eye shows), Stop showing pauses it');
 }
 await shareScreen();
 
-// On a 320 px phone the call's four keys share one row in every look, inside the screen: the picture, Share as its
-// symbol, still named Share, Add a guest and Hang up as its symbol, still named Hang up, each key's words on one line.
+// On a 320 px phone the call's four keys share one row in every look, inside the screen: the picture, Join from an iPad,
+// Share as its symbol, still named Share, and Hang up as its symbol, still named Hang up, each key's words on one line.
 async function keysOnOneRow() {
   for (const look of lookNames()) {
     const { context, page, errors } = await callPage({ width: 320, height: 640 });
@@ -745,7 +749,8 @@ async function keysOnOneRow() {
     }));
     await context.close();
     assert.deepEqual(errors, []);
-    assert.deepEqual(keys.map(k => k.name), ['Show a picture', 'Share', 'Add a guest', 'Hang up'], `${look}: ${JSON.stringify(keys)}`);
+    // (the round keys together, then the long ones.)
+    assert.deepEqual(keys.map(k => k.name), ['Show a picture', 'Join from an iPad', 'Share', 'Hang up'], `${look}: ${JSON.stringify(keys)}`);
     assert.ok(keys.every(k => Math.abs(k.top - keys[0].top) < 4 && k.inside), `${look}: the call's keys don't share one row: ${JSON.stringify(keys)}`);
     assert.ok(keys.every(k => k.symbol), `${look}: a key's symbol is hidden: ${JSON.stringify(keys)}`);
     assert.ok(keys.every(k => k.lines.every(n => n <= 1)) && !keys[3].lines.length, `${look}: a key's words wrap, or Hang up shows more than its symbol: ${JSON.stringify(keys)}`);
@@ -754,34 +759,29 @@ async function keysOnOneRow() {
 }
 await keysOnOneRow();
 
-// Add a guest: once picked up, the key opens a card over the transcript (their name, address and language, the call's
-// own first), and their link comes back as a QR code and the link, all inside the screen above the keys, on a phone
-// and on the board's laptop.
+// Join from an iPad: once picked up, the key opens a card over the transcript with the call's QR code and its link at
+// once, no form (in the call's own language), all inside the screen above the keys, on a phone and on the board's
+// laptop.
 async function guestCard() {
   for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
     const { context, page, errors } = await callPage(viewport);
     const asked = [];
-    await context.route(`${base}/api/calls/guest`, r => { asked.push(r.request().postDataJSON()); r.fulfill({ json: { link: 'https://hq.example.org/guest/abcdefghijklmnopqrstuvwxyz0123456789', name: 'Ilse', address: 'i…@example.org' } }); });
+    const link = 'https://hq.example.org/guest/scan/en/abcdefghijklmnopqrstuvwxyz0123456789abcdefg';
+    await context.route(`${base}/api/calls/guest`, r => { asked.push(r.request().postDataJSON()); r.fulfill({ json: { link } }); });
     await pickUp(context);
     await page.goto(`${base}/?intro=0&open=intercom`);
     await page.click('#call');
     await page.waitForFunction(() => !document.querySelector('#call-guest').disabled);
     await page.click('#call-guest');
-    await page.fill('#call-guest-card [name=name]', 'Ilse');
-    await page.fill('#call-guest-card [name=email]', 'ilse@example.org');
-    const form = await page.$eval('#call-guest-card', el => { const r = el.getBoundingClientRect(); return [r.top >= 0, r.bottom <= innerHeight, r.left >= 0, r.right <= innerWidth]; });
-    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/guest-form-${viewport.width}.png` });
-    await page.click('#call-guest-card [type=submit]');
     await page.waitForSelector('#call-guest-card .guest-qr');
-    const qr = await page.$eval('#call-guest-card', el => { const r = el.getBoundingClientRect(), q = el.querySelector('.guest-qr').getBoundingClientRect(), keys = document.querySelector('#call-screen .row').getBoundingClientRect(); return [r.top >= 0, r.bottom <= keys.top, q.width >= 120, el.querySelector('.guest-link').textContent]; });
+    const qr = await page.$eval('#call-guest-card', el => { const r = el.getBoundingClientRect(), q = el.querySelector('.guest-qr').getBoundingClientRect(), keys = document.querySelector('#call-screen .row').getBoundingClientRect(); return [r.top >= 0, r.bottom <= keys.top, r.left >= 0, r.right <= innerWidth, q.width >= 120, el.querySelector('.guest-link').textContent, !!el.querySelector('input')]; });
     if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/guest-qr-${viewport.width}.png` });
     await context.close();
     assert.deepEqual(errors, []);
-    assert.deepEqual(asked.map(a => [a.name, a.email, a.lang]), [['Ilse', 'ilse@example.org', 'en']]);
-    assert.deepEqual(form, [true, true, true, true], `${viewport.width}: the guest card runs off the screen`);
-    assert.deepEqual(qr, [true, true, true, 'https://hq.example.org/guest/abcdefghijklmnopqrstuvwxyz0123456789'], `${viewport.width}: the QR card ${JSON.stringify(qr)}`);
+    assert.deepEqual(asked.map(a => [Object.keys(a).sort().join(), a.lang]), [['call,lang', 'en']]);
+    assert.deepEqual(qr, [true, true, true, true, true, link, false], `${viewport.width}: the QR card ${JSON.stringify(qr)}`);
   }
-  console.log('ok: Add a guest asks for their name and address, then shows their QR code and link above the call\'s keys');
+  console.log('ok: Join from an iPad shows the call\'s QR code and link at once, above the call\'s keys');
 }
 await guestCard();
 
@@ -816,6 +816,42 @@ async function marksReachTheLine() {
   console.log('ok: the marks on the call\'s page reach the line as they rest, once per change, never the agent\'s or what was there');
 }
 await marksReachTheLine();
+
+// The agent's raised hand in a design session: the line's hand shows big over the agent's little screen with what it's
+// about, inside the call's window on the board's laptop and a phone, a tap on it tells the line, the bubble shows it
+// while the call is small, and it goes when the line lowers it.
+async function raisedHand() {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    const { context, page, errors } = await callPage(viewport);
+    let line;
+    const heard = [];
+    await pickUp(context, ws => (line = ws), e => heard.push(e));
+    await page.goto(`${base}/?intro=0&open=intercom`);
+    await page.click('#call');
+    await page.waitForFunction(() => !document.querySelector('#call-guest').disabled);
+    line.send(JSON.stringify({ type: 'hand', up: true, about: 'a fold-out map spread' }));
+    await page.waitForSelector('#call-screen > .call-hand');
+    await page.waitForTimeout(600); // (it has risen)
+    const shown = await page.$eval('#call-screen > .call-hand', el => {
+      const r = el.getBoundingClientRect(), d = document.querySelector('#call-layer .device').getBoundingClientRect();
+      return [el.textContent, r.width >= 56, r.top >= d.top, r.right <= d.right, document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('.call-hand') === el];
+    });
+    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/hand-${viewport.width}.png` });
+    await page.click('#call-screen > .call-hand');
+    await page.waitForTimeout(200);
+    await page.click('#call-min');
+    await page.waitForSelector('.callbubble > .call-hand');
+    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/hand-bubble-${viewport.width}.png` });
+    line.send(JSON.stringify({ type: 'hand', up: false }));
+    await page.waitForFunction(() => !document.querySelector('.call-hand'));
+    await context.close();
+    assert.deepEqual(errors, []);
+    assert.deepEqual(shown, ['a fold-out map spread', true, true, true, true], `${viewport.width}: the hand ${JSON.stringify(shown)}`);
+    assert.deepEqual(heard.filter(e => e.type === 'hand'), [{ type: 'hand' }], `${viewport.width}: the tap`);
+  }
+  console.log('ok: the agent\'s raised hand shows on the call screen and its bubble, a tap tells the line, and it goes when lowered');
+}
+await raisedHand();
 
 // On a phone on its side, in a short laptop window and on a short phone, upright or on its side, with the note that the
 // screen isn't reaching the agent above the transcript, the call's keys show without scrolling, in every look and in both

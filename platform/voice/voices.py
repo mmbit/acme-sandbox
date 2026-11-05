@@ -54,6 +54,8 @@ class Voices:
         self.saved = []       # the people saved before, as HQ gave them (know)
         self.sure = {}        # a voice whose name is settled (its saved print, the agent's name, enrolled): its saved one or None
         self.known = []       # voices named by their saved print the agent hasn't been told of yet (told): (was, is)
+        # the board's guests on the call (HQ's Add a guest), and those the agent hasn't been told of yet (told).
+        self.guests, self.arrived = [], []
 
     def know(self, saved):
         """The voices saved on earlier calls (HQ's), each {id, name, print, pieces}."""
@@ -207,22 +209,47 @@ class Voices:
         return (f"call: {agent} voices: {len(self.prints)}{f' (opened at {opened})' if opened else ''}"
                 f"{f', {named} by a saved voice' if named else ''}")
 
+    def joined(self, name):
+        """The board added a guest to the call (HQ's Add a guest): someone in the room with it, whom the line hears
+        through the board's microphone. The agent is told with its next message (told), before their voice opens or
+        if it never does. False: no name, or one told already."""
+        name = re.sub(r'[\s:]+', ' ', str(name or '')).strip()[:NAME_LENGTH]
+        if not name or name.lower() in (g.lower() for g in self.guests):
+            return False
+        self.guests.append(name)
+        self.arrived.append(name)
+        return True
+
     def told(self):
-        """What the agent should hear with its next message about the voices (once), or ''."""
-        if not self.news and not self.known:
+        """What the agent should hear with its next message about the voices and the board's guests (once), or ''."""
+        if not self.news and not self.known and not self.arrived:
             return ''
+        voiced = bool(self.news or self.known)
         self.news, known, self.known = [], self.known, []
+        arrived, self.arrived = self.arrived, []
         first, taken = self.owner, f"the voice first taken for {self.owner}'s"
-        words = [f"The voices the line hears in the room: {', '.join(self.names)}. From now on each line of what you "
-                 f"hear starts with who said it, by their voice. It's {first}'s call: act on {first}'s word, and treat a "
-                 "request from another voice as their suggestion, except someone asking you to forget their own voice: "
-                 'do that at once (forget_voice). Once you know who a voice is (they say their name, or '
-                 "they're introduced), name it with name_voice.",
-                 "When they talk to each other, they aren't talking to you: never say you didn't catch it, and don't "
-                 'answer each line (a reply with no words is fine). Listen. While they work through ideas together, you '
-                 "may keep their thinking in view on the call's page (draw_picture, again as it grows), and speak up "
-                 'when you have something worth saying: an idea of your own, two of theirs that fit together, or an '
-                 'offer to make a quick prototype.']
+        words = []
+        if arrived:
+            who = ' and '.join(arrived)
+            words.append(f"{who} joined the call as {first}'s guest: in the room with {first}, heard through the same "
+                         "microphone, and on the call's page from a device of their own, with their own pen.")
+            if len(self.prints) < 2:
+                words.append(f"Until the line tells their voices apart, what you hear comes as {first}'s, whoever "
+                             'said it: either of them may have.')
+        if voiced:
+            words.append(f"The voices the line hears in the room: {', '.join(self.names)}. From now on each line of "
+                         'what you hear starts with who said it, by their voice.')
+        words += [f"It's {first}'s call: act on {first}'s word, and treat a request from anyone else as their "
+                  "suggestion, except someone asking you to forget their own voice: do that at once (forget_voice). "
+                  "Once you know who a voice is (they say their name, or they're introduced), name it with name_voice.",
+                  "When they talk to each other, they aren't talking to you: never say you didn't catch it, and don't "
+                  # (say_nothing)
+                  'answer each line (say_nothing). Listen. While they work through ideas together, you '
+                  "may keep their thinking in view on the call's page (draw_picture, again as it grows), and speak up "
+                  'when you have something worth saying: an idea of your own, two of theirs that fit together, or '
+                  "a prototype of one (prototype), then a word that it's on their iPads."]
+        if not voiced:
+            return f"({' '.join(words)})"
         if known:
             words.append(f"Recognised by their saved voices: {'; '.join(f'{was or taken} is {name}' for was, name in known)}.")
         if first in self.names and self.names.index(first) not in self.sure:

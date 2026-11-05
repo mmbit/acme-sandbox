@@ -111,7 +111,8 @@ ${TOKEN_ESTIMATE_GUIDANCE}`,
 const past = ({ finish, at: by }: NonNullable<Answer['by']>) =>
   finish === null ? 'with no finish in sight before' : `${duration((finish - by) / 60_000)} past`;
 
-// The time to tell the board, never the "done about" above: that's as likely late as early
+// The time to tell the board, never the "done about" above: that's as likely late as early. Its one time, never an
+// "at the latest" beside another (board, call 256).
 // None while the slow play doesn't finish it within the horizon.
 const safeLines = ({ safe, horizon_days }: Answer) =>
   safe === null
@@ -120,8 +121,9 @@ const safeLines = ({ safe, horizon_days }: Answer) =>
           'Give it no time from this, never a "done about".',
       ]
     : [
-        `The time to tell the board: live by ${at(safe)}, four times in five. ` +
-          'Any time it hears is this one, never a "done about"; a window you set for it is ours to plan with.',
+        `The time to tell the board: live ${at(safe)}, four times in five. ` +
+          'It is the one time it hears: never a "done about" or a later "at the latest" beside it, nor a margin of ' +
+          'your own; a window you set for it is ours to plan with.',
       ];
 
 function sizeLine({ work, size }: Answer) {

@@ -490,7 +490,8 @@ test("a page's picture asked for while a key's scrub is under way is drawn and k
   await scrubbed();
   const stamp = setting('scrubbed')!;
   assert.notEqual(stamp, before, 'the pass is done');
-  assert.match(kept(), new RegExp(`^${page}-x[^]*-${stamp.slice(0, 6)}-[0-9a-f]{8}\\.png$`), "the pass's stamp");
+  // (y: bookpicture.ts DRAWING.)
+  assert.match(kept(), new RegExp(`^${page}-y[^]*-${stamp.slice(0, 6)}-[0-9a-f]{8}\\.png$`), "the pass's stamp");
   const file = kept();
   assert.ok(drawn.equals(await picture()) && kept() === file, 'kept after the pass: not drawn again');
   // the same page drawn afresh now, from its masked words

@@ -22,8 +22,8 @@
 //                                                          today's; one made from others, theirs as recorded. Look at the render first: it must show today's prices
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ROOT, SIDE, inputsOf, tracked } from './renders.mjs';
+import { pathToFileURL } from 'node:url';
+import { ROOT, SIDE, inputsOf, tracked, usage } from './renders.mjs';
 
 const SETTING = join(ROOT, 'company/prices.json');
 const setting = () => (existsSync(SETTING) ? JSON.parse(readFileSync(SETTING, 'utf8')) : {});
@@ -152,17 +152,12 @@ async function main(argv) {
   } else if (cmd === 'note')
     for (const file of paths) await note(file, opt('--from'), opt('--lang'), keysOf(opt('--prices')));
   else {
-    console.error(
-      readFileSync(fileURLToPath(import.meta.url), 'utf8')
-        .split('\nimport')[0]
-        .replace(/^#!.*\n/, '')
-        .replace(/^\/\/ ?/gm, ''),
-    );
+    console.error(usage(import.meta.url));
     process.exitCode = 1;
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+if (import.meta.main)
   await main(process.argv.slice(2)).catch(e => {
     console.error(e.message);
     process.exitCode = 1;

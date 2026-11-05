@@ -5,7 +5,7 @@ import { LAND_MS, land } from './bookpaper.js';
 import { thingsPicture } from './bookpaperdraw.js';
 import { boundsOf } from './bookselectmath.js';
 import { keyOf, landing } from './bookgroupmath.js';
-import { bringIntoSight } from './bookgroupshow.js';
+import { bringIntoSight, spotInSight } from './bookgroupshow.js';
 import { isCanvas } from './sketchcanvas.js';
 import { picture } from '../../util.js';
 
@@ -49,6 +49,7 @@ export function arrive(book, view, els, { show = false } = {}) {
     groups.set(el.g, [...(groups.get(el.g) ?? []), el]);
   }
   const all = () => [...groups.values()].forEach((group, i) => landGroup(book, view, group, i * STAGGER_MS));
+  if (show && isCanvas(page) && book.views[book.cur] === view) placeInSight(view, [...groups.keys()]);
   view.redraw(); // (held off the tiles and their words' boxes hidden, in the same task they were drawn in)
   showWords(view);
   // (their words and answers unseen while the paper slides: bookgroupshow.js bringIntoSight; a hand that stops it on
@@ -68,13 +69,28 @@ export function arrive(book, view, els, { show = false } = {}) {
   if (!(show && idle() && book.views[book.cur] === view && bringIntoSight(view, last, landed, there))) landed();
 }
 
+// What an agent puts on a canvas the board is looking at, with no place yet: pinned in clear paper in sight, or as near
+// it as there is (bookgroupshow.js spotInSight), laid there before it's drawn, so it lands where the board looks and no
+// lay after moves it. The store keeps the pin like any other (booksave.js pinUnits: the first screen's place stands).
+function placeInSight(view, ids) {
+  const page = view.page;
+  // (laid again after each, so the next keeps clear of it)
+  for (const id of ids) {
+    const p = page.places?.find(q => q.id === id);
+    if (!p || page.groups?.get(id)?.place) continue;
+    (page.pins ??= new Map()).set(id, spotInSight(view, id, p.w, p.h + (p.hung?.h ?? 0)));
+    view.place();
+  }
+}
+
 // A face or an answer an agent hangs by a note on a view's sketch page, just drawn (bookgroups.js): on a page the board
 // has left idle, the paper slid to the note with it, as to what lands on one: hung beside its note, it's often past the
 // paper's edge. What hangs under each group is kept on the view to tell what's come since
 export function hung(book, view) {
   const was = view.hanging;
   view.hanging = new Map([...(view.page.groups?.values() ?? [])].map(g => [g.id, hangingOf(g)]));
-  if (!was || !isCanvas(view.page.chapter) || !idle() || book.views[book.cur] !== view) return;
+  // (isCanvas takes the page)
+  if (!was || !isCanvas(view.page) || !idle() || book.views[book.cur] !== view) return;
   const come = [...view.hanging].filter(
     ([id, now]) => (now.waiting && !was.get(id)?.waiting) || now.answers > (was.get(id)?.answers ?? 0),
   );

@@ -138,12 +138,13 @@ function outlookWords(o: Outlook | null, thread: string, said = threadWait) {
 }
 
 // The time to tell the board: live four times in five (forecast.ts safe), never the planned finish, which is as likely
-// late as early; none while the slow play doesn't finish it within the horizon.
+// late as early; none while the slow play doesn't finish it within the horizon. The one time, never an "at the latest"
+// beside the ETA (board, call 256).
 function safeWords(o: Outlook) {
   if (o.eta === null) return '';
   return o.safe === null
     ? "; no time to tell the board: nothing finishes it four times in five within the forecast's horizon"
-    : `; the time to tell the board: live by ${at(o.safe)}, four times in five`;
+    : `; the one time to tell the board: live ${at(o.safe)}, four times in five, never the ETA beside it`;
 }
 
 // Its planned finish against its window: by how much it misses the deadline, or what it gives of its aim and the slack

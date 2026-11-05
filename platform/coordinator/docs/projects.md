@@ -463,5 +463,8 @@ Urgency goes on the whole milestone the board names. A hold or pause meant for t
 A flag set piece by piece misses work filed under the milestone later, and that work then waits on pacing.
 Work that must stay out of a milestone's urgency keeps a pause of its own or moves to its own milestone.
 A pause holds urgent work, but expedited work bypasses it. Never pick the pieces by hand.
+The plan gives expedited work the finish it gets live: its work, which ends with its push's checks, then the deploy.
+Its review follows the merge, so no round stands before it. A push that went to review instead (its checks failed,
+or it changes its own checks or what HQ shows the board) has its round before its merge, as any other.
 
 The flag stays on the existing work tables as the hierarchy names migrate.

@@ -1,19 +1,5 @@
 #!/usr/bin/env node
-// node shared/demo/ad.mjs scene.html [--out ad.mp4] [--duration 20] [--fps 30] [--audio track.wav]
-//   [--audio-start 0] [--bpm 120] [--offset 0] [--label "Made with AI"] [--label-pos top-left]
-//   [--label-inset 280,72] [--workers 3] [--square <css background> | --no-square] [--only vertical|square]
-//   [--lang nl] [--no-social]
-// Renders a 9:16 scene page (window.frame(t)) at 1080x1920 and muxes the track, then the same scene again as a
-// 1080x1080 square film beside it (<out>-square.mp4, for the product page), with its data-social elements hidden.
-// Settings can also live in the scene as
-// <script type="application/json" id="demo">{"out":"../ads/x.mp4","duration":8,"audio":"x.wav"}</script>
-// (paths relative to the scene); flags win.
-// --lang films one language of a scene that has several: the scene reads demo.data.lang, and the films are
-// <out>.<lang>.mp4 and <out>-square.<lang>.mp4.
-// --no-social hides the vertical film's data-social elements too (a "link in bio"), as the square one does: the film for a
-// paid ad, whose platform puts its own button under it.
-// "prices": ["key", ...] in the settings (or --prices a,b): the prices the scene shows, today's in its language, as
-// demo.price(key), each film's .render.json noting them (prices.mjs).
+// Renders an HTML scene into a 9:16 ad film and a square one beside it (README.md, "ad.mjs: the scene contract")
 import { resolve, dirname } from 'node:path';
 import { args, render, inlineConfig, beatsFor, urlPath, probe } from './core.mjs';
 import { keysOf } from './prices.mjs';

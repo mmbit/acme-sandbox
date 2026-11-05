@@ -1,9 +1,10 @@
 // The roof at dusk: the town's skyline beyond the parapet, the water tower, and two people at a telescope looking for
 // the first star. Light the sky with a time of day instead of a window.
-export default (g, { C, fg, roof, waterTower, telescope, star, bird, person, shadow }) => {
+export default (g, { fg, roof, waterTower, telescope, star, bird, person, shadow }) => {
   roof(g, { time: 'dusk', seed: 'dusk' });
   star(g, 104, 8);
-  bird(g, 30, 10); bird(g, 38, 14);
+  bird(g, 30, 10);
+  bird(g, 38, 14);
   shadow(g, 18, 62, 10);
   fg(g, g => waterTower(g, 10, 62));
   shadow(g, 76, 63, 8);

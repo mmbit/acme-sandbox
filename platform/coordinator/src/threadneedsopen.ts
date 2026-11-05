@@ -1,7 +1,6 @@
 // A thread's needs still open: each thread it needs whose work is still to merge, with its last task to merge, as the
 // claim and the play read them (threadorder.ts reader).
-// (its messages say deliverable, the board's word for a thread) (split from
-// threadorder.ts)
+// (its messages say deliverable, the board's word for a thread)
 import { db, mergePending, prepared } from './db.ts';
 import { findThread, needsOf } from './projects.ts';
 import * as jobs from './jobs.ts';

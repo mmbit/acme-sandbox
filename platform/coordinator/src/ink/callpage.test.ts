@@ -424,6 +424,26 @@ test(
   },
   async () => {
     const { call, page } = await callPage();
+    const cornerOf = async (g: { pictures: { url: string }[] }) => {
+      const file = decodeURIComponent(/file=([^&]+)/.exec(g.pictures[0].url)![1]);
+      const at = sharp(readFileSync(`${h.dataDir}/book/${file}`)).ensureAlpha();
+      return [...(await at.extract({ left: 2, top: 2, width: 1, height: 1 }).raw().toBuffer())];
+    };
+    // (the platform's plain look: its lines on a clear ground, straight on the post-it; the agent sees them there.
+    const plain = said(
+      await h.voice('drawing', { call, svg: '<svg viewBox="0 0 640 320"><circle cx="320" cy="160" r="90"/></svg>' }),
+    );
+    const lines = (await groups(page)).at(-1);
+    assert.equal(lines.pictures[0].drawing, true, "an agent's drawing, marked so the page shows no tape or edge");
+    assert.equal((await cornerOf(lines))[3], 0, 'no ground of its own');
+    const onPostit = await sharp(Buffer.from(plain.picture.data, 'base64'))
+      .extract({ left: 2, top: 2, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+    assert.ok(
+      [0xfd, 0xf1, 0xa9].every((v, i) => Math.abs(onPostit[i] - v) < 6),
+      `the agent sees it on the post-it's yellow: ${[...onPostit]}`,
+    );
     mkdirSync(`${h.repo}/kits/look`, { recursive: true });
     writeFileSync(`${h.repo}/kits/look/drawing.css`, 'main { background: #00ff00; }');
     appendFileSync(`${h.repo}/theme/hq.yaml`, 'drawing: kits/look/drawing.css\n');
@@ -436,12 +456,7 @@ test(
     assert.deepEqual([drawn.picture.type, seen.width], ['image/jpeg', 640], 'the agent sees it at half its size');
     const g = (await groups(page)).at(-1);
     assert.deepEqual([g.id, g.kind, g.by, g.words ?? ''], [drawn.id, 'scrap', 'juno', ''], 'a picture of its own');
-    const file = decodeURIComponent(/file=([^&]+)/.exec(g.pictures[0].url)![1]);
-    const corner = await sharp(readFileSync(`${h.dataDir}/book/${file}`))
-      .extract({ left: 2, top: 2, width: 1, height: 1 })
-      .raw()
-      .toBuffer();
-    assert.deepEqual([...corner.subarray(0, 3)], [0, 255, 0], "the company's ground, untouched by the script");
+    assert.deepEqual((await cornerOf(g)).slice(0, 3), [0, 255, 0], "the company's ground, untouched by the script");
     for (const notOne of ['a box and an arrow', '<svg viewBox="0 0 640 320"></svg>'])
       assert.equal((await h.voice('drawing', { call, svg: notOne })).status, 400, notOne);
   },

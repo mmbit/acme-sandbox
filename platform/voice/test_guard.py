@@ -319,9 +319,20 @@ class HqTools(unittest.TestCase):
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
                                                                                 'ask_to_see', 'draw', 'open_work', 'drive', 'write_down', 'title_notes',
                                                                                 'read_notes', 'mark_notes', 'change_note', 'try',
-                                                                                'draw_picture', 'name_voice',
-                                                                                'save_voice', 'forget_voice'])
+                                                                                'draw_picture', 'prototype', 'name_voice',
+                                                                                'save_voice', 'forget_voice', 'design_session',
+                                                                                'raise_hand', 'say_nothing'])
         self.assertTrue(out[1]['result']['isError'])
+
+    def test_say_nothing_runs_nothing_and_asks_for_no_words(self):
+        """say_nothing (the line reads it from the stream): its answer, and nothing about speaking aloud after it."""
+        import hq_tools
+        with tempfile.TemporaryDirectory() as d:
+            env = {**fake_hq(d), 'HQ_URL': 'http://127.0.0.1:9'}
+            out = self.call(('say_nothing', {}), env=env)
+            self.assertFalse(Path(d, 'hq.log').exists())
+        self.assertEqual(out[1]['result'], {'content': [{'type': 'text', 'text': hq_tools.SAY_NOTHING_ANSWER}],
+                                            'isError': False})
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
         import hq_tools
@@ -397,6 +408,46 @@ class HqTools(unittest.TestCase):
         self.assertEqual(asked, [{'sketch': '#12', 'key': 'key-1'}, {'sketch': 'mug lid', 'key': 'key-1'}])
         self.assertTrue(json.loads(partner.stdout)['result']['isError'], 'no sketches for a partner')
         self.assertIn("can't be shown on this call", none[1]['result']['content'][0]['text'])
+
+    def test_the_prototype_tool_asks_the_voice_line_and_shows_the_agent_its_picture(self):
+        """On the board's call: the line's answer as MCP content (the prototype's picture and its line, or its
+        refusal); a prototype of another shape never reaches the line, and a
+        call without the line's socket (the phone) says so."""
+        import hq_tools
+        picture = {'type': 'image/jpeg', 'data': '/9j/4AAQ'}
+        line = "Mug colour slider v2 is on the call's page and both iPads. (This call is #7: ...)"
+        path, asked = line_socket(self, [{'line': line, 'picture': picture}, {'error': "There's no live call #7."}])
+        page = '<!doctype html><title>Mug</title><input type="range">'
+        with tempfile.TemporaryDirectory() as d:
+            env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
+            out = self.call(('prototype', {'name': 'Mug colour  slider', 'html': f'\n{page}\n', 'about': 'Bigger handle'}),
+                            ('prototype', {'name': 'Mug colour slider', 'html': page}),
+                            ('prototype', {'name': 'Mug', 'html': 'a slider'}), ('prototype', {'html': page}),
+                            ('prototype', {'name': 'x' * 61, 'html': page}), ('prototype', {'name': 'Mug', 'html': page, 'about': 'a\nb' * 80}),
+                            ('prototype', {'name': 'Mug', 'html': page, 'files': {}}), env=env)
+            phone = self.call(('prototype', {'name': 'Mug', 'html': page}), env=self.env(d, 'http://127.0.0.1:9'))
+            self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
+        replies = [(r['result']['isError'], r['result']['content']) for r in out[1:]]
+        self.assertEqual(replies[:2], [(False, [{'type': 'image', 'data': '/9j/4AAQ', 'mimeType': 'image/jpeg'}, {'type': 'text', 'text': line}]),
+                                       (True, [{'type': 'text', 'text': "There's no live call #7."}])])
+        self.assertEqual(replies[2:], [(True, [{'type': 'text', 'text': hq_tools.PROTOTYPE_WORDS['shape']}])] * 5)
+        self.assertEqual(asked, [{'prototype': {'name': 'Mug colour slider', 'html': page, 'about': 'Bigger handle'}, 'key': 'key-1'},
+                                 {'prototype': {'name': 'Mug colour slider', 'html': page}, 'key': 'key-1'}])
+        self.assertEqual(phone[1]['result']['content'][0]['text'], hq_tools.PROTOTYPE_WORDS['none'])
+
+    def test_a_prototype_from_a_brief_asks_the_voice_line_in_words(self):
+        """A brief (built in the background, the line's Call.build): the line's word that the builder has it; a brief
+        beside a page, or not words, never reaches the line."""
+        import hq_tools
+        path, asked = line_socket(self, [{'ok': 'The builder has it.'}])
+        with tempfile.TemporaryDirectory() as d:
+            env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
+            out = self.call(('prototype', {'name': 'Kattengotchi', 'brief': 'A cat to feed.'}),
+                            ('prototype', {'name': 'Kattengotchi', 'brief': 'A cat.', 'html': '<!doctype html>'}),
+                            ('prototype', {'name': 'Kattengotchi', 'brief': 5}), env=env)
+        replies = [(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]]
+        self.assertEqual(replies, [(False, 'The builder has it.'), *[(True, hq_tools.BUILD_TOOL_WORDS['shape'])] * 2])
+        self.assertEqual(asked, [{'prototype': {'name': 'Kattengotchi', 'brief': 'A cat to feed.'}, 'key': 'key-1'}])
 
     def test_ask_to_see_and_draw_ask_the_voice_line_in_words_only_on_the_boards_call(self):
         """ On the board's call: the line's answer in words (what it did, or its
@@ -494,7 +545,7 @@ class HqTools(unittest.TestCase):
         for reply in out[1:5]:
             words = '\n'.join(part['text'] for part in reply['result']['content'])
             self.assertIn('Never say one aloud', words)
-            self.assertIn('tell the board what the work is and whose it is', words)
+            self.assertIn('tell the board what the work is.', words)
         goodbye = '\n'.join(part['text'] for part in out[5]['result']['content'])
         self.assertNotIn('Never say one aloud', goodbye)
 

@@ -51,7 +51,7 @@ import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in 
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
-import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
+import { openAt, coversViewer, foldBook } from './ink/book.js';   // (review mode's Open the book: bookAt; a prototype opened whole: openViewer.)
 import * as notebook from './ink/notebooklink.js';
 import { mountMarks, shareMarks } from './ink/viewmarks.js';
 import { mountStage } from './viewer.js';   // (the viewer's frames)
@@ -59,6 +59,7 @@ import { mountPin, pinOn, setPin, tellPin } from './pinsetting.js';   // (Settin
 import { callMarksOn, setCallMarks } from './ink/bookcallmarks.js';   // (Settings › Call marks in the Notebook.)
 import { mountTips } from './booktips.js';   // (the tips book)
 import { previewsOn } from './previews.js';
+import { prototypeCard } from './ink/bookprototype.js';
 import { frameMic, helloFrom, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page; helloFrom)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
 import { voiceSettings, voicesSummary } from './voices.js';
@@ -175,6 +176,14 @@ export const PREVIEW = previews.page;   // (exported for calldrive.js)
 // and hears from, and no other page the frame may have gone on to.
 export const viewerOrigin = () => viewing?.review ?? null;
 export const viewerUrl = () => viewing?.url ?? null;   // (the page the viewer opened: calldrive.js.)
+// The board's mark on a call's prototype, as a scrap on the call's page (the coordinator's callprototypes.ts): its id,
+// or why not.
+async function markOnCall(url, { anchor, snip }) {
+  const r = await fetch('/api/calls/prototype-mark', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, anchor, snip }) });
+  const answer = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(answer.error ?? 'Could not reach the call.');
+  return answer.id;
+}
 export const openLink = url => PREVIEW.test(url) ? openViewer(url) : window.open(url, '_blank', 'noopener');
 const PIN = icon('pin');
 // A preview in a frame of its own origin: it can't reach HQ's page, and it can't navigate HQ away. Both the
@@ -210,6 +219,7 @@ async function openViewer(url, back = null) {
   if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true, 'viewer'); coverPin(true); }   // (cover)
   // (the stage: live beside it, device sizes, the notebook over or beside, the QR.)
   staged?.close(); staged = mountStage(v, url);
+  if (previews.prototype.test(new URL(url).origin) && coversViewer()) foldBook();   // (a call's prototype opens whole: a book lying over the frames put away, the call's page a pull tab away.)
   const frame = stagingFrame(), out = v.querySelector('.bar .where');
   v.querySelector('[data-close]').onclick = () => { staged?.close(); staged = null; stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; delete v.dataset.ground; hush(false); cover(false, 'viewer'); coverPin(false); };
   v.querySelector('[data-back]')?.addEventListener('click', () => openViewer(back));
@@ -269,7 +279,7 @@ function followCall() {
   const set = on => {
     calling = on; paintPin();
     const frame = stagingFrame();
-    if (viewing?.review && frame) frame.contentWindow.postMessage({ hq: 'hq', call: on }, viewing.review);
+    if (viewing?.review && frame) frame.contentWindow.postMessage({ hq: 'hq', call: on || previews.prototype.test(viewing.review) }, viewing.review);
   };
   document.addEventListener('call:on', () => set(true));
   document.addEventListener('call:off', () => set(false));
@@ -278,6 +288,8 @@ function followCall() {
     const frame = stagingFrame();
     if (viewing?.review && frame && Number.isInteger(e.detail?.note)) frame.contentWindow.postMessage({ hq: 'hq', had: e.detail.note }, viewing.review);
   });
+  // (a call's prototype saved: its card, which opens it in the viewer.)
+  document.addEventListener('call:prototype', e => prototypeCard(e.detail, openLink));
 }
 // The review tool (shared/review) on HQ's own screens, for the board's notes on HQ itself, loaded once at start: the
 // coordinator serves the real one only behind the board's sign-in (feedback.ts).
@@ -454,7 +466,7 @@ function fromViewer(e) {
   const old = d.hq === undefined && d.onlyonery === 'deck', tag = old ? 'deck' : d.hq;
   if (tag === 'review') {
     // (told on the document too, for an ask's spot waiting to flash there: ink/bookaskspot.js.)
-    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq', call: calling }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); document.dispatchEvent(new CustomEvent('viewer:review', { detail: { url: me.url } })); }   // (heard; helloFrom)
+    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq', call: calling || previews.prototype.test(e.origin) }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); document.dispatchEvent(new CustomEvent('viewer:review', { detail: { url: me.url } })); }   // (heard; helloFrom)
     else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
     // (its post-it open: HQ's own mic key over the post-it's, the frame having no microphone, and only its tap records;
     // the offer's line, e.ports, carries the rest: framemic.js.)
@@ -467,7 +479,10 @@ function fromViewer(e) {
     else if (d.callMark && Number.isInteger(d.callMark.id) && me.review === e.origin) {
       const to = e.source, from = e.origin, id = d.callMark.id;
       const answer = a => to.postMessage({ hq: 'hq', callMark: { id, ...a } }, from);
-      if (!calling) answer({ failed: 'The call had ended.' });
+      // (a call's prototype on a screen that isn't the call's, the board's iPad: on the call's page all the same, its ink
+      // gone once it's there.)
+      if (!calling && previews.prototype.test(from)) markOnCall(me.url, d.callMark).then(note => { answer({ note }); to.postMessage({ hq: 'hq', had: note }, from); }, err => answer({ failed: err.message }));
+      else if (!calling) answer({ failed: 'The call had ended.' });
       else document.dispatchEvent(new CustomEvent('call:mark', { detail: { anchor: d.callMark.anchor, snip: typeof d.callMark.snip === 'string' ? d.callMark.snip : null, ago: Number(d.callMark.ago) || 0, answer } }));
     }
     else if (d.marks && typeof d.marks === 'object') shareMarks(d.marks, e.origin);
@@ -1944,6 +1959,7 @@ function clipsHtml(body) {
 // field for review: nothing goes to the CEO until the board taps Send.
 const HOLD_MS = 350, TITLE_MAX = 140;
 const PHONE = icon('phone');
+const DESIGN = icon('design'); // (a pencil with a spark)
 const SEND = icon('send');
 const DOWNLOAD = icon('download');
 const TICK = icon('tick');
@@ -1985,7 +2001,7 @@ export function openIntercom() {
         <button class="mic attach" id="dir-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button>
         <input type="file" id="dir-file" accept="image/*" multiple hidden>
         <button class="send" id="dir-send">Send</button>
-        ${window.AudioWorkletNode && window.isSecureContext ? `<button class="mic call-btn" id="call" title="Call ${ceo}: talk hands-free" aria-label="Call ${ceo}">${PHONE}</button>` : ''}
+        ${window.AudioWorkletNode && window.isSecureContext ? `<button class="mic call-btn" id="call" title="Call ${ceo}: talk hands-free" aria-label="Call ${ceo}">${PHONE}</button><button class="mic call-btn" id="design-call" title="Start a design session with ${ceo}" aria-label="Start a design session with ${ceo}">${DESIGN}</button>` : ''}<!-- (a design session: a call on a sketch page, call.js.) -->
       </div>
       <p class="msg" id="dir-msg" aria-live="polite"></p>
     </div>`)) return;
@@ -2042,6 +2058,7 @@ export function openIntercom() {
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
   // (the call closes the intercom)
   $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName()));
+  $('#design-call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), { design: true }));
   // (a first load that fails says so under the input while the loader stays, and the next poll tries again; a later one
   // keeps what's shown)
   let failed = false;

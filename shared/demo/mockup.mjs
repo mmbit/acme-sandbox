@@ -193,7 +193,7 @@ async function render(c) {
 
   // size a product so its bounding box fits a share of the stage
   const fit = (maxW, maxH) => { const k = Math.min(maxW / w, maxH / h); return [w * k, h * k, k]; };
-  const port = H > W * 1.1, cx = W / 2, isWall = scene === 'wall' || scene === 'studio' || scene === 'none';
+  const port = H > W * 1.1, cx = W / 2;
   const mode = c.cat;
 
   if (mode === 'poster' || mode === 'canvas' || mode === 'calendar') {

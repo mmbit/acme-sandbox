@@ -1,0 +1,51 @@
+/* A call's prototype's card (bookprototype.js): its picture beside its name, dropping in at the top edge, in the top
+   layer. */
+.bk-proto-card {
+  all: unset;
+  position: fixed;
+  inset: calc(16px + var(--sat, 0px)) 0 auto;
+  margin: 0 auto;
+  box-sizing: border-box;
+  width: min(92vw, 380px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px 8px 8px;
+  border-radius: 14px;
+  border: 1px solid rgb(0 0 0 / 0.12);
+  background: #fffdf8;
+  color: #23202b;
+  font:
+    16px/1.4 system-ui,
+    sans-serif;
+  box-shadow: 0 6px 24px rgb(20 28 45 / 0.18);
+  cursor: pointer;
+  animation: bk-proto-drop 0.35s ease-out;
+  transition: opacity 0.4s;
+}
+.bk-proto-card.gone {
+  opacity: 0;
+}
+.bk-proto-card img {
+  width: 96px;
+  aspect-ratio: 1180 / 820;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 8px;
+  border: 1px solid rgb(0 0 0 / 0.1);
+  background: #fff;
+}
+.bk-proto-v {
+  opacity: 0.65;
+}
+@keyframes bk-proto-drop {
+  from {
+    transform: translateY(-24px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-proto-card {
+    animation: none;
+  }
+}

@@ -390,6 +390,7 @@ const notebookOf = (s, n) => ({
 const pageOf = (s, p) => ({
   ...{ id: p.id, notebook: p.notebook, kind: p.kind, title: p.label, archived: !!p.archived, zooms: { ...p.zooms } },
   ...{ chapter: chapterOf(p.kind, s.notebook(p.notebook)?.kind), ...(p.guest && { guest: p.guest }) },
+  ...(p.sketch && { sketch: true }), // (a design session's call page)
   ...(p.kind === 'call'
     ? { sending: false, sent: p.followed ? new Date(p.followed).toISOString() : null, readonly: s.shut(p) }
     : { sending: p.send_at !== null && !s.gone(p), sent: s.gone(p) ? new Date(p.send_at).toISOString() : null }),

@@ -396,3 +396,29 @@ test('one ruling with several fix titles occupies one job in the play before its
   await h.finish(running);
   cancelOpenWork();
 });
+
+test('expedited work merges on its checks: no round before it goes live unless its push went to review', async () => {
+  await h.capacity({ claude: 1, codex: 1 });
+  const cancelOpenWork = scenarioCleanup(h.db);
+  const expedited = h.queue({ agent: 'bolt', engine: 'claude', expedite: true });
+  const after = h.queue({ agent: 'kit', engine: 'codex', after: expedited });
+  const queued = forecast(0, [expedited, after]);
+  assert.equal(queued.seen.get(expedited)!.merged, queued.input.now + MINUTE, 'its work, then its merge: no review');
+  assert.equal(queued.seen.get(after)!.start, queued.seen.get(expedited)!.merged);
+  cancelOpenWork();
+  // Merged on its checks, its pull request stays open for the review that follows: live already.
+  const merged = h.ended({ agent: 'bolt', engine: 'claude', expedite: true });
+  h.storedPr(993, merged, 'open', [], { round: 1 });
+  h.db.prepare('update prs set expedited = 1 where number = 993').run();
+  h.queue({ agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 993, round: 1, stage: 'triage' });
+  const live = forecast(993);
+  assert.ok(live.seen.get(merged)!.merged! <= live.input.now, 'merged already');
+  cancelOpenWork();
+  // Its push didn't merge on them (its checks failed): its round stands before its merge, as any other's.
+  const reviewed = h.ended({ agent: 'bolt', engine: 'claude', expedite: true });
+  h.storedPr(994, reviewed, 'open', [], { round: 1 });
+  h.queue({ agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 994, round: 1, stage: 'ruling' });
+  const held = forecast(994);
+  assert.equal(held.seen.get(reviewed)!.merged, held.input.now + MINUTE, 'after its ruling');
+  cancelOpenWork();
+});

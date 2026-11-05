@@ -1,7 +1,9 @@
 // The page's controls on the bar along the book's foot (bookui.js lays the bar out).
 // - In its middle: the page before, where the page is in its chapter ("3 / 12") and the page after. "3 / 12" opens the
 //   notebook's pages by name.
-// - At its right: the overview and New page. Where the page is narrow they fold into the dots menu.
+// - At its left the overview (on a page only: the overview shows all the pages already, a page opens by its tile), at
+//   its right the dots. New page folds into the dots menu. Undo and Redo are a pill of their own left of the bar
+//   (bookui.js).
 // - The dots menu: Rename page (its title written where it shows, booktitle.js), Tear off and send (booktear.js) and
 //   Archive this page (into the overview's archived pages, bookshelf.js). Then Preferences for this device
 //   (bookprefs.js).
@@ -9,7 +11,7 @@
 // tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: the tools go, Undo and Redo with
 // them, and on a sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
 // person's page goes by its Send key on the bar (bookpagesend.js), never on a page already sent or a call's notes page.
-import { button, island, setPressed, beside, moreKey } from './bookui.js';
+import { button, island, beside, moreKey } from './bookui.js';
 import { icon } from '../icons.js';
 import { mountPrefs } from './bookprefs.js';
 import { esc } from '../../util.js';
@@ -28,7 +30,6 @@ export function mountControls(book, act) {
       icon: icon('grid'),
       label: word('allPages'),
       onClick: () => act.overview(),
-      pressed: false,
     }),
     cog = button({ icon: icon('app-settings'), label: word('preferences') });
   over.classList.add('bk-overview-key');
@@ -51,8 +52,6 @@ export function mountControls(book, act) {
     update() {
       const far = act.level() !== 'page',
         page = book.views[book.cur]?.page;
-      // (the overview open: only its own key, pressed, to come back by: bookstrip.css)
-      setPressed(over, far);
       const still = !far && !!page && shut(page);
       if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
       locked?.(still && page);
@@ -84,7 +83,8 @@ function historyKeys(book, page, still) {
 // page shown, a sent page keeping the title it went with, and the title being written going when its page does, a save
 // still out landing on its page alone.
 function renameKey(book) {
-  const key = button({ icon: icon('edit'), label: word('renamePage'), onClick: () => renamed(book) });
+  // (its title's words: the text tool's T, the Ink README, The book's icons.)
+  const key = button({ icon: icon('tool-text'), label: word('renamePage'), onClick: () => renamed(book) });
   key.classList.add('bk-rename');
   island('menu').prepend(key);
   return (far, page) => {
@@ -110,8 +110,8 @@ function named(name, page, at, n) {
 // dots menu, bookstrip.css)
 function pageButtons(book, act) {
   const name = button({ label: word('notebookPages'), onClick: () => menu(book, act, name) }),
-    before = button({ icon: icon('prev'), label: word('pageBefore'), onClick: () => turnOn(book, act, -1) }),
-    after = button({ icon: icon('next'), label: word('pageAfter'), onClick: () => turnOn(book, act, 1) }),
+    before = arrowKey(word('pageBefore'), icon('prev'), () => turnOn(book, act, -1)),
+    after = arrowKey(word('pageAfter'), icon('next'), () => turnOn(book, act, 1)),
     add = button({
       icon: icon('page-new'),
       label: word('newPage'),
@@ -122,6 +122,39 @@ function pageButtons(book, act) {
   name.setAttribute('aria-haspopup', 'menu');
   add.classList.add('bk-rare');
   return { before, after, name, add };
+}
+// An arrow: a finger's or a pen's tap turns as it lifts on the arrow, not waiting on the click Safari makes of it (on
+// the iPad it makes none for a tap it takes as part of a gesture, quick taps above all). A click within TAP_CLICK_MS of
+// a tap's turn is that tap's: Safari's, or the iPad app's replayed Pencil tap, whose click() has no detail
+// (booknative.js); a mouse's or a key's is its own. A tap during a turn turns on from the page it's turning to (book.cur
+// is that page at once: bookpages.js).
+// (A second: Safari's click can come late behind a turn's frames, and a long window costs nothing, since every tap
+// acts on its own lift and only a mouse's click within a second of a finger's tap would go. The tools' slide drops its
+// lift's click within 60 ms instead, bookstrip.js noClick(): there a tap acts by its click, so only the click that
+// comes with the lift itself may go.)
+const TAP_CLICK_MS = 1000;
+function arrowKey(label, svg, go) {
+  const b = button({ icon: svg, label });
+  let pressing = null,
+    turnedAt = -Infinity;
+  b.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' && e.isPrimary) pressing = e.pointerId;
+  });
+  b.addEventListener('pointercancel', () => (pressing = null));
+  b.addEventListener('pointerup', e => {
+    if (e.pointerId !== pressing) return;
+    pressing = null;
+    const r = b.getBoundingClientRect(),
+      onArrow = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!onArrow || b.disabled) return;
+    turnedAt = e.timeStamp;
+    go();
+  });
+  b.addEventListener('click', e => {
+    if (e.timeStamp - turnedAt < TAP_CLICK_MS) return;
+    go();
+  });
+  return b;
 }
 // The page before or after in the shown page's chapter (its index in book.views, -1 at the chapter's end): the arrows
 // stay within the tab, never turning on into the next one

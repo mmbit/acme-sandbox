@@ -14,6 +14,7 @@ import { wetDry, STILL } from '../../shared/review/inkcheck.mjs';
 // (the stories in a folder of their own)
 import { callStory } from './book/call.mjs';
 import { notesPageStories } from './book/notespage.mjs';
+import { notesDrawnStories } from './book/notesdrawn.mjs';
 import { notesScrapsStories } from './book/notesscraps.mjs';
 import { inkStaysStories } from './book/inkstays.mjs';
 import { flickStories } from './book/flick.mjs';
@@ -114,6 +115,7 @@ import { callSizesStories } from './book/callsizes.mjs';
 import { overlayStories, mediaStories } from './book/overlays.mjs';
 import { penOwnedStories } from './book/penowned.mjs';
 import { pictureStories } from './book/picture.mjs';
+import { shelfCallStories } from './book/shelfcall.mjs';
 import { messageStories } from './book/messages.mjs';
 import { callKeyStories } from './book/callkeys.mjs';
 import { bubbleDropStories } from './book/bubbledrop.mjs';
@@ -663,6 +665,8 @@ function STORIES() {
     }),
     // (a call's notes page: the agent's scraps landing on it, the book opening there where it fits.)
     ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
+    // (how an agent's notes look there: its drawing on its post-it, notes apart.)
+    ...notesDrawnStories({ hqIn, base, shot, settled, noErrorsIn, PHONE }),
     ...notesScrapsStories({ hqIn, base, shot, settled, noErrorsIn }),
     ...inkStaysStories({ hqIn, base, shot, settled, noErrorsIn }),
     // (a flick always glides on, from paper and from a scrap's words)
@@ -681,6 +685,7 @@ function STORIES() {
     ...penOwnedStories({ hqIn, base, shot, settled, noErrorsIn }),
     ...messageStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...pictureStories({ hqIn, base, shot, noErrorsIn, shots }),
+    ...shelfCallStories({ hqIn, base, shot, noErrorsIn, shots }),
     ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     ...noteRewordStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)

@@ -93,7 +93,8 @@ export function picturesOf(v, ours) {
     const sides = within(c.w, SCRAP_SIDE) && within(c.h, SCRAP_SIDE);
     if (!within(c.x, SCRAP_XY) || !within(c.y, SCRAP_XY) || !sides || !within(c.tilt, { min: -TILT, max: TILT }))
       refuse(400, 'a picture on the page is { file, x, y, w, h, tilt }, within the page and a half turn');
-    return { file: c.file, x: round(c.x), y: round(c.y), w: round(c.w), h: round(c.h), tilt: round(c.tilt) };
+    const place = { x: round(c.x), y: round(c.y), w: round(c.w), h: round(c.h), tilt: round(c.tilt) };
+    return { file: c.file, ...place, ...(c.drawing === true && { drawing: true }) };
   });
 }
 // A reply's frame, as notebooksend.ts replyTo refuses one sent unfit (none sent: null).

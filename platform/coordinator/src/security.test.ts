@@ -960,7 +960,7 @@ test("the native app's sign-in: the passkey's unlock gives a one-time code, whic
   const first = (await sheet.json()).app;
   assert.match(first, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(cookieOf(sheet, 's'), undefined);
-  assert.equal((db.prepare("select count(*) n from challenges where audience = 'app'").get() as { n: number }).n, 1);   // (kept through a restart)
+  assert.equal((db.prepare("select count(*) n from challenges where audience = 'app'").get() as { n: number }).n, 1);   // (held in the challenges table)
   // a code without the app's verifier opens nothing, and is spent
   let back = await signedIn({ code: first, verifier: 'a-guess' });
   assert.deepEqual([back.status, back.headers.get('location'), cookieOf(back, 's')], [302, '/login', undefined]);

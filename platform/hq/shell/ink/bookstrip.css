@@ -1,7 +1,7 @@
 /* The book's two islands (bookui.js), floating over the paper (README, The book's frame): the tools upright on the
-   right, roughly centred and short (bookstrip.js); one bar along the foot between the screen's curved corners, Undo
-   and Redo at its left, the page's arrows and where it is in its very middle, the page's keys and its dots at its
-   right. They are HQ's own on-screen controls in the look HQ wears (bookui.css
+   right, roughly centred and short (bookstrip.js); one bar along the foot between the screen's curved corners, the
+   overview's key at its left, the page's arrows and where it is in its very middle, its dots at its right, and Undo
+   and Redo a pill of their own left of it. They are HQ's own on-screen controls in the look HQ wears (bookui.css
    .bk-island), never a piece of the book: only the page is paper. The paper runs on under them to the screen's edges;
    what's written ends left of the tools (--bk-rail-width, book.css). Nothing of them sits under the status bar's blur
    (--sat). The cards they open (a tool's, the preferences, the pages, the dots menu) hang beside them, on the paper.
@@ -15,7 +15,7 @@
    bars), its line, corners and shadow. The panel lets a third of the page through, blurred and brightened, a hairline
    of light on its top edge. A look sets its own light (--bk-glass-sheen) and keeps its own edge (the renderers'
    skin.css); a dark panel dims what it lets through (--bk-glass-frost), so it stays dark and its keys read on it. */
-#book :is(.bk-strip, .bk-bar) {
+#book :is(.bk-strip, .bk-bar, .bk-undo-pill) {
   --bk-glass-sheen: color-mix(in srgb, white 85%, transparent);
   --bk-glass-frost: blur(16px) saturate(1.5) brightness(1.05);
   box-sizing: border-box;
@@ -34,12 +34,12 @@
 }
 /* (while the book swings or its tab is held the frost is off: what's under the bars is moving with them, and blurring
    it would cost the swing its frames.) */
-#book:is(.bk-swinging, :has(.bk-gripped)) :is(.bk-strip, .bk-bar) {
+#book:is(.bk-swinging, :has(.bk-gripped)) :is(.bk-strip, .bk-bar, .bk-undo-pill) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 /* (the groups in them are theirs: no card of their own) */
-#book :is(.bk-strip, .bk-bar) .bk-island {
+#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-island {
   display: flex;
   flex-direction: row;
   gap: 2px;
@@ -49,17 +49,17 @@
   box-shadow: none;
   border-radius: 0;
 }
-#book :is(.bk-strip, .bk-bar) .bk-btn {
+#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-btn {
   width: var(--bk-key);
   height: var(--bk-key);
   border-radius: 50%;
 }
-#book :is(.bk-strip, .bk-bar) .bk-btn svg {
+#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-btn svg {
   width: var(--bk-key-icon);
   height: var(--bk-key-icon);
 }
 /* (--bk-touch across, past the island's edge) */
-#book :is(.bk-strip, .bk-bar) .bk-btn::after {
+#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-btn::after {
   inset: calc((var(--bk-key) - var(--bk-touch)) / 2);
 }
 
@@ -162,12 +162,29 @@
   margin: 0 3px;
   border-inline: 1px solid var(--bk-ui-line);
 }
-#book .bk-bar .bk-island[data-island='keys']:has(.bk-btn:not([hidden])) {
-  margin-right: 3px;
-  padding-right: 3px;
-  border-right: 1px solid var(--bk-ui-line);
+/* Undo and Redo, a pill of their own left of the bar, out of its layout: on a locked page it goes (bookcontrols.js)
+   and the bar stays where it is, at any width (the Ink README, The book's frame). Where the room left of the bar can't
+   hold it (a phone, a wide bar), it floats above the bar's left end: bookrail.js measures the room. */
+#book .bk-bar-at {
+  position: relative;
+  display: flex;
+  max-width: 100%;
 }
-#book .bk-bar .bk-btn[hidden],
+#book .bk-undo-pill {
+  --bk-pill-gap: 6px;
+  position: absolute;
+  right: calc(100% + var(--bk-pill-gap));
+  bottom: 0;
+}
+#book .bk-undo-pill:not(:has(.bk-btn:not([hidden]))) {
+  display: none;
+}
+#book .bk-undo-pill[data-above] {
+  right: auto;
+  left: 0;
+  bottom: calc(100% + var(--bk-pill-gap));
+}
+#book :is(.bk-bar, .bk-undo-pill) .bk-btn[hidden],
 #book .bk-menu-only {
   display: none;
 }
@@ -180,7 +197,7 @@
   letter-spacing: 0.02em;
   color: var(--bk-ui-ink);
 }
-/* (New page in the dots menu at every size, so each end holds two keys: Undo and Redo, All pages and the dots) */
+/* (New page in the dots menu at every size, so each end holds one key: the overview's and the dots) */
 #book .bk-bar .bk-rare {
   display: none;
 }
@@ -191,7 +208,7 @@
 #book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) .bk-bar-middle {
   display: none;
 }
-#book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) .bk-bar-start {
+#book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) .bk-bar-start:has(.bk-btn:not([hidden])) {
   margin-right: 3px;
   padding-right: 3px;
   border-right: 1px solid var(--bk-ui-line);
@@ -228,20 +245,9 @@
   stroke: currentColor;
   stroke-width: 1.5;
 }
-/* the overview: only its own key, pressed, to come back by */
-#book[data-far] .bk-bar {
-  display: flex;
-}
-#book[data-far] .bk-bar :is(.bk-bar-start, .bk-bar-middle, .bk-btn:not(.bk-overview-key)) {
+/* (the overview: no bar, it shows all the pages already and a page opens by its tile.) */
+#book[data-far] .bk-foot {
   display: none;
-}
-#book[data-far] .bk-bar .bk-overview-key {
-  display: grid;
-}
-#book[data-far] .bk-bar .bk-island[data-island='keys']:has(.bk-btn) {
-  margin: 0;
-  padding: 0;
-  border: 0;
 }
 
 /* ---- a card beside an island, on the paper (bookui.js beside()): a tool's colours and widths (bookpalette.js), this

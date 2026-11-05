@@ -94,7 +94,7 @@ const NAME = /^\p{Lu}[\p{L}\p{M}' .-]{0,59}$/u, MAX_TITLE = 140, MAX_LINE = 200,
 const MAX_ITEMS = 40, MAX_SECTIONS = 12, KINDS = ['document', 'question', 'task', 'info'];
 const CODE_MS = 10 * 60_000, TRIES = 5, CODES_PER_HOUR = 3, SESSION_DAYS = 30, KEEP_DAYS = 30;
 const REQUESTS_PER_HOUR = 10, STEPS_PER_HOUR = 120;   // a job's requests; a guest's ticks, answers and questions on one
-const PER_IP = { send: 10, verify: 30, invite: 10 };              // an hour, per client (auth.ts clientOf: an IPv6 /64 is one)
+const PER_IP = { send: 10, verify: 30, invite: 10, join: 30 };    // an hour, per client (auth.ts clientOf: an IPv6 /64 is one; join: callguests.ts.)
 // Local runs (tests, dev) are mailout's test mode: the code comes back on the page. The server is live: it sends, or says
 // it can't yet.
 const MODE = PUBLIC_HOST === 'localhost' ? 'test' : 'live';
@@ -915,7 +915,7 @@ ${legend.map((p, k) => `.w${k}{--who:${p.colour}}`).join('')}.people{display:fle
 .people li,.by{display:inline-flex;align-items:center;gap:6px}.people i,.by i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--who)}.people .me{color:var(--muted)}
 .by{font-size:.88rem;font-weight:600;color:var(--muted);margin-left:8px}.by.line{display:flex;margin:6px 0 0}.acts .by,.meta .by{margin:0 6px 0 2px}.meta .by{font-size:inherit}
 .item.done .check{background:var(--who,var(--accent));border-color:var(--who,var(--accent))}button.chip.on{background:var(--who,var(--accent))}` : ''}`;   // (the legend's)
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 // The pages' money and days: each language's locale, on the company's clock
 export const pageFormats = () =>
   companyFormats('EUR', Object.fromEntries(Object.entries(COPY).map(([lang, copy]) => [lang, copy.locale])));
@@ -939,7 +939,7 @@ export function logoHtml() {
 }
 export const logoCss = (at: string, l: Look = look()) =>
   `${at} img{height:${l.logoHeight}px;width:auto${l.pixelated ? ';image-rendering:pixelated' : ''}}`;
-function html(res: ServerResponse, status: number, lang: Lang, body: string, pct = 0, headers: Record<string, string> = {}, legend: Legend = []) {
+export function html(res: ServerResponse, status: number, lang: Lang, body: string, pct = 0, headers: Record<string, string> = {}, legend: Legend = []) {
   const n = names().name, l = look(), css = style(l, pct, legend) + passkeyCss;
   // same-origin, not no-referrer: the link (its token) never goes to another site, and a browser still sends the page's
   // own Origin with its forms (no-referrer makes it "null", which server.ts refuses)
@@ -951,7 +951,7 @@ function html(res: ServerResponse, status: number, lang: Lang, body: string, pct
 <main>${body}</main>`); // (logoHtml)
 }
 // (who the link is for isn't known here, so it says it in every language, the first the page's)
-const gone = (res: ServerResponse) => {
+export const gone = (res: ServerResponse) => {
   const [first] = Object.keys(COPY) as Lang[];
   const said = Object.entries(COPY).map(([lang, t]) => {
     const at = lang === first ? '' : ` lang="${lang}"`;
@@ -962,7 +962,7 @@ const gone = (res: ServerResponse) => {
 
 // Per client and hour: the few requests a person makes, never a guessing run.
 const hits = new Map<string, number[]>();
-function allowed(kind: keyof typeof PER_IP, client: string) {
+export function allowed(kind: keyof typeof PER_IP, client: string) {
   const now = Date.now(), key = `${kind}:${client}`, recent = (hits.get(key) ?? []).filter(t => t > now - 3600e3);
   if (hits.size > 10_000) hits.clear();   // a flood of clients forgets them all rather than grow without end
   if (recent.length >= PER_IP[kind]) { hits.set(key, recent); return false; }
@@ -1180,6 +1180,19 @@ export type Room = {
   serve: (req: IncomingMessage, res: ServerResponse, guest: string, rest: string) => unknown;
 };
 const rooms: Room[] = [];
+// Someone another module lets into the rooms on a session of its own, never the desk's (callguests.ts: whoever scans
+// a call's QR code): a name no guest can have (NAME), so nothing of a guest's opens for them, and their language. Their
+// session goes first where both are on a device: it opens less, and it's the one they last came in by. visitor: no
+// passkey to save, no shelf of their own.
+export type Visitor = { name: string; lang: Lang };
+const visitors: ((req: IncomingMessage) => Visitor | null)[] = [];
+export const addVisitor = (find: (req: IncomingMessage) => Visitor | null) => { visitors.push(find); };
+export function inRoomAs(req: IncomingMessage) {
+  const v = visitors.map(find => find(req)).find(Boolean);
+  if (v) return { name: v.name, lang: v.lang, visitor: true };
+  const g = signedIn(req);
+  return g ? { name: g.name, lang: langOf(g), visitor: false } : null;
+}
 export const addRoom = (r: Room) => {
   rooms.push(r);
 };
@@ -1188,13 +1201,13 @@ const roomsFor = (g: Guest) => rooms.filter(r => r.opens(g.name));
 // Someone without a session, or one it doesn't open for: the page the room's own address shows says how to come in,
 // anything else of it opens nothing
 function inRoom(req: IncomingMessage, res: ServerResponse, room: Room, rest: string) {
-  const g = signedIn(req);
+  const g = inRoomAs(req); // (a visitor's too)
   if (g && room.opens(g.name)) return room.serve(req, res, g.name, rest);
   if (req.method !== 'GET' || rest.startsWith('/api/')) {
     res.writeHead(g ? 403 : 401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify({ error: g ? 'this isn’t open for you' : 'sign in from your own link first', reason: g ? 'invitationEnded' : 'signIn' }));
   }
-  const lang = g ? langOf(g) : 'en';
+  const lang = g?.lang ?? 'en';
   html(
     res,
     g ? 403 : 401,
@@ -1211,8 +1224,10 @@ const onwards: ((guest: string, url: string) => string | null)[] = [];
 export const addOnward = (find: (guest: string, url: string) => string | null) => { onwards.push(find); };
 function handOnward(req: IncomingMessage, res: ServerResponse) {
   const destination = new URL(req.url ?? '/', 'http://x').searchParams.get('to') ?? '';
-  const g = signedIn(req);
+  // (a visitor too, by their room name; one handed on nowhere is never sent to HQ's sign-in.)
+  const g = inRoomAs(req);
   const handedOn = g ? onwards.map(find => find(g.name, destination)).find(Boolean) : null;
+  if (!handedOn && g?.visitor) return gone(res);
   res.writeHead(302, { location: handedOn ?? '/login', 'cache-control': 'no-store' });
   res.end();
 }

@@ -21,7 +21,11 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
 - `bookcalls.ts` is a call's page, `booksearch.ts` the book's Search.
 - Answers to any note: `bookjudge.ts` is the one judge of every note the board
   makes (a small model through `../smallmodel.ts`'s queue: none, an answer, or a try; no rule on the words' shape), with
-  its verdicts and their why kept; `bookseen.ts` is what it reads of a note. A note that gets no answer (its run ended
+  its verdicts and their why kept; `bookseen.ts` is what it reads of a note. Every note is judged once it rests: words
+  as they're saved, a group's ink and pictures once nothing on it has changed for ten seconds (`judgeRested`, swept
+  from server.ts), whatever it holds. A verdict holds for what it read: anything drawn since is read again. The seen
+  tick (`groupanswers.ts` seenTick) shows a note read as it stands, by the judge with nothing to say back or by a
+  call's agent that heard it (`bookheard.ts`, from `callguests.ts` markForVoice). A note that gets no answer (its run ended
   without one, it couldn't be judged, or it came past the judge's day) says why in the answer's place, one reason a note until the next ask or answer takes it. `bookanswer.ts`
   answers: the owner's quick run, `hq answer` (words, a drawing, a
   picture, a form, a question, versions; `answerparts.ts` checks what one holds), forms answered, ticks and the open list; an

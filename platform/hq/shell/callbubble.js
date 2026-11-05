@@ -169,7 +169,8 @@ export class CallBubble {
       this.onSound('settle');
     };
     this.el.addEventListener('pointerdown', e => {
-      if (grab || e.button || e.target.closest('.cb-keys button')) return;
+      // (and a page's own key on it: HQ's raised hand, callhand.js.)
+      if (grab || e.button || e.target.closest('.cb-keys button, .call-hand')) return;
       const box = this.el.getBoundingClientRect();
       grab = { id: e.pointerId, dx: e.clientX - box.left, dy: e.clientY - box.top, x0: e.clientX, y0: e.clientY };
       grab.bounds = this.bounds();

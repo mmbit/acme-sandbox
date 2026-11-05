@@ -248,7 +248,7 @@ test("the call agent's briefing: fixes to how the company works are the Process 
 
 test("the call agent's briefing: no number for work is said aloud, on screen, by phone and in either language", async () => {
   for (const ctx of [await context('juno'), await context('juno', { phone: true }), await context('juno', { lang: 'nl' })])
-    assert.match(ctx.prompt, /Never say a number for work aloud \(a job, card, pull request, call, item or pin\), not even once: .* Say what the work is and whose it is\. The numbers in this\s+briefing and in your tools' answers are for your tools/s);
+    assert.match(ctx.prompt, /Never say a number for work aloud \(a job, card, pull request, call, item or pin\), not even once: .* Say what the work is\. The numbers in this\s+briefing and in your tools' answers are for your tools/s);
 });
 
 test("the call agent's briefing: shifts reach the board only when a time it set itself will be missed or it asks", async () => {
@@ -256,7 +256,9 @@ test("the call agent's briefing: shifts reach the board only when a time it set 
   assert.match(prompt, /say nothing about shifts unless a time the board set itself will be\s+missed or the board asks/);
   // a time we give is ours, and any time told is the four-in-five one
   assert.match(prompt, /A time you give or offer is ours, even one the board takes: its slips are ours to plan\s+with and the board hears nothing of them/);
-  assert.match(prompt, /Give one plain time: the time to tell the board\s+the tool gives \(live four times in five\)/);
+  assert.match(prompt, /Give the board one plain time: the plan's time to tell the board, as the tool gives it \(live four times in five\)/);
+  // the one time, no margin of our own and no later second time beside it; doubt goes with its reason (call 256)
+  assert.match(prompt, /never put a second, later time beside it\. A real reason to think it may run long is said as that reason/);
   // A late forecast calls for judgment. It does not move the agreed deadline.
   assert.match(prompt, /A planned finish past the deadline is a slip: look for what brings the finish back\.\s+When nothing does, say why the deadline cannot be met and what must change/);
   assert.match(prompt, /A time far past the board's is a problem to solve on the\s+call, never news to report/);
@@ -410,6 +412,32 @@ test('a restart with the token of a call that has ended is refused: no new call,
   const before = { calls: count('calls'), tokens: count('call_tokens') };
   assert.equal((await h.voice('call-context', { agent: 'kit', lang: 'en', token: first.token })).status, 409);
   assert.deepEqual({ calls: count('calls'), tokens: count('call_tokens') }, before);
+});
+
+// The voice line sends a held transcript again when HQ's reply to its call-end was lost (server.py hand_over_held).
+// HQ has that call already: the repeat adds no second row and no second follow-up. Nor for a call that failed at its
+// end (Poppy takes no jobs, jobs.ts noSeat): the board isn't told twice that nobody follows it up.
+test('a repeat of a call-end HQ already took adds no second call and no second follow-up', async () => {
+  fresh();
+  const first = await context('kit');
+  const end = () => hangUp('kit', ['Board: can you build the page?'], { token: first.token });
+  const count = (table: string) => (db.prepare(`select count(*) n from ${table}`).get() as { n: number }).n;
+  assert.equal((await end()).status, 200);
+  const once = { calls: count('calls'), jobs: count('jobs') };
+  assert.equal(once.jobs, 1, 'its follow-up');
+  assert.equal((await end()).status, 200);
+  assert.deepEqual({ calls: count('calls'), jobs: count('jobs') }, once);
+  assert.equal((await h.agent('item', first.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'x', quote: 'y' })).status, 401, 'the token ended with the call');
+
+  const failed = await context('poppy');
+  const told = () => (db.prepare("select count(*) n from events where type = 'log' and text like 'Call with Poppy%'").get() as { n: number }).n;
+  const endFailed = () => hangUp('poppy', ['Board: check the refunds page.'], { token: failed.token });
+  assert.equal((await endFailed()).status, 200);
+  assert.equal((db.prepare('select status from calls where id = ?').get(failed.call) as { status: string }).status, 'failed');
+  const before = { calls: count('calls'), told: told() };
+  assert.equal(before.told, 1, 'the board heard nobody follows it up');
+  assert.equal((await endFailed()).status, 200);
+  assert.deepEqual({ calls: count('calls'), told: told() }, before);
 });
 
 // A job queued on a call waits for the call to end (server.ts, wakes.ts ended), so what the board adds on the call goes
@@ -624,8 +652,14 @@ test("the board's language: one setting, offered only as the languages that work
     assert.equal((await h.board('/api/language')).body.lang, 'en', 'a refusal changes nothing');
     assert.equal((await h.board('/api/language', { lang: 'de' })).body.lang, 'de');
     assert.equal((await h.board('/api/language')).body.lang, 'de');
-    assert.match((await context('juno', { lang: 'de' })).prompt, /Speak German\./);
-    assert.match((await context('juno', { lang: 'xx' })).prompt, /Speak English\./, "a language the line doesn't know is English");
+    assert.match((await context('juno', { lang: 'de' })).prompt, /The call.s language is German: .*\nSpeak German from your first word/);
+    assert.match((await context('juno', { lang: 'xx' })).prompt, /The call.s language is English/, "a language the line doesn't know is English");
+    // the line's language, the one it voices and hears in, over the setting read again
+    const dutch = (await context('juno', { lang: 'nl' })).prompt;
+    assert.match(dutch, /The call.s language is Dutch: .*\nSpeak Dutch from your first word/);
+    assert.match(dutch, /between ‹ and ›, as in "Het staat ‹live›\."/, 'an English word in Dutch is marked for the line');
+    assert.doesNotMatch((await context('juno', { lang: 'en' })).prompt, /between ‹ and ›/, 'not on an English call');
+    assert.doesNotMatch((await context('juno', { lang: 'de' })).prompt, /between ‹ and ›/, "not in German: its voice reads letters");
     // the job's briefing names it (the worker's prompt reads company.language)
     const id = h.queue({ agent: 'juno' });
     const job = await h.claim(h.job(id).engine);

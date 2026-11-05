@@ -86,6 +86,8 @@ test('a call has its row from its start, what it writes down lands there, and it
   // (its times in the board's own form, as windows.ts parse reads it)
   assert.match(f.prompt, /--deadline with the board's own time, with its date and no zone \(2026-10-26 09:00/);
   assert.match(f.prompt, /as its window, the board's own time with its date and no zone: `--by <when>`/);
+  // a time in its reply: the plan's one time, no margin of its own, doubt with its reason (call 256)
+  assert.match(f.prompt, /new work, with its dependencies and `--by` the board's time when it named one\. Give the board one plain time: the plan's time to tell the board[^\n]*never put a second, later time beside it\. A real reason to think it may run long is said as that reason/);
 });
 
 test("Juno's call gets a work follow-up too; the reply it sets appears in the intercom and rides along with the next turn, its report doesn't", async () => {

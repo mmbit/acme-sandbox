@@ -2,9 +2,11 @@
 // its replies went as, the answers made on it before or after its page was sent, each once; the answer still coming on
 // it or a reply of its (the writing placeholder); its try (booktry.ts), whose versions are among its answers and drawn
 // under it (bookversions.js), or null; the agents' desk-phone cards on those notes (bookasks.ts); and its seen tick.
-//   - seen: the board's note judged to need nothing back (its latest verdict none, bookjudge.ts) with nothing answering
-//     it, and who it went to, whose initial the tick at its corner carries (bookassignlist.js): a scrap's owner (else
-//     its page's, else the CEO, as booktry.ts rootOn), a reply's the agent it answers.
+//   - seen: the board's note read as it is now, with nothing answering it, and who read it, whose face the tick at its
+//     corner carries (bookassignlist.js). A call's agent that heard it as it is (bookheard.ts), else, when it was
+//     judged to need nothing back as it is (its latest verdict none, bookjudge.ts), who it went to: a scrap's owner
+//     (else its page's, else the CEO, as booktry.ts rootOn), a reply's the agent it answers. Anything drawn on it since
+//     it was read takes the tick off until that's read too.
 import { db } from '../db.ts';
 import { agentName, jobAgent } from '../jobs.ts';
 import { ceo } from '../company.ts';
@@ -14,6 +16,8 @@ import { assignedOf } from './bookassign.ts';
 import type { Group } from '../notebookgroups.ts';
 import { pageRow } from '../notebook.ts';
 import { verdictOf } from './bookjudge.ts';
+import { drawnOf } from './bookseen.ts';
+import { heardBy } from './bookheard.ts';
 
 // What HQ reads of a group with its answers: its own parts (head), its owner and the
 // agent's name, and its children, the answers and the board's replies under them, in the order they came
@@ -61,8 +65,10 @@ export const ownerOf = (top: Group) => top.owner ?? pageRow(top.page, null)?.own
 // A group's or a reply's seen tick: { by, name } of who read it (a reply's: who wrote the answer it's under), or null
 export function seenTick(g: Group, answers: { grp: number | null; note: number | null }[]) {
   if (answers.some(a => a.grp === g.id || (g.note !== null && a.note === g.note))) return null;
-  if (verdictOf({ grp: g.id })?.reply !== 'none') return null;
-  const by = g.parent === null ? ownerOf(g) : answererOf(g);
+  const call = heardBy(g),
+    judged = verdictOf({ grp: g.id });
+  if (!call && !(judged?.reply === 'none' && judged.drawn === drawnOf(g))) return null;
+  const by = call ?? (g.parent === null ? ownerOf(g) : answererOf(g));
   return by ? { by, name: agentName(by) } : null;
 }
 const answererOf = (reply: Group) =>

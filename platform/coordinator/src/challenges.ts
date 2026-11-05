@@ -26,14 +26,14 @@ export const CHALLENGE_MS = 5 * 60_000;
 const PER_CLIENT = 5,
   MAX_PENDING = 2000;
 
-// `context`: what the audience checks the answer against; `ms`: how long it's good
+// `context`: what the audience checks the answer against, and `lifetimeMs` how long it's good
 export function hold(
   audience: Audience,
   key: string,
   client: string,
   challenge: string,
   context: object,
-  ms = CHALLENGE_MS,
+  lifetimeMs = CHALLENGE_MS,
 ) {
   db.prepare('delete from challenges where audience = ? and expires <= ?').run(audience, Date.now());
   const mine = db
@@ -44,7 +44,7 @@ export function hold(
   if (count.n >= MAX_PENDING) return false;
   db.prepare(
     'insert into challenges (key, challenge, expires, client, audience, context) values (?, ?, ?, ?, ?, ?)',
-  ).run(key, challenge, Date.now() + ms, client, audience, JSON.stringify(context));
+  ).run(key, challenge, Date.now() + lifetimeMs, client, audience, JSON.stringify(context));
   return true;
 }
 

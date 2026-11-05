@@ -34,8 +34,8 @@ export async function servePicture(req: IncomingMessage, res: ServerResponse, wh
   serveFile(res, file);
 }
 // How the pictures kept are drawn, in their files' names: a page's picture drawn another way is drawn again when next
-// read. Change it with what render() draws.
-const DRAWING = 'x';
+// read. Change it with what render() draws, or how a page lays its units out.
+const DRAWING = 'y';
 
 // The page's picture's file in DIR: the one kept since its last change, or drawn now and kept. null: the page was
 // deleted while it was drawn.

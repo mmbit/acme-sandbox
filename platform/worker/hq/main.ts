@@ -27,6 +27,7 @@ import { plan } from './plan.ts';
 import { picture } from './pictures.ts';
 import { advice, answer, projectbook, sketch, sketches } from './book.ts';
 import { preview } from './preview.ts';
+import { prototype } from './prototype.ts';
 import * as proposals from './proposals.ts';
 import { decision } from './pauses.ts';
 import * as projects from './projects.ts';
@@ -107,6 +108,7 @@ const COMMANDS: Record<string, Command> = {
   route: feedback.route,
   guestnotes: feedback.guestnotes,
   preview,
+  prototype,
   run: runs.run,
   tooling,
   orders,

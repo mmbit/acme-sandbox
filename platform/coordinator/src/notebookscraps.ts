@@ -69,24 +69,33 @@ export function addPicture(
   who: string,
   snip: { type: string; clean: Buffer },
   more: { anchor?: Anchor; words: string; said: string | null; owner: string | null },
+  drawing = false, // (an agent's drawing on a clear ground: pagescraps.ts Scrap.)
 ) {
   const file = keepPicture(p.id, snip),
     size = pictureSize(snip.clean)!;
-  const picture: Scrap = { file, x: 0, y: 0, ...scrapSize(size.width, size.height), tilt: 0 };
+  const picture: Scrap = {
+    file,
+    x: 0,
+    y: 0,
+    ...scrapSize(size.width, size.height),
+    tilt: 0,
+    ...(drawing && { drawing: true as const }),
+  };
   return addUnit(p, 'scrap', who, { ...emptyGroup, pictures: [picture] }, more);
 }
 // Typed words on a page, its last (a call agent's notes too: ink/callnotes.ts), a post-it as a scrap's words are: a
-// group of its own kind, 'note'
+// group of its own kind, 'note'. room: the room to write under it (ROOM, or none for a note what hangs under it belongs
+// to: a call prototype's clip, callprototypes.ts.)
 export function addWords(
   p: NotebookPage,
   who: string,
   words: string,
-  more: { anchor?: Anchor; owner?: string | null; said?: string | null },
+  { room = ROOM, ...more }: { anchor?: Anchor; owner?: string | null; said?: string | null; room?: number },
 ) {
   const texts = typedNote(words);
   if (isRefused(texts)) return texts;
   const parts = { ...emptyGroup, texts };
-  return insertGroup(p, 'note', who, parts, { ...more, h: bodyOf(parts) + ROOM });
+  return insertGroup(p, 'note', who, parts, { ...more, h: bodyOf(parts) + room });
 }
 // What someone puts on a page as a unit of its own, with room to write under it
 const addUnit = (p: NotebookPage, kind: 'scrap' | 'note', who: string, parts: Parts, more: object) => {

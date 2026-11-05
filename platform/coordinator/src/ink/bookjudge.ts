@@ -1,5 +1,5 @@
-// The book's judge: every note the board makes in its book, once its words have settled, is read by a small model that
-// says whether it calls for a reply now and what kind:
+// The book's judge: every note the board makes in its book, once it rests, is read by a small model that says whether
+// it calls for a reply now and what kind:
 //   - answer: a question or a doubt a few words settle; the quick run writes them (bookanswer.ts answerNow).
 //   - try: a change to something the board can see, where a few versions to look at help it decide (booktry.ts tryNow).
 //   - pick: a reply on one of a try's versions that chooses it; that version is picked (bookpick.ts pickNow).
@@ -9,40 +9,75 @@
 // looks at the words' shape. Each verdict is kept with its why (ink_verdicts), so a wrong call can be found: a reply the
 // board wiped unread is marked (markWiped), and that's the list the examples learn from. A note it can't judge (the
 // model gave no verdict, or the day's JUDGES_A_DAY are used) says why where its answer would lie (unjudged).
+// A note rests once it's saved with new words (typed, said, a scrap's post-it), and a group once nothing on it has
+// changed for REST_MS (judgeRested: ink and pictures, whatever it holds). A verdict holds for what it read (Seen's
+// drawn): anything drawn since is read again once it rests.
 // What it judges (a target): a group on a notebook page (grp: a scrap, a drawing, a reply under an answer), a note on the
 // old book's pages (note), or a box typed on one (page + text: booktyped.ts). Only the board's own: a guest's note is
 // outside text (charter rule 9) and waits for the board's plane. Judging runs after the board's request has answered.
-import { db, lacks, once, redacted } from '../db.ts';
+import { db, lacks, once, redacted, remember, setting } from '../db.ts';
 import { dayAllowance } from '../dayallowance.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused } from '../pagechecks.ts';
 import { BOARD } from './book.ts';
-import { answeredOf, seenOf, type Seen } from './bookseen.ts';
+import { answeredOf, drawnOf, seenOf, type Seen } from './bookseen.ts';
 
 // Each judging spends a little of a Claude seat's window, which the company's jobs live on: JUDGES_A_DAY bounds what a
-// page or a client gone wrong can take in a day, as the ink's READS_A_DAY does (inkread.ts). It's the judge's only limit: a day
-// of the board's notes is a few dozen to a hundred or two.
+// page or a client gone wrong can take in a day, as the ink's READS_A_DAY does (inkread.ts). It's the judge's only
+// limit: a day of the board's notes is a few dozen to a hundred or two.
 export const JUDGES_A_DAY = 400;
 // One more judging today, unless today's are used
 const takeOne = dayAllowance('ink_judges', 'judges', JUDGES_A_DAY);
 // How long a verdict may take: nobody waits on it, the worker's small calls take their turn (a seat's slow minute too)
 const WAIT_MS = 10 * 60_000;
 const WHY_MAX = 300;
+// How long the board's pen rests before a group's ink is judged: a hand moving on to its next word or line pauses a
+// second or two, so the note is read whole, and a question written by hand is still answered while the board is on its
+// page.
+export const REST_MS = 10_000;
 
-// grp: a notebook group's; note: an old-book note's; page: a typed box's page. words: what was judged (a later edit to the
-// same words isn't judged again). wiped: when the board wiped the reply unread. saved: when the words judged were saved
-// (their group's, note's or page's updated); job: the run its route started or joined, whose answers are its own
-// (book_slips.job; a typed box's is typed on at the run's end): what the status report measures it by (infra/report.sh).
+// grp: a notebook group's; note: an old-book note's; page: a typed box's page. words: the words judged. wiped: when the
+// board wiped the reply unread. saved: when the words judged were saved (their group's, note's or page's updated).
+// job: the run its route started or joined, whose answers are its own (book_slips.job; a typed box's is typed on at the
+// run's end): what the status report measures it by (infra/report.sh). drawn: what it read (Seen's), which it holds
+// for.
 db.exec(`create table if not exists ink_verdicts (id integer primary key autoincrement, grp integer, note integer,
   page integer, reply text not null, why text not null, words text not null, created text not null, wiped text,
-  saved text, job integer);
+  saved text, job integer, drawn text);
   create index if not exists ink_verdicts_grp on ink_verdicts (grp) where grp is not null;
   create index if not exists ink_verdicts_note on ink_verdicts (note) where note is not null`);
-redacted('ink_verdicts', 'why', 'words');
+redacted('ink_verdicts', 'why', 'words', 'drawn'); // (a note's or a box's drawn is its words)
 once('2026-10-28-ink-verdicts-runs', () => {
   for (const column of ['saved text', 'job integer'])
     if (lacks('ink_verdicts', column.split(' ')[0])) db.exec(`alter table ink_verdicts add column ${column}`);
 });
+// A note's or a box's verdict holds for its words. A group's holds for the group as it is now, unless the group changed
+// since and nothing came back but the seen tick: that one is read again. A database without a notebook has no groups.
+once('2026-11-04-ink-verdicts-drawn', () => {
+  if (lacks('ink_verdicts', 'drawn')) db.exec('alter table ink_verdicts add column drawn text');
+  db.exec('update ink_verdicts set drawn = words where grp is null');
+  if (lacks('notebook_groups', 'id')) return;
+  const rows = db
+    .prepare(
+      `select v.id, v.reply, v.saved, g.updated, g.ink, g.texts, g.pictures, g.words from ink_verdicts v
+        join notebook_groups g on g.id = v.grp where v.id = (select max(id) from ink_verdicts where grp = v.grp)`,
+    )
+    .all() as {
+    id: number;
+    reply: string;
+    saved: string | null;
+    updated: string;
+    ink: string;
+    texts: string;
+    pictures: string;
+    words: string;
+  }[];
+  const set = db.prepare('update ink_verdicts set drawn = ? where id = ?');
+  for (const r of rows) if (r.reply !== 'none' || r.saved === r.updated) set.run(drawnOf(r), r.id);
+});
+// The time up to which the board's groups' changes have been judged (judgeRested): kept under the oldest one still
+// being judged, so a restart reads that one again
+const RESTED = 'ink.rested';
 
 // The replies a verdict can be, the one list the type, the routes and the model's schema are read from
 const REPLIES = ['none', 'answer', 'try', 'pick', 'cross'] as const;
@@ -117,6 +152,7 @@ Notes and their verdicts:
 - "swap" (handwritten, a circle and an arrow between two cards) -> try: a layout change best judged by seeing it.
 - "fix the typo" (handwritten, a circle round "recieve") -> none: clear work, done when the sheet goes.
 - "Can you make the button blue?" (typed, on HQ's settings page) -> none: a clear request, work to do, not a question to answer.
+- "hello, anyone there?" (handwritten, on a free page) -> answer: asks whether anyone reads it; a word back settles it.
 - "vrijdag Ada over de facturen" (handwritten, on a free page) -> none: a reminder to self.
 - no words, a circle round a button (handwritten) -> none: a mark with nothing asked; it goes with its sheet.
 - "mooi ✔" (handwritten, on a film's still) -> none: a reaction.
@@ -133,8 +169,9 @@ const SAID: Record<string, string> = {
   typed: 'typed',
   spoken: 'said aloud',
 };
-// (in flight: a target and its words, so a quick second save of the same words doesn't judge them twice)
-const judging = new Set<string>();
+// (in flight: a target and what it holds, each with its judging, so a quick second save of the same doesn't judge it
+// twice but waits for the first: judgeRested's cursor holds until its verdict is kept)
+const judging = new Map<string, Promise<Verdict | null>>();
 
 // The target judged, its verdict kept and routed (null: not the board's, judged as it is, past the day's bound, gone or
 // changed while it was judged, or the model gave no use). Never throws: a judge that fails leaves the note as it is.
@@ -143,35 +180,43 @@ export async function judge(t: Target, via?: Partial<Routes>): Promise<Verdict |
   try {
     const seen = await seenOf(t);
     if (!seen || seen.by !== BOARD) return null;
-    const key = `${keyOf(t)}:${seen.words}`;
-    if (judging.has(key) || verdictOf(t)?.words === seen.words) return null;
+    const key = `${keyOf(t)}:${seen.drawn}`,
+      going = judging.get(key);
+    if (going) return await going;
+    if (verdictOf(t)?.drawn === seen.drawn) return null;
     if (!takeOne()) {
       console.error(`The book's judge: ${JUDGES_A_DAY} notes judged today, ${keyOf(t)} not`);
       return unjudged(t, 'day');
     }
-    judging.add(key);
-    const said = await ask(seen).finally(() => judging.delete(key));
-    // (changed while it was judged: the newer words are judged in their turn)
-    if ((await seenOf(t, false))?.words !== seen.words) return null;
-    if (isRefused(said)) {
-      console.error(`The book's judge: ${keyOf(t)} wasn't judged: ${said[1]}`);
-      return unjudged(t, 'unread');
-    }
-    const v = keep(t, said, seen),
-      { reply } = v;
-    if (reply !== 'none')
-      Promise.resolve()
-        .then(() => (via?.[reply] ?? routes[reply])(t, { id: v.id, why: v.why }))
-        .then(job => {
-          if (reply !== 'pick' && typeof job === 'number')
-            db.prepare('update ink_verdicts set job = ? where id = ?').run(job, v.id);
-        })
-        .catch(err => console.error(`The book's judge: ${keyOf(t)}'s ${reply} didn't start:`, err));
-    return v;
+    const judged = judgeSeen(t, seen, via).finally(() => judging.delete(key));
+    judging.set(key, judged);
+    return await judged;
   } catch (err) {
     console.error(`The book's judge: ${keyOf(t)} wasn't judged:`, err);
     return null;
   }
+}
+// (judge's own judging: the model asked, its verdict kept and routed; judge() catches what it throws)
+async function judgeSeen(t: Target, seen: Seen, via?: Partial<Routes>): Promise<Verdict | null> {
+  const said = await ask(seen);
+  // (changed while it was judged: the newer is judged in its turn)
+  if ((await seenOf(t, false))?.drawn !== seen.drawn) return null;
+  if (isRefused(said)) {
+    console.error(`The book's judge: ${keyOf(t)} wasn't judged: ${said[1]}`);
+    return unjudged(t, 'unread');
+  }
+  const v = keep(t, said, seen),
+    { reply } = v;
+  if (reply === 'none') tick(t).catch(err => console.error(`The book's judge: ${keyOf(t)}'s tick didn't show:`, err));
+  if (reply !== 'none')
+    Promise.resolve()
+      .then(() => (via?.[reply] ?? routes[reply])(t, { id: v.id, why: v.why }))
+      .then(job => {
+        if (reply !== 'pick' && typeof job === 'number')
+          db.prepare('update ink_verdicts set job = ? where id = ?').run(job, v.id);
+      })
+      .catch(err => console.error(`The book's judge: ${keyOf(t)}'s ${reply} didn't start:`, err));
+  return v;
 }
 // A group or a note left unjudged says why where its answer would lie (a typed box's page has no place for it)
 function unjudged(t: Target, why: 'day' | 'unread') {
@@ -185,6 +230,44 @@ function unjudged(t: Target, why: 'day' | 'unread') {
 export function judgeLater(t: Target) {
   setImmediate(() => void judge(t));
 }
+// The board's groups changed since the last look that have rested REST_MS since, each judged as it is now (server.ts
+// runs it twice a REST_MS): what it read already isn't judged again. The first look of all only marks where it got to.
+// looked: up to when this run has handed them out; out: those handed out and not judged yet, by their updated.
+let looked: string | undefined;
+const out = new Set<{ updated: string }>();
+export function judgeRested() {
+  const upto = new Date(Date.now() - REST_MS).toISOString(),
+    from = looked ?? setting(RESTED);
+  if (from !== undefined && from >= upto) return;
+  looked = upto;
+  if (from === undefined) return void remember(RESTED, upto);
+  const rested = db
+    .prepare(
+      'select id, updated from notebook_groups where by = ? and deleted is null and updated > ? and updated <= ?',
+    )
+    .all(BOARD, from, upto) as { id: number; updated: string }[];
+  for (const g of rested) {
+    out.add(g);
+    void judge({ grp: g.id }).finally(() => {
+      out.delete(g);
+      keepRested();
+    });
+  }
+  keepRested();
+}
+// (just under the oldest group still being judged, else up to the last look)
+function keepRested() {
+  const oldest = [...out].map(g => g.updated).sort()[0],
+    upto = oldest ? new Date(Date.parse(oldest) - 1).toISOString() : looked;
+  if (upto) remember(RESTED, upto);
+}
+// A group read with nothing to say back: its page drawn again with the seen tick (groupanswers.ts seenTick).
+async function tick(t: Target) {
+  const [groups, notebook] = await Promise.all([import('../notebookgroups.ts'), import('../notebook.ts')]);
+  const g = t.grp ? groups.row(t.grp) : undefined,
+    p = g && notebook.pageRow(g.page, null);
+  if (p) notebook.changed(p.notebook, p.id);
+}
 // A group edited (notebookgroups.ts editGroup), as it was: judged again only when its words changed
 export function judgeEdited(was: { id: number; words: string; texts: string }, words: string, texts: unknown[]) {
   if (words !== was.words || JSON.stringify(texts) !== was.texts) judgeLater({ grp: was.id });
@@ -197,9 +280,10 @@ export function verdictOf(t: Target) {
   const args = t.grp || t.note ? [value ?? null] : [value ?? null, t.text ?? ''];
   return db
     .prepare(
-      `select id, reply, why, words, created, wiped from ink_verdicts where ${column} = ?${extra} order by id desc limit 1`,
+      `select id, reply, why, words, drawn, created, wiped from ink_verdicts where ${column} = ?${extra} order by id desc limit 1`,
     )
-    .get(...args) as (Verdict & { words: string; created: string; wiped: string | null }) | undefined;
+    .get(...args) as
+    (Verdict & { words: string; drawn: string | null; created: string; wiped: string | null }) | undefined;
 }
 
 // An answer (a book_slips row) the board wiped unread: its verdict marked, the list to learn the examples from. Its
@@ -259,7 +343,7 @@ function keep(t: Target, v: { reply: Reply; why: string }, seen: Seen): Verdict 
   const id = Number(
     db
       .prepare(
-        'insert into ink_verdicts (grp, note, page, reply, why, words, created, saved) values (?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into ink_verdicts (grp, note, page, reply, why, words, created, saved, drawn) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         t.grp ?? null,
@@ -270,6 +354,7 @@ function keep(t: Target, v: { reply: Reply; why: string }, seen: Seen): Verdict 
         seen.words,
         new Date().toISOString(),
         seen.saved,
+        seen.drawn,
       ).lastInsertRowid,
   );
   return { id, ...v };
