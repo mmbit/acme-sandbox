@@ -33,6 +33,7 @@ import * as machines from './machines.ts';
 import { secret } from './secrets.ts';
 import * as storage from './storage.ts';
 import { reply } from './uploads.ts';
+import { checksFirstSql } from './urgency.ts';
 
 type RunState = 'waiting' | 'running' | 'done' | 'withdrawn' | 'stopped' | 'lost';
 type HelperName = 'lent' | 'server';
@@ -972,7 +973,7 @@ const sameKey = (given: string, key: string) => !!given && timingSafeEqual(diges
 const helperName = (helper: HelperName | null, machine: number | null = null) =>
   helper === 'server' ? "this server's helper" : (machines.findMachine(machine)?.name ?? runSettings().helper);
 
-// The oldest waiting run whose job still runs and that this helper may take, now its. A run it still held goes on
+// The first waiting run in line (inLine) whose job still runs and that this helper may take, now its. A run it still held goes on
 // without it: it asks for work only between runs, so it started again mid-run. Each helper, a lent machine's and this
 // server's, asks for its kind's runs ({ kind, cpus, memoryGb, bench, gpu, live }: machines.ts heard). The id it gets is
 // this take's attempt, which its later calls name. helper.mjs calls it the run's id and prints it, so it starts with the
@@ -997,7 +998,7 @@ function takeRun(helper: Helper, asked: unknown) {
     if (row.machine === helper.machine && row.kind === kind && (row.slot ?? 1) === slot)
       lose(row, `${helperName(helper.name, helper.machine)} started again during the run`);
   for (const row of openRuns('waiting')) if (!jobRuns(row.job)) end(row.id, 'waiting', 'withdrawn', 'its job ended');
-  const row = openRuns('waiting').find(waiting => mayTake(helper, named, waiting));
+  const row = inLine().find(waiting => mayTake(helper, named, waiting));
   sayMachines();
   if (!row) return 204;
   const now = new Date().toISOString();
@@ -1251,6 +1252,12 @@ const runRow = (id: number) => db.prepare('select * from helper_runs where id = 
 
 const openRuns = (state: 'waiting' | 'running') =>
   db.prepare('select * from helper_runs where state = ? order by id').all(state) as RunRow[];
+// The waiting runs in the order the helpers take them: urgent work's first (urgency.ts checksFirst, so a push's tests for
+// work the board waits on never queue behind older ordinary runs), then the oldest.
+const inLine = () =>
+  db
+    .prepare(`select r.* from helper_runs r where r.state = 'waiting' order by ${checksFirstSql('r.job')} desc, r.id`)
+    .all() as RunRow[];
 
 const jobRuns = (job: number) => !!db.prepare("select 1 from jobs where id = ? and status = 'running'").get(job);
 

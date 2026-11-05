@@ -240,7 +240,9 @@ test("a time a promise holds to: the play once more at every size's slow pick, f
   // The slow work takes 50 minutes, followed by the same two measured 15-minute runs.
   assert.equal(found.outlook.held, T0 + 80 * MIN);
   const { out } = await h.hq(await reader(), 'estimate', `#${id}`);
-  assert.match(out, /projected merge .* \(by .* four times in five: the time a promise holds to\)/);
+  assert.equal(found.outlook.safe, found.outlook.held + deployLag());
+  assert.match(out, /projected merge [^;]*; the one time to tell the board: live .*, four times in five/);
+  assert.doesNotMatch(out, /\(by /);
 });
 
 test("a queued job's own estimate is the one stored as it was queued", async () => {

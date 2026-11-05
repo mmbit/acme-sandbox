@@ -50,8 +50,27 @@ db.exec(`
 export const taskUrgent = (id: number) => urgentAt('urgent_tasks', id);
 export const threadUrgent = (id: string) => urgentAt('urgent_threads', id);
 export const projectUrgent = (id: string) => urgentAt('urgent_projects', id);
-export const branchUrgent = (branch: string) =>
-  Boolean((prepared(`select ${urgentSourceOn('?')} urgent`).get(branch) as { urgent: number }).urgent);
+// The branches among these with urgent work on them, in one statement: the claim's plan asks for every queued row's
+// branch, and at HQ's size a statement per row is too slow for it.
+export function urgentBranches(branches: Iterable<string>): Set<string> {
+  const urgent = prepared(`select b.value branch from (select distinct value from json_each(?)) b
+    where ${urgentSourceOn('b.value')}`).all(JSON.stringify([...new Set(branches)])) as { branch: string }[];
+  return new Set(urgent.map(row => row.branch));
+}
+
+// Work whose checks go first wherever they queue for a test machine (runs.ts takeRun, the worker's tests: the heartbeat's
+// `first`): urgent work (urgent_tasks: its own flag, its deliverable's or project's, expedited, or a fix or review of
+// urgent work's branch), or work on a thread with a window, a time given the board (its own deadline or the one its
+// deadline_from line reads, as projects.ts findThread walks it).
+export const checksFirstSql = (
+  job: string,
+) => `(coalesce((select urgent from urgent_tasks where id = ${job}), 0) or exists (
+  with recursive line(id, deadline_from) as (
+    select t.id, t.deadline_from from jobs fj join threads t on t.id = fj.thread where fj.id = ${job}
+    union select t.id, t.deadline_from from threads t join line l on t.id = l.deadline_from)
+  select 1 from line l join threads w on w.id = l.id where l.deadline_from is null and w.deadline is not null))`;
+export const checksFirst = (id: number) =>
+  Boolean((prepared(`select ${checksFirstSql('?1')} first`).get(id) as { first: number }).first);
 
 function urgentAt(table: string, id: string | number) {
   return Boolean(

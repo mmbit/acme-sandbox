@@ -82,6 +82,7 @@ import * as wakes from './wakes.ts';
 import * as work from './work.ts';
 import * as commitLines from './commitlines.ts';
 import { jobLog, logStep } from './log.ts';
+import { activity } from './activity.ts';
 import { jobFacts } from './jobfacts.ts';
 import { transcribe } from './voice.ts';
 import { teamEvent, inTeam } from './team.ts';
@@ -135,9 +136,9 @@ import * as notebookrounds from './notebookrounds.ts';
 import * as viewmarks from './viewmarks.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
-import * as notebookplaces from './notebookplaces.ts';   // and a sketch page's units' places
 import * as notebooktidy from './notebooktidy.ts';   // and its blank pages let go once left
 import { duplicatePage } from './notebookduplicate.ts'; // and a sketch page duplicated
+import { givePage } from './notebookgive.ts'; // and a page given to a guest
 import './notebookunits.ts';   // the groups from before scrap units carried into them, once
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
 import * as trypreview from './ink/trypreview.ts';
@@ -211,6 +212,8 @@ import * as callcard from './callcard.ts';   // their card on the desk phone, Ca
 import * as callsweep from './callsweep.ts';   // the dial, and the sweep every minute
 import * as callline from './callline.ts';   // and the call itself: the voice line's routes, Twilio's word, the join page
 import * as callguests from './callguests.ts'; // the board's guest on its call.
+import * as callaway from './callaway.ts'; // (the board away, a guest carrying its call.)
+import * as callpointers from './ink/callpointers.ts'; // pointer ink on a live call's page.
 import * as voiceprints from './voiceprints.ts'; // the voices calls recognise.
 import * as watchalong from './watchalong.ts';
 import * as callviews from './callviews.ts';
@@ -229,6 +232,7 @@ import * as runs from './runs.ts';   // long runs sent to a helper machine (hq r
 import * as testresults from './testresults.ts';   // pushes' tests, kept by the code they tested.
 import * as machines from './machines.ts';   // the machines that take them
 import { routes, JSON_MAX, readBody, parseJson, type RouteHandler, type RouteRequest, type RouteTable } from '../../../shared/routes/routes.ts';
+import { FONT_HOSTS } from './webfonts.ts';
 const MODULES_LOADED_MS = performance.now();
 
 // HQ's own version: a fingerprint of the files it's made of (not the repo's commit, which moves with every product
@@ -272,8 +276,9 @@ const HQ_CSP = csp();
 // of a preview (a guest's, or one in HQ's viewer) draws with that preview's pictures, styles and fonts, which the board's
 // own browser may load.
 const REPLAY_PAGE = '/shared/watchalong/replay.html', PREVIEWS = ZONE ? `https://*${preview.PREVIEW}` : '';
+// (Google's font hosts: webfonts.ts.)
 const REPLAY_CSP = `default-src 'self'; script-src ${ORIGIN}/shared/watchalong/replay.js ${ORIGIN}/shared/watchalong/vendor/rrweb-replay.js; ` +
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${PREVIEWS}; font-src 'self' data: https://fonts.gstatic.com ${PREVIEWS}; ` +
+  `style-src 'self' 'unsafe-inline' ${FONT_HOSTS.stylesheets} ${PREVIEWS}; font-src 'self' data: ${FONT_HOSTS.files} ${PREVIEWS}; ` +
   `img-src 'self' data: blob: ${PREVIEWS}; media-src 'self' blob: ${PREVIEWS}; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; ` +
   "frame-ancestors 'self'";
 const PAGE_CSP: Record<string, string | undefined> = { '/login': csp(loginPage()), '/enroll': csp(enrollPage()), '/pair': csp(pairPage()), [REPLAY_PAGE]: REPLAY_CSP };
@@ -523,6 +528,7 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
   'POST /api/notebooks/pages/tidy': (q, s, b) => refusal(notebooktidy.tidyPages(b)),
   'POST /api/notebooks/pages/duplicate': (q, s, b) => refusal(duplicatePage(b)),
+  'POST /api/notebooks/pages/give': (q, s, b) => refusal(givePage(b)),
   'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
   'POST /api/notebooks/pages/zoom': (q, s, b) => refusal(notebook.zoomPage(b)),
   // (at once, never undone: the board's Undo of a send gone.)
@@ -534,14 +540,14 @@ const api: Record<string, BoardRoute> = {
   },
   'POST /api/notebooks/groups/move': (q, s, b) => refusal(notebookgroups.moveGroup(b)),
   // (a scrap handed to someone from the short list)
-  'GET /api/notebooks/people': () => bookassign.listPeople(),
+  'GET /api/notebooks/people': (q, s, b) => bookassign.listPeople(b),   // (?page=)
   'POST /api/notebooks/groups/assign': (q, s, b) => refusal(bookassign.assignGroup(b)),
+  'POST /api/notebooks/groups/answer': (q, s, b) => refusal(bookassign.answerGroup(b)),
   'POST /api/notebooks/groups/delete': (q, s, b) => refusal(notebookgroups.deleteGroup(b)),
   'POST /api/notebooks/replies/delete': (q, s, b) => refusal(notebooksend.deleteReply(b)),
   'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
   'POST /api/notebooks/groups/resize': (q, s, b) => refusal(notebookgroups.resizeGroup(b)),
   'POST /api/notebooks/groups/split': (q, s, b) => refusal(notebookgroups.splitGroup(b)),
-  'POST /api/notebooks/groups/place': (q, s, b) => refusal(notebookplaces.placeGroups(b)),
   // the agents' answers: a form answered, an answer ticked (a version picked), and what waits on the board (bookanswer.ts;
   'POST /api/notebooks/answers/form': (q, s, b) => refusal(bookanswer.answerForm(b)),
   'POST /api/notebooks/answers/tick': (q, s, b) => refusal(bookanswer.tickAnswer(b)),
@@ -730,6 +736,8 @@ const speaker = (as: unknown, me: Me) => jobs.boardId(me.agent) ? undefined : as
   : inTeam(me.id, String(as)) && !colleague(String(as)) ? String(as) : undefined;
 // Who posts in a workspace: the job, and its agent or the team member speaking (workspaces.ts)
 const poster = (b: { as?: unknown }, me: Me) => ({ job: me.id, agent: speaker(b.as, me) ?? me.agent });
+// Who writes the CEO's page (pad.ts): a job, or a call by its number
+const writer = (me: Me) => me.call ? { agent: me.agent, job: null, call: me.callId } : { agent: me.agent, job: me.id };
 // A card that brings a product back (its --back slugs, or the open card's own, for hq rewrite: b.id) recommends nothing
 // (cardcheck.js cardProblem)
 const bringsBack = (b: any) => Array.isArray(b.back) && b.back.length > 0 || owed.productsOf(Number(b.id) || 0).some(p => p.back);
@@ -1203,9 +1211,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     return agent ? refusal(goals.markGoal(String(b.id ?? ''), b.goal === true, agent)) : 403;
   },
-  // hq pad: the CEO's page, its versions, and the CEO's jobs' rewrite of it (pad.ts).
+  // hq pad: the CEO's page, its versions, and the CEO's jobs' rewrite of it (pad.ts); hq pad add: words added at its
+  // end, from a job or the CEO's call (its page tool.)
   'GET /api/agent/pad': b => (b.history === '1' ? { versions: pad.padHistory() } : { page: pad.pad() }),
-  'POST /api/agent/pad': (b, me) => refusal(pad.writePad(b.text, { agent: me.agent, job: me.id })),
+  'POST /api/agent/pad': (b, me) => refusal(pad.writePad(b.text, b.version, writer(me))),
+  'POST /api/agent/pad/add': (b, me) => refusal(pad.addToPad(b.add, writer(me))),
   'GET /api/agent/seat-warnings': () => ({ warning: seatwarning.getSeatWarning() }),
   'POST /api/agent/seat-warnings': (b, me) => {
     const agent = speaker(b.as, me);
@@ -1347,7 +1357,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const old = b.replaces != null ? ledger.item(Number(b.replaces)) : undefined;
     if (me.call && old) b = { ...b, kind: old.kind, owner: old.owner };
     else if (old) b = { kind: old.kind, owner: old.owner, ...b };
-    else if (me.call && !b.owner) b = { ...b, owner: ceo() };
+    // (a keys call's item is its agent's: callitems.ts ownerOn.)
+    else if (me.call && on) {
+      const owner = callitems.ownerOn(on, b.owner || null);
+      if (isRefused(owner)) return refusal(owner);
+      b = { ...b, owner: owner ?? ceo() };
+    }
     if (!on || (me.call ? b.replaces == null && b.kind !== 'task' : !ledger.mine(me.id, on))) return new Refused(403, me.call ? "on a call, only what's to be done (a task) or a correction goes on the list" : "this job doesn't work for that call");
     if (b.replaces != null && !me.call && !ledger.followsUp(me.id)) return new Refused(403, "only a call's follow-up replaces an earlier item");
     if (b.replaces != null && !old) return new Refused(409, `item #${b.replaces} isn't there to replace`);
@@ -1355,7 +1370,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (me.call && b.replaces != null && !['open', 'ready'].includes(old!.status)) return new Refused(409, `item #${b.replaces} isn't open: on a call, only an open item is replaced (the call's follow-up can replace a handled one)`);
     if (me.call && old && old.call !== me.callId && !me.listed?.includes(old.id)) return new Refused(409, `item #${old.id} isn't one from your briefing: the call's follow-up corrects it from the transcript`);
     if (!assignable(String(b.owner ?? ''))) return new Refused(400, `${b.owner} isn't a colleague who takes work`);
-    const listed = callitems.toList(on, b, me);
+    // (page: false, a live call's task on its list alone, off its notes page: a fault in our tools on a call about
+    // something else.)
+    const listed = callitems.toList(on, b, me, b.page !== false);
     return refusal(isRefused(listed) ? listed : listed());
   },
   // hq item link <item> job:<id> | request:<id> | pause:<thread or project> | <ref>, and hq item drop <item> "why": the
@@ -1645,6 +1662,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   //
   'GET /api/agent/search': (b, me) => memory.search(b.q, me, b.limit),
   'GET /api/agent/history': (b, me) => memory.history(me, b.q, b.limit),
+  // hq activity: a job's or an agent's recent activity as HQ's card shows it, what agents can read of it (activity.ts).
+  'GET /api/agent/activity': b => {
+    const read = activity({ job: Number(b.job) || undefined, agent: str(b.agent), since: str(b.since), limit: Number(b.limit) || undefined });
+    return typeof read === 'string' ? new Refused(/^no (job|agent) /.test(read) ? 404 : 400, read) : read;
+  },
   // hq intercom: the board's intercom with the CEO, everyone's like the board's calls, a day read whole (intercom.ts) or
   // its lines found by words and meaning (memory.ts)
   'GET /api/agent/intercom': async (b, me) => refusal(await memory.findIntercom(b.q, me, b.limit, b.day)),
@@ -1680,7 +1702,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const access = working || memory.callAccess(id, me);
     if (access !== true) return refusal(access);
     if (chat.carriesKeys(id)) jobs.handedKeys(me.id);
-    if (b.view === 'moments') return refusal(callviews.timeline(id));
+    if (b.view === 'moments') return refusal(await callviews.timeline(id));
     if (b.view === 'screen') return refusal(await callviews.screenAt(id, str(b.at)));
     if (b.view != null) return new Refused(400, 'view is moments or screen');
     return refusal(working ? ledger.transcript(id, b.lines) : memory.call(id, me));
@@ -1768,11 +1790,12 @@ const MANAGE_ROUTES = ['POST /api/agent/cancel', 'POST /api/agent/stop', 'POST /
 // follow-up's, rule 7), the estimates' checks (its manage tool).
 const CALL_READS = ['GET /api/agent/report', 'GET /api/agent/overseer', 'GET /api/agent/route-log', 'GET /api/agent/items',
   'GET /api/agent/estimate/audit', 'GET /api/agent/estimate/calibration'];
-// (the when tool: the eta tool)
-const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET /api/agent/search', 'GET /api/agent/history', 'GET /api/agent/call', 'GET /api/agent/intercom',
+// (the when tool: the eta tool; the activity tool)
+const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET /api/agent/search', 'GET /api/agent/history', 'GET /api/agent/activity', 'GET /api/agent/call', 'GET /api/agent/intercom',
   'GET /api/agent/seat-warnings', 'POST /api/agent/seat-warnings',
   'GET /api/agent/numbers', 'GET /api/agent/when', 'GET /api/agent/estimate', 'GET /api/agent/outlooks', 'GET /api/agent/now', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message',
   'POST /api/agent/expedite', // (no call-answer route: a call's agent answers with the rest.)
+  'POST /api/agent/pad/add', // (the CEO's page tool: it adds, never rewrites.)
   ...MANAGE_ROUTES, ...CALL_READS]);
 // The company's own agent routes (kits.ts): answered like the platform's, never on a call
 for (const [k, r] of kits.agentRoutes(new Set(Object.keys(agentApi)))) agentApi[k] = async (b, me) => refusal(await r(b, me));
@@ -1785,13 +1808,19 @@ const voice: Record<string, (b: any) => unknown> = {
   // phone: the call is on the phone line, with no screen for pictures
   // a call out to a partner (callouts.ts): its briefing, its hand-over, its ticket, and a join link's room
   'POST /api/voice/call-context': b => b.callout != null ? callline.context(b) : call.context(String(b.agent ?? ceo()), String(b.lang ?? 'en'), Number(b.request) || 0, String(b.token ?? ''),
-    b.phone === true, b.walk === true),   // (walk)
+    b.phone === true, b.walk === true, typeof b.guest === 'string' ? b.guest : ''),   // (walk; guest)
   'POST /api/voice/call-end': b => b.callout != null ? callline.handOver(b) : call.handOver(String(b.agent ?? ''), Array.isArray(b.lines) ? b.lines.map(String) : [], Number(b.request) || 0, String(b.token ?? ''), b.times),
   // (the transcript so far, while the call goes on.)
   'POST /api/voice/call-lines': b => call.kept(String(b.agent ?? ''), Array.isArray(b.lines) ? b.lines.map(String) : undefined, String(b.token ?? ''), b.times),
   'POST /api/voice/call-ticket': b => callline.redeem(String(b.ticket ?? '')) ?? phone.redeem(String(b.ticket ?? '')),
   'POST /api/voice/phone-done': b => phone.phoneDone(String(b.call ?? '')),   // the agent on the shop's line hung up
   'POST /api/voice/join-ticket': b => callline.joinTicket(String(b.token ?? '')),
+  // (the board left its call to its guests, or came back; a guest's ticket to carry it: callaway.ts.)
+  'POST /api/voice/call-away': b => {
+    const t = call.callAgent(String(b.token ?? ''));
+    return t?.call && t.agent === String(b.agent ?? '') ? callaway.away(t.call, b.away === true) : 404;
+  },
+  'POST /api/voice/guest-ticket': b => callaway.redeemTicket(String(b.ticket ?? '')),
   // (a picture the board shared on the live call, for its agent: pictures.ts)
   'GET /api/voice/picture': b => pictures.forVoice(Number(b.id), Number(b.call)),
   // (a walk-through: the screen's moments and a picture with a caller's turn, and the agent's screen tool, by the
@@ -1804,6 +1833,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'GET /api/voice/note': b => bookcalls.forVoice(Number(b.id), Number(b.call)),
   // (a mark on the call's notes page, with who drew it: callguests.ts.)
   'GET /api/voice/drawn': b => callguests.markForVoice(Number(b.id), Number(b.call)),
+  // (the agent's turn on a pointer done: its ink goes. ink/callpointers.ts.)
+  'POST /api/voice/pointed': b => refusal(callpointers.clear(b)),
   // (a call's notes page: the agent's notes, one per change, and its title. callnotes.ts)
   'POST /api/voice/write-down': async b => refusal(await callnotes.writeDown(b)),
   'POST /api/voice/title': b => refusal(callnotes.title(b)),
@@ -1917,6 +1948,8 @@ const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => 
   if (!me) return send(request.res, 401, { error: 'agent token' });
   // (a call's agent repeats the refusal to the board, so it says why.)
   if (me.call && !CALL_ROUTES.has(key)) return send(request.res, 403, { error: "a call can't do this, as none of the call's tools reaches it: the call's follow-up does it" });
+  // (a guest is never the board: while the board has left its call to one, the call's tools reach nothing of HQ.
+  if (me.call && callaway.boardAway(me.callId)) return send(request.res, 403, { error: 'the board has left this call to its guest, who isn’t the board: this stays off until the board comes back. Note it for your follow-up instead.' });
   if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
   return answered(request, afterScrub(b => handle(b, me)), JSON_MAXES[key], () => me.id || undefined);
 };

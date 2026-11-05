@@ -13,7 +13,7 @@ import { CallBubble } from './callbubble.js';
 import * as world from '../world/world.js';
 import { scene, capFps, CALL_FPS, REST_FPS } from './stage.js';
 import { icon } from './icons.js';
-import { tell } from './desk.js';
+import { tell } from './alert.js';
 import { addGuest } from './callguest.js';
 import { paintHand } from './callhand.js';
 
@@ -329,8 +329,7 @@ function showWatching(c) {
   screenToLine(c);
 }
 // The line hears whether the screen is shown, paused or off the moment that changes, and again each time it picks up
-// (again: call.js), not only from a turn's look at the screen that came in time (call #258: one that didn't had the agent
-// say it saw nothing, the screen shown for 19 s).
+// (again: call.js), not only from a turn's look at the screen, which can fail or come too late while a share is on.
 export function screenToLine(c, again = false) {
   const state = !c.watch ? 'off' : c.paused ? 'paused' : 'shown';
   if ((state === c.screenSaid && !again) || c.ws?.readyState !== WebSocket.OPEN) return;

@@ -21,7 +21,7 @@ import {
 } from './detached.ts';
 import { gitFlow } from './git.ts';
 import { ResponseError } from './reports.ts';
-import { ownRun, ownershipSignal, requestSignal, waitOwned } from './ownership.ts';
+import { ownedUntil, ownRun, ownershipSignal, requestSignal, waitOwned } from './ownership.ts';
 import { seatPlaces } from './places.ts';
 import { inChecks, runChecks } from './pushchecks.ts';
 
@@ -369,4 +369,19 @@ test('heartbeat refusal ends an in-flight privileged push and its waiting HTTP t
   await disconnected.promise;
   assert.equal(places.roomOn(seat), true);
   assert.deepEqual(hq.finishes, []);
+});
+
+test('work owned until a stop (a check job stopped with hq stop) ends with it, and the run around it goes on', async () => {
+  const stop = new AbortController();
+  const outcome = await ownRun(
+    { job: 9, runs: tmpdir(), heartbeat: async () => ({}), answered: () => {}, stop: () => {}, log: () => {} },
+    async () => {
+      const checks = ownedUntil(stop.signal, () => waitOwned(new Promise(() => {})));
+      stop.abort();
+      await assert.rejects(checks);
+      assert.equal(ownershipSignal()?.aborted, false);
+      return 'reported';
+    },
+  );
+  assert.equal(outcome, 'reported');
 });

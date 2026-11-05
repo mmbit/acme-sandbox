@@ -51,6 +51,8 @@ export function requestHold<T>(request: (excluded: Excluded) => T) {
   const excluded = { ms: 0 };
   return scopes.run(excluded, () => request(excluded));
 }
+// The whole wait goes, with what ran on HQ's thread inside it (a thread's answer taken in, the JSON a replay sends
+// Chromium): wrap only waits whose part on the thread is small. That part still shows in loop_delays, under no name.
 export async function exclude<T>(until: Promise<T>) {
   const began = performance.now();
   try {

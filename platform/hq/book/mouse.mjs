@@ -1,10 +1,10 @@
 // book-check.mjs's stories of the book's tools with a mouse on a desktop (shell/ink/booktools.js, booktexts.js; Ink's
 // folder): a line drawn with the pen across a picture just taped in, which stays put (only Select moves things);
 // a line in another colour and a highlighted line, the colour remembered; a note typed on the page, kept through
-// a reload, edited, and emptied away. Each asserts what the board sees (pixels on the book's paper, the words on it)
-// and what the store keeps (the page saved).
+// a reload, edited, and emptied away. Each in a scrap opened on the page (the grid takes no ink), asserting what the
+// board sees (pixels on its sheet, the words on it) and what the store keeps (the page saved).
 import assert from 'node:assert/strict';
-import { DESKTOP, heard, until } from './kit.mjs';
+import { DESKTOP, heard, openScrap, until } from './kit.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
 
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, notes, posts, org, renumber, shot, settled,
@@ -25,6 +25,7 @@ async function drawsOnAPicture(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await onDesk(browser, c);
   try {
+    await inScrap(page, c, free);
     await pasteGreen(page);
     const placed = await savedWhere(c, free.id, p => p.scraps?.length === 1);
     await page.waitForTimeout(c.settle);
@@ -55,7 +56,7 @@ async function inks(browser, c) {
   const free = freePage(c);
   let { page, done } = await onDesk(browser, c);
   try {
-    const paper = await paperBox(page);
+    const paper = await inScrap(page, c, free);
     // Blue from the colour card, a line in it (the card's name)
     await tool(page, 'Pen').click();
     await page.getByRole('menuitemradio', { name: 'Blue' }).click();
@@ -83,6 +84,7 @@ async function inks(browser, c) {
     await done();
     const again = await onDesk(browser, c, { keep: true });
     ({ page, done } = again);
+    await inScrap(page, c, free);
     await pick(page, 'Pen');
     await line(page, paper.x + 140, paper.y + 420, 200);
     const third = await savedWhere(c, free.id, p => p.ink.length === 3);
@@ -98,7 +100,7 @@ async function typed(browser, c) {
   const free = freePage(c);
   let { page, done } = await onDesk(browser, c);
   try {
-    const paper = await paperBox(page);
+    const paper = await inScrap(page, c, free);
     // the text tool: a press on the paper, the caret there, typed, and Escape keeps it
     await pick(page, 'Text');
     await page.mouse.click(paper.x + 160, paper.y + 260);
@@ -115,9 +117,11 @@ async function typed(browser, c) {
     await done();
     const again = await onDesk(browser, c, { keep: true });
     ({ page, done } = again);
-    const words = page.locator('#book .bk-desk').getByText('Order the teal mugs');
-    await words.waitFor({ timeout: 5000 });
-    assert.ok(await words.isVisible(), 'the typed note shows after a reload');
+    const onCard = page.locator('#book .bk-desk').getByText('Order the teal mugs');
+    await onCard.waitFor({ timeout: 5000 });
+    assert.ok(await onCard.isVisible(), 'the typed note shows on its card after a reload');
+    await inScrap(page, c, free);
+    const words = page.locator('#book .bk-page[data-focus]').getByText('Order the teal mugs');
     // a click edits it again; emptied, it's gone from the page and the store
     await words.click();
     await page.keyboard.press('Control+a');
@@ -125,7 +129,7 @@ async function typed(browser, c) {
     await page.keyboard.press('Escape');
     const one = await savedWhere(c, free.id, p => p.texts?.length === 1);
     assert.equal(one.texts[0].text, 'Ask Lark');
-    assert.equal(await page.locator('#book .bk-desk').getByText('Order the teal mugs').count(), 0, 'gone');
+    assert.equal(await words.count(), 0, 'gone');
     // Undo brings it back
     await page.keyboard.press('Control+z');
     await savedWhere(c, free.id, p => p.texts?.length === 2);
@@ -215,7 +219,33 @@ export async function pick(page, name, how = 'click') {
   } else if ((await b.getAttribute('aria-pressed')) !== 'true') await b[how]();
 }
 const INKS = ['Pen', 'Marker'];
-export const paperBox = page => page.locator('#book .bk-desk').boundingBox();
+// The paper drawn on: an opened scrap's sheet, or else the book's
+export const paperBox = async page => {
+  const sheet = page.locator('#book .bk-sheet');
+  return (await sheet.isVisible()) ? sheet.boundingBox() : page.locator('#book .bk-desk').boundingBox();
+};
+// The free page's scrap opened to draw in: the one on it by its card, or else a new one made by a tap (tap([x, y]): a
+// pen's, by default the mouse's click) on its blank paper. Its sheet's box on the screen
+export async function inScrap(page, c, free, tap = ([x, y]) => page.mouse.click(x, y)) {
+  const [had] = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups,
+    desk = await page.locator('#book .bk-desk').boundingBox(),
+    { gid, sheet } = await openScrap(page, { tap }, had?.id, had ? undefined : [desk.x + 120, desk.y + 200]);
+  if (had) assert.equal(gid, had.id, 'the scrap tapped is the one opened');
+  return sheet;
+}
+// The lines on the free page's scraps, as the store has them
+export const inkOn = (c, free) =>
+  c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.reduce((n, g) => n + g.ink.length, 0);
+// The middle of a card's part on the screen, clear of the paper's edges, once one shows
+export const cardInSight = page => until(() => page.evaluate(inSight), 'a card in sight');
+function inSight() {
+  for (const el of document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit[data-unit]')) {
+    const r = el.getBoundingClientRect(),
+      [top, bottom] = [Math.max(r.top, 80), Math.min(r.bottom, innerHeight - 80)];
+    if (r.width && bottom - top > 60) return [r.x + r.width / 2, (top + bottom) / 2];
+  }
+  return null;
+}
 // A line drawn with the mouse, from x across by dx
 export async function line(page, x, y, dx) {
   await page.mouse.move(x, y);

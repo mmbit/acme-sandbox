@@ -396,6 +396,28 @@ test("this server's helper leaves a run to the lent one while that asks for work
   await h.finish(job);
 });
 
+test("a lent machine takes urgent work's waiting run before older ordinary ones, and the ordinary ones in the order they came", async () => {
+  await lendOne();
+  const ordinary = await h.start({ agent: 'bolt' });
+  const urgent = await h.start({ agent: 'kit' });
+  const older = (await sendRun(ordinary.token, { command: 'true' })).json.id;
+  const newer = (await sendRun(ordinary.token, { command: 'true' })).json.id;
+  const first = (await sendRun(urgent.token, { command: 'true' })).json.id;
+  h.db.prepare('update jobs set urgent = 1 where id = ?').run(urgent.id);
+  const taken: string[] = [];
+  for (let take = 0; take < 3; take++) {
+    const id = (await asHelper('/api/helper/take', {})).json.id;
+    taken.push(id);
+    assert.equal((await finishAs(lentKey, id)).status, 200);
+  }
+  assert.deepEqual(
+    taken,
+    [first, older, newer].map(id => takeOf(id)),
+  );
+  await h.finish(ordinary);
+  await h.finish(urgent);
+});
+
 // A board's machine as GET /api/machines shows it
 const shownMachine = async (id: number) =>
   (await h.board('/api/machines')).body.find((one: { id: number }) => one.id === id);

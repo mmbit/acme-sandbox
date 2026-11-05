@@ -84,3 +84,9 @@ export async function waitOwned<T>(pending: Promise<T>): Promise<T> {
   }
 }
 export const sleepOwned = (ms: number) => sleep(ms, undefined, { signal: ownershipSignal() });
+// Work that ends with `stop` too (hq stop of a job with no CLI, its checks: worker.ts carryChecks): every wait, request
+// and launch in it stops with the run or with it.
+export function ownedUntil<T>(stop: AbortSignal, work: () => Promise<T>) {
+  const owned = ownershipSignal();
+  return ownership.run(owned ? AbortSignal.any([owned, stop]) : stop, work);
+}

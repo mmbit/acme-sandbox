@@ -35,6 +35,7 @@
 .req .agekey .secret .copy,
 .intercom .call .row button,
 #viewer .bar button:not(.pin),
+#viewer .options [data-book],
 .req .photo .act,
 .gz-tabs button,
 #panel-close,
@@ -93,7 +94,9 @@
 #viewer :is(.bar .seg button, .bar .qr, .stage .head .link)[aria-pressed='true'],
 #viewer .bar .qr[aria-expanded='true'],
 #viewer .stage .head .tabs [aria-selected='true'],
-#viewer .sharebox .seg button[aria-pressed='true'] {
+#viewer .sharebox .seg button[aria-pressed='true'],
+#viewer .bar .more[aria-expanded='true'],
+#viewer .options [data-book][aria-checked='true'] {
   background: var(--cy-on);
   color: var(--cy-hi);
   border-color: var(--cy);
@@ -499,7 +502,7 @@ mark {
     .req .agekey .make,
     .intercom .chat .call,
     #viewer .bar .pin,
-    #viewer .bar .share,
+    #viewer .options .share,
     .device header .past-btn,
     .pager .to-list,
     .pager .later-btn

@@ -59,8 +59,8 @@ export async function submit(book, v, copy, aside = []) {
   } catch (e) {
     return said(book, page, e.message);
   }
-  // (what was drawn on it before can't be undone now: its groups are sent)
-  keep(book.steps, s => s.page !== page);
+  // (what was drawn on it before can't be undone now, in its opened scraps too: its groups are sent.)
+  keep(book.steps, s => s.page !== page && s.page?.parent !== page);
   await pressed;
   went(book, page, answer);
   foley('stamp', { peel: 0.5 }, { vol: 0.5 });
@@ -126,8 +126,8 @@ export async function sendShown(book, hooks) {
     return said(book, page, e.message);
   }
   const step = { page, undo: () => takeBack(book, page, hooks), redo: null };
-  // (what was drawn on it before can't be undone now: its groups are sent)
-  keep(book.steps, s => s.page !== page);
+  // (what was drawn on it before can't be undone now, in its opened scraps too: its groups are sent.)
+  keep(book.steps, s => s.page !== page && s.page?.parent !== page);
   book.steps.push(step);
   went(book, page, answer);
   // (its tap heard)

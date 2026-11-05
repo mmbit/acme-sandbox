@@ -1,8 +1,8 @@
 // The inbox of new work an agent proposes (hq propose) instead of queueing it. It goes to the owner of the project it names
 // (else of the proposer's thread's project; with neither, to the CEO) and waits there, out of the queue, until that owner
 // or the CEO accepts it into a thread of the plan, as an ordinary queued job with the proposer's brief, or drops it with a
-// line on why. The CEO sees every one (hq inbox --all). The owner hears of it at once in a running session; otherwise HQ
-// makes the owner's planning job, one open at a time, which takes everything waiting when it starts. The proposer's job
+// line on why. The CEO sees every one (hq inbox --all). The owner hears of it through its planning job for the project,
+// one open at a time, which takes everything waiting when it starts. The proposer's job
 // hears a drop while it runs, and hq inbox shows the proposer what became of each.
 // (its messages say deliverable, the board's word for a thread)
 import { openProposal, windowed } from './inbox.ts'; // (openProposal)
@@ -109,7 +109,8 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
       const tasks = drawn.jobs.map(job => `#${job}`).join(' and ');
       const running = by && messages.runningSession(owner);
       const line = `Review ${reviewinbox.externalId(item.proposal)} from ${item.agent} for ${item.project}: ${reason}, so HQ drew ${tasks} for ${drawn.author} to answer it. To draw it another way, cancel ${drawn.jobs.length > 1 ? 'them' : 'it'} and accept the item again (hq inbox ${reviewinbox.externalId(item.proposal)}).`;
-      // held: unread when the session ends, it lapses rather than becoming a job
+      // held, though its item is accepted already (messages.ts take offers it, decided before it was sent): unread when
+      // the session ends, it lapses rather than becoming a job.
       if (running) {
         const sent = messages.send(by, owner, line, running.id, item.proposal);
         if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
@@ -183,8 +184,7 @@ export function ownerChanged(project: string, by: { agent: string; job: number }
 
 // Every minute (server.ts): open proposals left for a planning job that has ended, which reached it after it started
 // (heard_at: a new one, or one handed on with its project; or whose job never started), go to their owner again.
-// One it had at its start it decided to leave open. Proposals a session holds (tell)
-// go on as soon as it stops running (ended, yielded back to the queue, parked on a card), their notice withdrawn.
+// One it had at its start it decided to leave open. One any other job holds goes on now, its notice withdrawn.
 // Review changes a later round or the merge has left behind close first: nobody has anything left to decide on them
 export function sweep() {
   inOneStep(() => {
@@ -210,7 +210,7 @@ export function sweep() {
     .prepare(
       `select p.id, p.agent, p.title, p.project from proposals p join jobs j on j.id = p.heard_by where p.status = 'open'
       and (j.status not in ${jobs.OPEN_JOBS} and (j.started is null or p.heard_at > j.started)
-        or j.status != 'running' and j.id not in (select job from planning_jobs)) order by p.id`,
+        or j.id not in (select job from planning_jobs)) order by p.id`,
     )
     .all() as { id: number; agent: string; title: string; project: string | null }[];
   for (const p of left) {
@@ -359,12 +359,10 @@ export const waiting = () =>
 const notTheirs = (p: Proposal, by: string) =>
   [ownerOf(p), ceo()].includes(by) ? undefined : `proposal #${p.id} is ${ownerOf(p)}'s to decide (or the CEO's)`;
 
-// The owner hears of a proposal: through its planning job for the proposal's project (the one open, queued, running or
-// blocked, which reads the project's inbox at its start and again before it ends), else in its running Claude session at its next step, else through a
-// new planning job. A proposal holding a thread's window (inbox.ts) reaches the running session first. One told to a
-// session stays with it while it runs, its notice held there: left open when it stops, the sweep tells the owner again.
-// A running planning job for another project is no such session: the proposal goes
-// to its own project's planning job, the open one or a new one. Only non-urgent CEO proposals wait for the summary
+// The owner hears of a proposal through its planning job for the proposal's project: the one open (queued, running or
+// blocked, which reads the project's inbox at its start and again before it ends), else a new one. A proposal holding a
+// thread's window (inbox.ts) is also a held notice on the owner's running Claude session, which may decide it first,
+// unless that session is a planning job for another project. Only non-urgent CEO proposals wait for the summary
 // (summary.ts). A refused line throws OwnerNotificationError.
 export function tell(
   owner: string,
@@ -377,19 +375,18 @@ export function tell(
       .run(job, job === null ? null : new Date().toISOString(), p.id);
   const urgent = windowed(p.id);
   if (owner === ceo() && !urgent) return heardBy(null);
-  const planning = openPlanning(owner, p.project);
-  const session = (by || urgent) && messages.runningSession(owner);
-  const sorts = session ? planningProject(session.id) : undefined;
-  const running = sorts === undefined || sorts === p.project ? session : undefined;
-  if (planning && !(urgent && running)) return heardBy(planning.id);
-  if (running) {
-    const label = reviewinbox.externalId(p.id);
-    const line = `${typeof label === 'number' ? 'Proposal #' : 'Review '}${label} from ${p.agent}${p.project ? ` for ${p.project}` : ''}: "${p.title}". Accept it into your plan or drop it (hq inbox ${label}).`;
-    if (by) {
-      const sent = messages.send(by, owner, line, running.id, p.id);
-      if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
-    } else messages.notice(owner, line, running.id, p.id);
-    return heardBy(running.id);
-  }
-  heardBy(planningJob(owner, p.project));
+  const planning = openPlanning(owner, p.project)?.id ?? planningJob(owner, p.project);
+  heardBy(planning);
+  const session = urgent && messages.runningSession(owner);
+  if (!session) return;
+  const sorts = planningProject(session.id);
+  const sortsAnother = sorts !== undefined && sorts !== p.project;
+  if (sortsAnother) return;
+  const label = reviewinbox.externalId(p.id);
+  const item = typeof label === 'number' ? `Proposal #${label}` : `Review ${label}`;
+  const line = `${item} from ${p.agent}${p.project ? ` for ${p.project}` : ''}: "${p.title}". Accept it into your plan or drop it (hq inbox ${label}).`;
+  if (by) {
+    const sent = messages.send(by, owner, line, session.id, p.id);
+    if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
+  } else messages.notice(owner, line, session.id, p.id);
 }

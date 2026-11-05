@@ -231,3 +231,54 @@ test('state reports do not manufacture zero-burn intervals or move provider obse
   );
   await h.finish(work);
 });
+
+test('a read for a time before the last gives the rates read then, from the kept intervals or on its own', async () => {
+  const start = T0 + 30 * HOUR;
+  const reading = (used: number, observedAt = Date.now()) =>
+    h.worker('seat', {
+      seat: 'claude-earlier',
+      engine: 'claude',
+      state: 'ready',
+      util: used,
+      week: used,
+      resets: start + 9 * HOUR,
+      weekResets: start + 7 * 24 * HOUR,
+      fiveHourObservedAt: observedAt,
+      weekObservedAt: observedAt,
+    });
+  const seen = (at: number) => {
+    const rates = fillRates(at).get('claude')!;
+    return ['five', 'week', 'measurements', 'mix'].map(key => rates[key as 'five'].get('claude-earlier'));
+  };
+  mock.timers.setTime(start);
+  await reading(0.1);
+  const work = await h.start({ agent: 'bolt' }, { seat: 'claude-earlier' });
+  for (const [hour, used] of [
+    [1, 0.2],
+    [2, 0.3],
+  ]) {
+    mock.timers.setTime(start + hour * HOUR);
+    await h.heartbeat(work);
+    await reading(used);
+  }
+  mock.timers.setTime(start + 2.5 * HOUR);
+  await h.finish(work);
+  mock.timers.setTime(start + 3 * HOUR);
+  await reading(0.35);
+  const then = seen(start + 3 * HOUR);
+  assert.ok(Math.abs((then[0] as number) - 0.1) < 1e-10);
+  mock.timers.setTime(start + 4 * HOUR);
+  await reading(0.4);
+  const four = seen(start + 4 * HOUR);
+  // (the intervals to three o'clock are kept by now: read from them)
+  assert.deepEqual(seen(start + 3 * HOUR), then);
+  // (a revision of the one o'clock reading, reported later, is no part of what was known at four: read from the kept
+  // intervals before it, or at three: priced on its own, being more than the kept hour before the window)
+  mock.timers.setTime(start + 4.5 * HOUR);
+  await reading(0.5, start + HOUR);
+  mock.timers.setTime(start + 5 * HOUR);
+  await reading(0.45);
+  assert.notDeepEqual(seen(start + 5 * HOUR)[2], four[2]);
+  assert.deepEqual(seen(start + 4 * HOUR), four);
+  assert.deepEqual(seen(start + 3 * HOUR), then);
+});

@@ -3,10 +3,16 @@
 // alone, and each mark heard by the call's agent with who drew it (callguests.ts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { appendFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { harness } from './harness.ts';
 
-const h = await harness('callguests', { env: { CADDY_HOST: '127.0.0.1' } });
+// (the privacy page a guest's call bar links: brand.yaml callsOut.privacy)
+const PRIVACY = 'https://shop.example.test/privacy-nl.html#partner-calls';
+const h = await harness('callguests', {
+  env: { CADDY_HOST: '127.0.0.1' },
+  before: repo => appendFileSync(`${repo}/company/brand.yaml`, `\ncallsOut:\n  privacy:\n    nl: ${PRIVACY}\n`),
+});
 const { ORIGIN } = await import('./config.ts');
 const { onPublish } = await import('./events.ts');
 const api = '/guest/notebooks/api';
@@ -132,19 +138,30 @@ test('a scan of the call’s code joins its page with a pen of its own, and the 
     body: JSON.stringify({ page, ink: [stroke] }),
   });
   assert.equal(elsewhere.status, 403);
+  // A picture dropped on the call's page is kept for it and read back; not on another page
+  const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#c33' } })
+    .png()
+    .toBuffer();
+  const upload = (to: number) =>
+    fetch(h.base + `${api}/pictures?page=${to}`, {
+      method: 'POST',
+      headers: { cookie: ilse.cookie(), origin: ORIGIN, 'content-type': 'image/png' },
+      body: new Uint8Array(png),
+    });
+  assert.equal((await upload(other)).status, 404);
+  const kept = await upload(page);
+  const picture = (await kept.json()) as { file: string; url: string };
+  assert.equal(kept.status, 200, JSON.stringify(picture));
+  assert.equal((await ilse.as(picture.url)).status, 200);
 
   // The agent hears each with who drew it, and its picture; never its own
   const heard = said(await h.voice(`drawn?id=${hers.id}&call=${call}`));
   assert.deepEqual([heard.n, heard.who], [hers.id, 'Ilse']);
   assert.equal((await sharp(Buffer.from(heard.picture.data, 'base64')).metadata()).format, 'png');
-  const seen = async (id: number) =>
-    (said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups as any[]).find(g => g.id === id).seen;
-  assert.equal(await seen(boards.id), null, 'not heard yet');
   assert.equal(said(await h.voice(`drawn?id=${boards.id}&call=${call}`)).who, 'Board');
-  // (heard as it is: its seen tick the agent's, till more is drawn on it.)
-  assert.deepEqual(await seen(boards.id), { by: 'juno', name: 'Juno' });
-  said(await h.board('/api/notebooks/groups/edit', { id: boards.id, since: boards.updated, ink: [stroke, stroke] }));
-  assert.equal(await seen(boards.id), null, 'the new line not heard yet');
+  // (and no tick on the page for it: the agent answers in its own notes and words.)
+  const units = said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups as any[];
+  assert.equal(units.find(g => g.id === boards.id).seen, null);
   const own = said(await h.voice('mark', { call, mark: 'rect', box: { x: 10, y: 10, width: 50, height: 50 } }));
   assert.equal((await h.voice(`drawn?id=${own.id}&call=${call}`)).status, 404);
 
@@ -209,4 +226,48 @@ test('a code opens only a live call of the board’s, and a forged or older call
   assert.equal((await d.as(d.path(link))).status, 404);
   assert.equal((await d.as(`${api}/pages/groups?page=${page}`)).status, 401);
   assert.equal((await d.as(`${api}/groups/create`, { page, ink: [stroke] })).status, 401);
+});
+
+test('the board leaves its call to a guest: their device gets a one-time ticket, and the call’s tools reach no HQ', async () => {
+  const { call, token } = await h.liveCall('juno');
+  said(await h.board('/api/notebooks/call', { call }));
+  const { link } = said(await h.board('/api/calls/guest', { call, lang: 'nl' }));
+  const esmee = device(),
+    stranger = device();
+  const notebook = await esmee.join(link, 'Esmee');
+  const room = async () => said(await esmee.as(`${api}/list?notebook=${notebook}`)).notebooks[0].call;
+  // While the board is on: its own device carries the call, no ticket, the call's tools as ever
+  assert.deepEqual(await room(), { agent: 'Juno', away: false, privacy: PRIVACY });
+  assert.equal((await esmee.as('/guest/scan/voice', {})).status, 409);
+  assert.equal((await h.agent('search?q=fotoboek', token)).status, 200);
+  // The line's word that the board left (only with the call's own token)
+  assert.equal((await h.voice('call-away', { agent: 'juno', token: 'not-the-call', away: true })).status, 404);
+  said(await h.voice('call-away', { agent: 'juno', token, away: true }));
+  assert.deepEqual(await room(), { agent: 'Juno', away: true, privacy: PRIVACY });
+  // A guest is never the board: the call's token reaches nothing of HQ now, a read included
+  for (const r of [await h.agent('search?q=fotoboek', token), await h.agent('job', token, { to: 'lark', title: 'x' })])
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+  // Her session's ticket: once, for her, from HQ's own pages only; none for a device that never joined
+  assert.equal((await stranger.as('/guest/scan/voice', {})).status, 409);
+  const elsewhere = await fetch(h.base + '/guest/scan/voice', {
+    method: 'POST',
+    headers: { cookie: esmee.cookie(), origin: 'https://elsewhere.example' },
+  });
+  assert.equal(elsewhere.status, 403);
+  const { ticket } = said(await esmee.as('/guest/scan/voice', {}));
+  assert.deepEqual(said(await h.voice('guest-ticket', { ticket })), { call, name: 'Esmee', lang: 'nl' });
+  assert.equal((await h.voice('guest-ticket', { ticket })).status, 404, 'good once');
+  assert.equal((await h.voice('guest-ticket', { ticket: 'made-up' })).status, 404);
+  // The board back: her tickets stop, the tools work again
+  const late = said(await esmee.as('/guest/scan/voice', {})).ticket;
+  said(await h.voice('call-away', { agent: 'juno', token, away: false }));
+  assert.equal((await h.voice('guest-ticket', { ticket: late })).status, 404);
+  assert.equal((await h.agent('search?q=fotoboek', token)).status, 200);
+  assert.deepEqual(await room(), { agent: 'Juno', away: false, privacy: PRIVACY });
+  // Left again and over: nothing for a call that has ended
+  said(await h.voice('call-away', { agent: 'juno', token, away: true }));
+  const over = said(await esmee.as('/guest/scan/voice', {})).ticket;
+  said(await h.voice('call-end', { agent: 'juno', lines: ['Esmee: Doei.'], token }));
+  assert.equal((await h.voice('guest-ticket', { ticket: over })).status, 404);
+  assert.equal((await esmee.as('/guest/scan/voice', {})).status, 409);
 });

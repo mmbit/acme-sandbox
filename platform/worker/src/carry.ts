@@ -6,8 +6,9 @@ import { resumeOn } from './clis.ts';
 import { runAs, type Agent } from './git.ts';
 import { jobDirs, own } from './slots.ts';
 
-// The job whose session it goes on in, that session as the job saved it, and the Codex seat it ran on
-export type Resumes = { job: number; session: string; seat: string | null };
+// The job whose session it goes on in, and that session as the job saved it: the coordinator sends it only while the
+// session is warm on the claiming seat (its carryover.ts), so it's this seat's account.
+export type Resumes = { job: number; session: string };
 // Or, once that session has gone cold, the author's done jobs on the branch with their closing reports, oldest first
 // (the coordinator's carryover.ts)
 export type ClosingReports = { reports: { job: number; report: string }[] };
@@ -17,13 +18,12 @@ export const project = (path: string) => path.replace(/[^a-zA-Z0-9]/g, '-');
 
 // Copies the session job.resumes names into the job's home (its folders under `work`) as `me`, the slot that runs it on
 // the seat: the kept home goes to the slot, and the session goes under the new clone's project for Claude, into the
-// sessions folder for Codex. Returns the session to resume, or null for a fresh start: a session of another CLI, a Codex
-// one of another seat (its account), or one whose home is gone.
+// sessions folder for Codex. Returns the session to resume, or null for a fresh start: a session of another CLI, or one
+// whose home is gone.
 type Carried = { id: number; engine: string; resumes: Resumes };
-export function carrySession(work: string, job: Carried, seat: { id: string; cli: string }, me: Agent) {
-  const from = job.resumes,
-    cli = seat.cli;
-  const session = cli !== 'codex' || from.seat === seat.id ? resumeOn(cli, job.engine, from.session).session : null;
+export function carrySession(work: string, job: Carried, cli: string, me: Agent) {
+  const from = job.resumes;
+  const session = resumeOn(cli, job.engine, from.session).session;
   if (!session || !/^[\w-]{1,100}$/.test(session)) return null;
   const before = jobDirs(work, from.job),
     { dir, home } = jobDirs(work, job.id);

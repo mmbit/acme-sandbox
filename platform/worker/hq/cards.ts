@@ -19,6 +19,7 @@ const CARD_USAGE = `[KEY,KEY | live:<slug> | site:<slug>] [--address] [--photo "
 // (--questions; a question's "optional": true)
 
 // The help's "Questions:" paragraph: ask only what the board alone can answer
+// (several true answers: a pick-many's tick boxes, its "picked")
 export const ask = {
   help: `
    hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<job>]... [--walk]
@@ -85,9 +86,13 @@ export const ask = {
                                                      {"title": "...", "detail": "one optional line"} and a "type":
                                                      "yes-no" (it taps Yes or No), "number" (with a "unit" like "mm"),
                                                      none for a short text, or "options": [...] to tap one (the guest
-                                                     checklist's question shape; 1 to 40). "many": true with options
-                                                     makes a pick-many (2 to 20): every option starts picked, the board
-                                                     takes off what it doesn't want, none is an answer too. Never a
+                                                     checklist's question shape; 1 to 40). Where several answers can
+                                                     be true together (where it saw something, which of these apply),
+                                                     "many": true with options makes a pick-many (2 to 20), tick boxes
+                                                     the board ticks as many of as are true, none an answer too: every
+                                                     option starts ticked (a deck's changes: yes to all is Send), or
+                                                     "picked": [...] those only ([]: none, it ticks what applies). A
+                                                     question with one true answer stays a choice. Never a
                                                      choice and a box to type it again. They show in order, beside
                                                      the photo fields; each needs its answer unless it says
                                                      "optional": true, for one the board may skip ("What to change,

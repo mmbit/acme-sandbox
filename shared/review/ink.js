@@ -158,9 +158,9 @@ export function pen(surface, wet, opts) {
   };
   function finish(e) {
     if (!line || e.pointerId !== line.id) return;
-    // (no tail, and all of it painted now, not at the next frame: the dry ink takes it from here. The lift adds no
-    // point: the line ends where it was drawn as the pen lifted, never where the browser says it went up.)
-    show(line, [], null, true);
+    // (no tail, and all of it painted now, not at the next frame: the dry ink takes it from here. The line ends where
+    // the pen last was before it lifted, caught up from its smoothing, never where the browser says it went up.)
+    show(line, caughtUp(line), null, true);
     tell('end', line);
     const done = line.stroke;
     line = null;
@@ -265,6 +265,8 @@ function extend(line, e, phase = 'move') {
     if (prev) line.speed += (Math.hypot(x - prev[0], y - prev[1]) / Math.max(1, t - prev[3]) - line.speed) * 0.3;
     p = Math.max(0.3, 0.62 - line.speed * 0.12);
   }
+  // (where the pen is: its line caught up there as it lifts.)
+  line.at = [x, y, t];
   const k = line.follow;
   const q =
     prev && phase !== 'start'
@@ -274,6 +276,19 @@ function extend(line, e, phase = 'move') {
   if (prev && Math.hypot(kept[0] - prev[0], kept[1] - prev[1]) < 0.6) return false;
   pts.push(kept);
   return true;
+}
+
+// The line's end at the lift: smoothing leaves each point short of the pen (by about a sample's step, 1 - follow over
+// follow), so the end goes on to the pen's last sample, at the last point's pressure, or every stroke would stop short
+// of where it was drawn. The indexes of the points it kept.
+function caughtUp(line) {
+  const pts = line.stroke.points,
+    prev = pts[pts.length - 1];
+  if (line.rect || !line.at || !prev) return [];
+  const [x, y, t] = line.at.map((v, i) => (i === 2 ? v : Math.round(v * 100) / 100));
+  if (Math.hypot(x - prev[0], y - prev[1]) < 0.6) return [];
+  pts.push([x, y, prev[2], t]);
+  return [pts.length - 1];
 }
 
 // A rectangle, from where it started to where it is now: its four corners as the line, back to the first

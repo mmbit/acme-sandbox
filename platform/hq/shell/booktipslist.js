@@ -232,10 +232,10 @@ export const TIPS = [
   // ---- The feel
   {
     part: 'The feel',
-    title: 'Scribble over something to delete it',
+    title: 'Throw a scrap away from its ⋯ menu',
     words:
-      'In the notebook, scribble over a scrap: it crumples away, and Undo brings it back. On HQ, take a line back with the strip’s eraser or Undo.',
-    from: 'platform/hq/shell/ink/bookgroups.js, shared/review/surface.js',
+      'In the notebook, open a scrap and pick Throw scrap away, last in its ⋯ menu: it crumples away, and Undo brings it back. A line never deletes anything: scribbled over or circled, it’s ink. On HQ, take a line back with the strip’s eraser or Undo.',
+    from: 'platform/hq/shell/ink/bookscrapkeys.js, shared/review/surface.js',
     picture: 'crumple',
     alt: 'A scrap held, crumpled into a ball and thrown off the page',
   },

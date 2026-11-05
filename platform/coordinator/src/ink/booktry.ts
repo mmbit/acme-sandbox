@@ -8,8 +8,7 @@
 //     its own made from its patch (trybranch.ts).
 //   - One run per note at a time: a note written on the group or one of its versions while its try still runs goes to
 //     that run (a message its hook hands the session at its next step; one not started yet takes it in its brief).
-//   - On a live call's page the run's the same, and onCall tells the quick run's caller to leave a note there to the
-//     call's agent, who is with the board.
+//   - On a call's page only the call's agent starts one (callpage.ts versions): the judge leaves that page be.
 import { readFileSync } from 'node:fs';
 import { db, lacks } from '../db.ts';
 import { brand, ceo } from '../company.ts';
@@ -23,7 +22,7 @@ import { note as noteRow, sheetRow, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
 import type { Anchor } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
-import { quotedPatch } from './bookpick.ts';
+import { quotedPatch, versionSlip } from './bookpick.ts';
 import { ownerOf } from './groupanswers.ts';
 
 // book_notes.tried: the try run started for an old book's note, the latest (notebook_groups.tried, a group's, is
@@ -75,15 +74,11 @@ function on(t: Target): On | null {
   const anchor = r.kind === 'group' ? anchorOf(r.root) : (JSON.parse(r.root.anchor) as Anchor);
   return { ...r, words: root.words || target.words, anchor, reply };
 }
-// The version a slip is, if it is one: its name, its line, and its patch as kept
+// The version a slip is, if it is one: its name, its line, and its patch as kept.
 function versionOf(slip: number | null): Version | null {
-  const s =
-    slip === null
-      ? undefined
-      : (db.prepare("select version, text, patch from book_slips where id = ? and style = 'version'").get(slip) as
-          { version: string; text: string; patch: string | null } | undefined);
+  const s = versionSlip(slip);
   if (!s) return null;
-  return { name: s.version, text: s.text, patch: s.patch && readFileSync(`${DIR}/${s.patch}`, 'utf8') };
+  return { name: s.version as string, text: s.text, patch: s.patch && readFileSync(`${DIR}/${s.patch}`, 'utf8') };
 }
 const anchorOf = (g: Group) => (g.anchor ? (JSON.parse(g.anchor) as Anchor) : null);
 
@@ -103,18 +98,6 @@ export function tryHolds(id: number, job: number, note = false) {
   if (!o || !job) return false;
   return (o.root as { tried?: number | null }).tried === job;
 }
-
-// The live call whose page a target is on, or null: there the call's agent is with the board, so no quick run starts
-export function onCall(t: Target): number | null {
-  const o = on(t);
-  const call = o && callOf(o.page.id);
-  return call && db.prepare("select 1 from calls where id = ? and status = 'live'").get(call) ? call : null;
-}
-// The call a page is the notes page of (in the book or My journal), live or ended, or null
-const callOf = (page: number) => {
-  const p = bookPage(page, null);
-  return p?.kind === 'call' ? p.call : null;
-};
 
 // ---------------------------------------------------------------- a try
 // The judge's verdict 'try' on a board's note (bookjudge.ts): a note on a try still going goes to it; else its

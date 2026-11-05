@@ -52,21 +52,28 @@ function onScreen(book, [x, y]) {
 // with a paper's slide and a soft knock as it lands; resolved once it has rested there, gone
 export async function flight(sel, { view, things }, row, along) {
   const extent = boundsOf(things, t => boxOfText(sel, t)),
-    [rect, canvas] = thingsPicture(view, things, extent, sel.book.scale),
-    // (a person's initial, a page's icon)
-    face = row.firstElementChild.getBoundingClientRect();
-  const from = [rect.left + rect.width / 2, rect.top + rect.height / 2],
-    to = [face.left + face.width / 2, face.top + face.height / 2];
+    [rect, canvas] = thingsPicture(view, things, extent, sel.book.scale);
   if (still()) return wait(REST_MS);
   const copy = document.createElement('div');
-  copy.className = 'bk-assign-copy';
+  copy.append(canvas);
+  return fly(copy, rect, row, along);
+}
+
+// A copy (an element, its look inside it) flown from a box on the screen (a DOMRect) to a row's mark (its first
+// child: a person's initial, a page's icon), along points on the screen (null: a curve of its own), shrinking as it
+// goes, with a paper's slide and a soft knock as it lands; resolved once it has rested there, gone.
+export async function fly(copy, rect, row, along) {
+  const face = row.firstElementChild.getBoundingClientRect(),
+    from = [rect.left + rect.width / 2, rect.top + rect.height / 2],
+    to = [face.left + face.width / 2, face.top + face.height / 2];
+  if (still()) return wait(REST_MS);
+  copy.classList.add('bk-assign-copy');
   Object.assign(copy.style, {
     left: `${rect.left}px`,
     top: `${rect.top}px`,
     width: `${rect.width}px`,
     height: `${rect.height}px`,
   });
-  copy.append(canvas);
   home().append(copy);
   const route = along?.length ? evenly([from, ...along, to], STEPS) : bowed(from, to, STEPS),
     k = Math.min(1, LANDS_PX / Math.max(rect.width, rect.height));
@@ -81,6 +88,37 @@ export async function flight(sel, { view, things }, row, along) {
   row.animate([{ scale: 1 }, { scale: 1.04 }, { scale: 1 }], { duration: 220, easing: 'ease-out' });
   await wait(REST_MS);
   tidy([copy]);
+}
+
+// A scrap's card on the grid copied to fly (fly's copy): its paper, and over it what of its group shows on the screen
+// (its ink's canvas, its words, data-g's), each where it shows; canvases with their pictures
+export function cardCopy(card, view) {
+  const copy = document.createElement('div'),
+    box = card.getBoundingClientRect(),
+    k = box.width / (card.offsetWidth || 1);
+  copy.dataset.card = '';
+  const parts = [card, ...view.el.querySelectorAll(`[data-g="${card.dataset.unit}"]:not(.bk-tags, .bk-seen)`)];
+  for (const el of parts) {
+    const r = el.getBoundingClientRect();
+    let part;
+    if (el instanceof HTMLCanvasElement) {
+      part = document.createElement('canvas');
+      Object.assign(part, { width: el.width, height: el.height });
+      part.getContext('2d')?.drawImage(el, 0, 0);
+      Object.assign(part.style, { width: `${r.width}px`, height: `${r.height}px` });
+    } else {
+      part = el.cloneNode(true);
+      Object.assign(part.style, { width: `${el.offsetWidth}px`, transform: `scale(${k})`, transformOrigin: '0 0' });
+    }
+    Object.assign(part.style, {
+      position: 'absolute',
+      margin: '0',
+      left: `${r.left - box.left}px`,
+      top: `${r.top - box.top}px`,
+    });
+    copy.append(part);
+  }
+  return copy;
 }
 
 // Elements faded away and gone

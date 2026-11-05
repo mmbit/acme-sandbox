@@ -236,7 +236,7 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
 // (takeover.ts landing, stopFor).
 const failedWords = (failed: number) =>
   `task #${failed} before it in its deliverable failed with nothing in its place: its owner lands it again ` +
-  `(hq job --lands ${failed}) or puts a queued task in its place (hq stop ${failed} "why" --for <job>)`;
+  `(hq job --lands ${failed}) or puts a task queued or under way since in its place (hq stop ${failed} "why" --for <job>)`;
 
 // A finished task's wait follows the last remaining task on its open deliverable's current branch.
 function branchCarrier(

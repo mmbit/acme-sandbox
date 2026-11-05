@@ -152,34 +152,13 @@
   }
 }
 
-/* a page locked: its tools gone; read-only, a quiet lock and its word in their island's place; sent, nothing but a
-   sketch's Duplicate, and no island at all where neither shows (bookcontrols.js.). The lock wears the island's look. */
+/* a page locked: its tools gone; sent, nothing but a sketch's Duplicate, and no island at all where it doesn't show
+   (bookcontrols.js.) A read-only page's lock is in the view's head (bookdesk.css .bk-view-locked.) */
 #book .bk-strip[data-locked] > .bk-island,
 #book .bk-strip[hidden] {
   display: none;
 }
-#book .bk-locked {
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: var(--bk-key);
-  margin: 0;
-  padding: 8px 0;
-  color: var(--bk-ui-muted);
-  font: 600 11px/1.2 var(--bk-ui-font);
-  text-align: center;
-}
-#book .bk-locked svg {
-  width: 20px;
-  height: 20px;
-}
-#book .bk-strip[data-locked] .bk-locked:not([hidden]) {
-  display: flex;
-}
-/* a sketch page's Duplicate in the tools' place: the one to press, lit, its word under its icon as the lock's are
-   (bookcontrols.js.) */
+/* a sketch page's Duplicate in the tools' place: the one to press, lit, its word under its icon (bookcontrols.js.) */
 #book .bk-strip[data-locked] {
   align-items: center;
 }

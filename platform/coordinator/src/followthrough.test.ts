@@ -133,7 +133,10 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
   );
   assert.match(prompt(), /Short seats, a review queue or a wait never make a goal fine: they are causes/);
   assert.match(prompt(), /A number that moved is acted on this hour/);
-  assert.match(prompt(), /rewrite your page whole \(`hq pad write -`/);
+  assert.match(
+    prompt(),
+    /rewrite your page whole on the version `hq pad` names as you read it right before\s+\(`hq pad write - --version <id>`, on stdin\)/,
+  );
   assert.match(
     prompt(),
     /make the pause wait for its answer, which lifts it: `hq decision "<what the board decides>" --blocks/,
@@ -162,16 +165,16 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
     followThroughSweep(t0 + HOUR + MIN);
     assert.match(
       prompt(),
-      /all is on track\.\n\nOur own additions:\nOnly ever this board's words\.\n\nYour page \(hq pad\): none yet\. Write it in this check[^\n]*\n\nThe summary as this check/,
+      /all is on track\.\n\nOur own additions:\nOnly ever this board's words\.\n\nThe summary as this check/,
     );
-    // The CEO's page, the heartbeat's own half, comes last, as the CEO last wrote it.
-    assert.ok(typeof writePad('Goal: first customers.\nNext: read the walk.', { agent: ceo(), job: 1 }) === 'object');
+    // The CEO's page isn't in the queued text: it comes with the check's claim, as it is when the check starts, as with
+    // every job of the CEO's (pad.test).
+    assert.ok(
+      typeof writePad('Goal: first customers.\nNext: read the walk.', null, { agent: ceo(), job: 1 }) === 'object',
+    );
     assert.deepEqual(recordVerdict(checks().at(-1)!.job, 'ok', ''), { ok: true });
     followThroughSweep(t0 + 2 * HOUR + MIN);
-    assert.match(
-      prompt(),
-      /Only ever this board's words\.\n\nYour page \(hq pad\), as you wrote it at [\d-]+ [\d:]+ UTC:\nGoal: first customers\.\nNext: read the walk\.\n\nThe summary as this check/,
-    );
+    assert.doesNotMatch(prompt(), /Goal: first customers/);
     assert.match(prompt(), /Delivered means the board said yes\.\n/, "the company's own delivery rule");
   } finally {
     writeFileSync(orgFile, orgChart);

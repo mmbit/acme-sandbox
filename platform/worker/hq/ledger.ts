@@ -6,7 +6,8 @@ import { at } from './estimate.ts';
 import { readGoalAndWords, readTextOrStdin } from './files.ts';
 import { present, print, shown, stop, text } from './output.ts';
 import { deliverableFlag, takeItemFlags, takeValues, type ItemFlags } from './flags.ts';
-import { stopped, stoppedOnCall } from './corrections.ts';
+import { stopped } from './corrections.ts';
+import { printNotedOnCall } from './noted.ts';
 
 // roles.asks in the help below
 export const items = {
@@ -100,7 +101,9 @@ export const item = {
                                                      linked as it's recorded (handled when it ends done), its deliverable
                                                      taking the time at once; --deliverable puts a job the call queued in no
                                                      deliverable on that one (--thread, the old name, still works). Owner ""
-                                                     on a live call: the CEO's till the follow-up decides
+                                                     on a live call: the CEO's till the follow-up decides. --off-page,
+                                                     on a live call: on its list alone, not on its notes page (a fault
+                                                     in our tools on a call about something else)
    hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]
                                                      the same as add --replaces, with the earlier item's kind and owner.
                                                      On a live call (its own token): only an open item, while the board is
@@ -156,6 +159,7 @@ export const item = {
         ...{ deadline: flags.deadline, boardSet: flags.boardSet },
         work: flags.job === undefined ? undefined : { job: flags.job, thread: values.deliverable },
         goal: flags.goal,
+        offPage: flags.offPage,
       });
     }
     if (action === 'replace') {
@@ -224,25 +228,15 @@ type NewItem = {
   boardSet?: boolean; // --board-set: the board set the time itself
   work?: { job: string; thread?: string };
   goal?: string;
+  offPage?: boolean; // --off-page: a live call's task on its list alone
 };
 
-async function recordItem({
-  action,
-  kind,
-  owner,
-  what,
-  quote,
-  lines,
-  replaces,
-  callId,
-  deadline,
-  boardSet,
-  work,
-  goal,
-}: NewItem) {
-  const onCall = Boolean(process.env.HQ_CALL);
-  const given = readGoalAndQuote(action, quote, goal);
-  const body = {
+// The item as the coordinator takes it (POST /api/agent/item), with the goal and the words read from stdin
+function itemBody(
+  { kind, owner, what, lines, replaces, callId, deadline, boardSet, work, offPage }: NewItem,
+  given: { goal: string; words: string },
+) {
+  return {
     what,
     goal: given.goal,
     quote: given.words,
@@ -252,8 +246,14 @@ async function recordItem({
     ...(callId !== null && { call: callId }),
     ...(deadline !== undefined && { deadline, ...(boardSet && { board_set: true }) }),
     ...(work && { job: Number(work.job), ...(work.thread !== undefined && { thread: work.thread }) }),
+    ...(offPage && { page: false }),
   };
-  const recorded = await record(body);
+}
+
+async function recordItem(entry: NewItem) {
+  const { action, kind, owner, quote, replaces, goal } = entry;
+  const onCall = Boolean(process.env.HQ_CALL);
+  const recorded = await record(itemBody(entry, readGoalAndQuote(action, quote, goal)));
   const id = shown(recorded.id);
   // replace: the earlier item's kind and owner
   const recordedKind = text(recorded.kind ?? kind);
@@ -284,24 +284,6 @@ function readGoalAndQuote(action: string, quote: string, goal: string | undefine
     stop(`Nothing recorded: hq item ${action} takes no file: the words come on stdin with the goal (- --goal -)`);
   if (goal !== '-') stop(`Nothing recorded: hq item ${action} takes its goal on stdin with the words (--goal -)`);
   return readGoalAndWords() ?? stop('Nothing recorded: --goal - takes {"goal": "...", "words": "..."} on stdin');
-}
-
-// The call's agent's answer: it's on the list, nobody has it yet, or (a promise about work under way) it's that job's,
-// whose thread has its time already.
-function printNotedOnCall(
-  recorded: Record<string, unknown>,
-  { kind, owner, replaces }: { kind: string; owner: string; replaces: number | null },
-) {
-  const noted = `Noted as ${kind} #${shown(recorded.id)} on this call, for ${owner}`;
-  if (replaces === null) print(`${noted}.`);
-  else print(`${noted}: it replaces #${replaces} (${text(recorded.replacedWhat ?? '?')}), which the board changed.`);
-  print(
-    present(recorded.job)
-      ? `It's job #${shown(recorded.job)}'s, done when that ends done, and the deadline of ${text(recorded.thread)} ` +
-          `now: ${at(Date.parse(String(recorded.deadline)))}.`
-      : "It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.",
-  );
-  if (replaces !== null) print(...stoppedOnCall(recorded));
 }
 
 async function record(body: object) {

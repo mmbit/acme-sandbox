@@ -746,10 +746,11 @@ async function steps(t) {
 function logFill(card) {
   const ol = card.querySelector('.log');
   if (!ol || !card.steps) return;
-  fillSteps(ol, card.steps.slice(-40), {
+  fillSteps(ol, card.steps, {
     time: ts => ago(new Date(ts).getTime()),
     empty: 'No steps yet',
     first: !card.filled,
+    last: 40,
   });
   card.filled = true;
 }

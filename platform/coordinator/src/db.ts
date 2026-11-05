@@ -333,7 +333,7 @@ db.exec(`
   create table if not exists sessions (token text primary key, expires integer not null);
   create table if not exists enrollments (hash text primary key, used text not null);
   create table if not exists events (id integer primary key, ts text not null, type text not null, agent text,
-    "to" text, text text, state text);
+    "to" text, text text, state text, job integer);
   create table if not exists jobs (id integer primary key, created text not null, agent text not null,
     title text not null, prompt text not null, engine text not null,
     status text not null default 'queued', seat text, branch text, session text, attempts integer not null default 0,
@@ -382,6 +382,11 @@ db.exec(`
 db.exec('create index if not exists schedule_runs_slot on schedule_runs (slot)');
 db.exec(`create index if not exists schedule_runs_job on schedule_runs (job) where job is not null;
   create index if not exists calls_job on calls (job) where job is not null`);
+// A row's status comes after its long text (a call's transcript, a card's body), so a filter on it read every call's
+// transcript and every card's body: an agent's calls still waiting for their follow-up (call.ts unfinished) and the
+// open cards (goingon.ts cards), in each call's briefing.
+db.exec(`create index if not exists calls_unfinished on calls (agent, id) where status = 'ended' and processed_at is null;
+  create index if not exists requests_open on requests (id) where status = 'open'`);
 
 // A value a module keeps between runs (the settings table), and remember(key, null) forgets it.
 export const setting = (key: string) => (db.prepare('select value from settings where key = ?').get(key) as { value: string } | undefined)?.value;
@@ -451,6 +456,11 @@ db.exec(`create index if not exists jobs_pr_loop on jobs (pr, kind, round, sha, 
 // An agent's own work jobs, newest first (memory.ts history: hq history, a call's history tool), without reading other
 // agents' job rows. That query names it with `indexed by`.
 db.exec(`create index if not exists jobs_agent_work on jobs (agent, id) where kind = 'work'`);
+// An agent's finished work, the last finished first (call.ts recentWork, each call's briefing): by jobs_agent_work the
+// read sorted every work job of the agent's, brief and report read too (52 MB for 2,800 jobs, 2-4 s off a cold disk,
+// HQ held meanwhile). Those queries name it with `indexed by`.
+db.exec(`create index if not exists jobs_finished_work on jobs (agent, coalesce(finished, created), id)
+  where kind = 'work' and status in ('done', 'failed')`);
 // Whom an agent queued work for lately (jobs.ts inFlight, at each work or chat job's claim): without it the read walks
 // every job's brief and output, seconds when they're off the disk. That query names it with `indexed by`.
 db.exec('create index if not exists jobs_queued_for on jobs (queued_by, created, agent)');
@@ -973,8 +983,8 @@ db.exec(`create index if not exists jobs_by_code on jobs (code);
 db.exec(`create index if not exists jobs_listed on jobs (id, code, created, finished, agent, title, engine, status, seat,
   attempts, request, kind, pr, round, stage, step, downtime, after, thread, seq, is_check, call, item, branch, session,
   not_before, expedite, customers, sha, voided, result)`);
-// Covers reviewplan.ts expeditedWork: the expedited jobs and their branches, few among all (after expedite's column), without a row read (its
-// where's terms as columns too).
+// Covers expeditedplan.ts expeditedPlans: the expedited jobs and their branches, few among all (after expedite's column),
+// without a row read (its where's terms as columns too).
 db.exec(`create index if not exists jobs_expedited on jobs (expedite, kind, id, branch) where expedite = 1`);
 // A call followed up before replies were set kept its notes as its work follow-up's last message: that becomes its reply.
 // A work follow-up still open was briefed that way: it's owed the ask for hq reply (reply_asks), which ledger.ts
@@ -1105,3 +1115,13 @@ once('2026-11-02-urgent-work', () => {
 once('2026-11-04-pair-handed-keys-ended', () => {
   db.exec('drop table if exists notebook_pair_codes; drop table if exists notebook_pair_attempts');
 });
+// The job an event comes from (events.ts), so a job's own activity reads back as HQ's card shows it (activity.ts).
+once('2026-11-05-events-job', () => lacks('events', 'job') && db.exec('alter table events add column job integer'));
+// The first event that carries its job (events_job_from): those before it came before the column and can't be checked
+// against a job's customer mark, so activity.ts leaves them to the board. A database new with the column has none.
+once('2026-11-06-events-job-from', () =>
+  db.exec(`insert or replace into settings (key, value) values ('events_job_from',
+    coalesce((select min(id) from events where job is not null), (select coalesce(max(id), 0) + 1 from events)))`));
+db.exec(`create index if not exists events_job on events (job, id) where job is not null;
+  create index if not exists events_agent on events (agent, id);
+  create index if not exists events_to on events ("to", id) where "to" is not null`);

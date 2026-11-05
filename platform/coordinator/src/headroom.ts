@@ -28,6 +28,7 @@ type SeatRow = {
 type Reading = {
   seat: string;
   at: number;
+  reported: number;
   util: number | null;
   resets: number | null;
   week: number | null;
@@ -140,6 +141,7 @@ export function fillRates(at = Date.now()): Map<string, FillRates> {
 // its worker is lost). A read prices only the readings after the kept ones.
 type Interval = MixInterval & {
   from: number;
+  known: number; // (when the later of its readings was reported)
   hours: number;
   five: number;
   fiveHours: number;
@@ -147,7 +149,9 @@ type Interval = MixInterval & {
   weekHours: number;
 };
 type Totals = Measurement & { five: number; week: number };
-type Priced = Map<string, { last: Reading; intervals: Interval[] }>;
+// (covers: the time from which a seat's kept intervals are all there)
+type Kept = { last: Reading; intervals: Interval[]; covers: number };
+type Priced = Map<string, Kept>;
 const priced: Priced = new Map();
 let pricedAt = 0,
   seenRun = 0,
@@ -155,14 +159,14 @@ let pricedAt = 0,
 
 function readingRates(at: number, seat?: string) {
   forgetMoved();
-  // (a read for a time before the last one prices on its own, leaving the kept intervals as they are)
-  const book = at < pricedAt ? new Map() : priced,
+  // (a read for a time before the last one keeps nothing: a play in turns, its time taken before another read's)
+  const current = at >= pricedAt,
     since = at - 2 * WEEK_MS,
     totals = new Map<string, Totals>(),
     mixes = new Map<string, Record<string, MixRate>>();
   pricedAt = Math.max(pricedAt, at);
   for (const id of seat === undefined ? seatRows().map(s => s.id) : [seat]) {
-    const intervals = seatIntervals(book, id, at, since);
+    const intervals = seatIntervals(id, at, since, current);
     mixes.set(id, mixRates(intervals, id));
     for (const interval of intervals) {
       if (!interval.hours) continue;
@@ -194,7 +198,7 @@ export async function priceAhead(now = Date.now()) {
   for (let at = now - 2 * WEEK_MS + AHEAD_MS; at > pricedAt; at = Math.min(at + AHEAD_MS, now)) {
     forgetMoved();
     pricedAt = at;
-    for (const { id } of seatRows()) seatIntervals(priced, id, at, at - 2 * WEEK_MS);
+    for (const { id } of seatRows()) seatIntervals(id, at, at - 2 * WEEK_MS, true);
     if (at === now) return;
     await new Promise(setImmediate);
   }
@@ -228,23 +232,35 @@ function forgetMoved() {
   }
 }
 
-// A seat's priced intervals since `since`: the kept ones, then those after them priced now.
-function seatIntervals(priced: Priced, seat: string, at: number, since: number) {
-  return ['five', 'week'].flatMap(quota => windowIntervals(priced, seat, quota as 'five' | 'week', at, since));
+// A seat's priced intervals since `since`: the kept ones, then those after them priced now (and kept, for a current
+// read).
+function seatIntervals(seat: string, at: number, since: number, current: boolean) {
+  return ['five', 'week'].flatMap(quota => windowIntervals(seat, quota as 'five' | 'week', at, since, current));
 }
 
-function windowIntervals(priced: Priced, seat: string, quota: 'five' | 'week', at: number, since: number) {
+// The kept intervals reach an hour past the window (priced from then, kept until then), so a read for a time a little
+// before the last still finds its window's start among them (keptBy) rather than pricing two weeks again (a triage
+// projection: a play for a time just before the last read).
+const SLACK_MS = HOUR_MS;
+function windowIntervals(seat: string, quota: 'five' | 'week', at: number, since: number, current: boolean) {
   const key = `${seat}:${quota}`,
-    kept = priced.get(key);
-  while (kept?.intervals.length && kept.intervals[0].from < since) kept.intervals.shift();
-  const readings = readingsAfter(seat, quota, kept ? kept.last.at : since - 1, at);
+    stored = priced.get(key);
+  if (current && stored) {
+    while (stored.intervals.length && stored.intervals[0].from < since - SLACK_MS) stored.intervals.shift();
+    stored.covers = Math.max(stored.covers, since - SLACK_MS);
+  }
+  const kept = current ? stored : undefined,
+    earlier = current || !stored ? undefined : keptBy(stored, at, since);
+  const readings = readingsAfter(seat, quota, pricedAfter(since, current, kept, earlier), at);
   const runs = readings.length ? runsAfter(seat, (kept?.last ?? readings[0]).at, at) : [];
   const millisecondsAt = runMilliseconds(runs, at),
     openSince = Math.min(...runs.flatMap(run => (run.ended === null ? [run.started] : []))),
+    intervals = kept?.intervals ?? earlier?.intervals ?? [],
     fresh: Interval[] = [];
   let before = kept?.last,
     beforeMs = before ? millisecondsAt(before.at) : {},
-    keeping = true;
+    last = kept?.last,
+    keeping = current;
   readings.forEach((reading, i) => {
     const ms = millisecondsAt(reading.at);
     keeping &&= i < readings.length - 1 && reading.at <= openSince;
@@ -252,20 +268,41 @@ function windowIntervals(priced: Priced, seat: string, quota: 'five' | 'week', a
       const mix = Object.fromEntries(
         Object.entries(ms).map(([kind, elapsed]) => [kind, (elapsed - (beforeMs[kind] ?? 0)) / HOUR_MS]),
       );
-      const interval = pricedInterval(before, reading, mix);
-      if (keeping) priced.get(key)!.intervals.push(interval);
-      else fresh.push(interval);
+      (keeping ? intervals : fresh).push(pricedInterval(before, reading, mix));
     }
-    if (keeping) priced.set(key, { last: reading, intervals: priced.get(key)?.intervals ?? [] });
+    if (keeping) last = reading;
     [before, beforeMs] = [reading, ms];
   });
-  return [...(priced.get(key)?.intervals ?? []), ...fresh].filter(interval => interval.from >= since);
+  if (current && last) priced.set(key, { last, intervals, covers: stored?.covers ?? since - SLACK_MS });
+  return [...intervals, ...fresh].filter(interval => interval.from >= since);
+}
+
+// The time a read prices the readings after: the end of a current read's kept intervals, or of an earlier read's borrowed
+// ones, or with none the window's start (an hour early for a current read, which keeps that hour too).
+function pricedAfter(since: number, current: boolean, kept?: Kept, earlier?: { from: number }) {
+  if (kept) return kept.last.at;
+  if (earlier) return earlier.from - 1;
+  return (current ? since - SLACK_MS : since) - 1;
+}
+
+// What a read for an earlier time takes of a seat's kept intervals: those ended and reported by then, and the time of
+// the reading the last of them ends on, which its own pricing starts from. None once they no longer reach back to its
+// window's start, or none ended by then: it prices on its own.
+function keptBy(stored: Kept, at: number, since: number) {
+  const { intervals, last } = stored;
+  if (stored.covers > since) return undefined;
+  const endOf = (i: number) => (i + 1 < intervals.length ? intervals[i + 1].from : last.at);
+  let count = 0;
+  while (count < intervals.length && endOf(count) <= at && intervals[count].known <= at) count++;
+  const from = count ? endOf(count - 1) : (intervals[0]?.from ?? last.at);
+  return from <= at ? { from, intervals: intervals.slice(0, count) } : undefined;
 }
 
 const readingsAfter = (seat: string, quota: 'five' | 'week', after: number, at: number): Reading[] =>
   windowReadings(seat, quota, after, at).map(reading => ({
     seat,
     at: reading.at,
+    reported: reading.reported,
     util: quota === 'five' ? reading.used : null,
     resets: quota === 'five' ? reading.resets : null,
     week: quota === 'week' ? reading.used : null,
@@ -331,7 +368,16 @@ function pricedInterval(before: Reading, reading: Reading, mix: Record<string, n
   };
   const [five, fiveHours] = gained('util', 'resets'),
     [week, weekHours] = gained('week', 'week_resets');
-  return { from: before.at, hours, five, fiveHours, week, weekHours, mix };
+  return {
+    from: before.at,
+    known: Math.max(before.reported, reading.reported),
+    hours,
+    five,
+    fiveHours,
+    week,
+    weekHours,
+    mix,
+  };
 }
 
 function measuredRates(totals: Map<string, Totals>, mixes: Map<string, Record<string, MixRate>>) {

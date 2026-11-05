@@ -120,17 +120,17 @@ function jobOf(id: number) {
 // A job queued already: its outlook from its stored size, and the size too where it has one. Read from HQ's latest play
 // (forecast.ts current), never played for the asking: a play holds HQ for seconds.
 function openOutlook(id: number) {
-  const { usual, slow } = forecast.current();
+  const { usual, slow, snapshot } = forecast.current();
   const seen = usual.get(id);
-  return seen ? shownOutlook(seen, slow.get(id)) : null;
+  return seen ? shownOutlook(seen, snapshot.deployLagMs, slow.get(id)) : null;
 }
 
-// held: the time a promise holds to, the one the summary's late line gives (predictions.heldTo)
-const shownOutlook = (o: Outlook, slow?: Outlook) => ({
-  ...o,
-  left_minutes: fractionalMinutes(o.left_ms),
-  held: slow ? predictions.heldTo(o, slow) : null,
-});
+// held: the time a promise holds to, the one the summary's late line gives (predictions.heldTo); safe: the time to tell
+// the board, live four times in five (predictions.safeOf).
+const shownOutlook = (o: Outlook, deployLagMs: number, slow?: Outlook) => {
+  const held = slow ? predictions.heldTo(o, slow) : null;
+  return { ...o, left_minutes: fractionalMinutes(o.left_ms), held, safe: predictions.safeOf(held, deployLagMs) };
+};
 const shownSize = (s: ReturnType<typeof predictions.sizeHistory>[number]) => ({
   by: s.by,
   at: s.at,

@@ -105,6 +105,8 @@ check '/voice/ws as the board: voice line' "$(get /voice/ws -H 'Cookie: hq=board
 # a join link's page and its room: public, each checks the link's token
 check '/voice/join without the board: voice line' "$(get /voice/join)" 'voice /voice/join 200'
 check '/join/<token>: coordinator' "$(get /join/abc_DEF-123)" 'coordinator /join/abc_DEF-123 200'
+# a guest carrying the call the board left them: public, the line redeems their ticket
+check '/voice/guest without the board: voice line' "$(get /voice/guest)" 'voice /voice/guest 200'
 
 # the support chat
 if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then

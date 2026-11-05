@@ -34,6 +34,11 @@ type Box = { x: number; y: number; w: number; h: number };
 const slipById = (id: number | null) =>
   id ? (db.prepare('select * from book_slips where id = ?').get(id) as Slip | undefined) : undefined;
 const isVersion = (s: Slip | undefined): s is Slip => !!s && s.style === 'version';
+// The version a slip is, if it is one (callguests.ts and booktry.ts read it too).
+export const versionSlip = (id: number | null) => {
+  const v = slipById(id);
+  return isVersion(v) ? v : undefined;
+};
 
 // ---------------------------------------------------------------- the reply's picture
 // A reply's ink drawn over its version's frame (bookversionframes.js frameOf), so the judge and agent see what was

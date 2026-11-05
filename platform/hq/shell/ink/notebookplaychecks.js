@@ -77,7 +77,10 @@ export function textsOf(v) {
     if (typeof t.text !== 'string' || !t.text.trim()) refuse(400, why);
     if (t.text.includes('\0')) refuse(400, "a typed note can't hold a NUL character");
     if ([...t.text].length > TEXT_MAX) refuse(400, `a typed note is at most ${TEXT_MAX} characters`);
-    return { x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase() };
+    if (t.voice !== undefined && t.voice !== true) refuse(400, why);
+    // (a voice note's words on their slip, as the store keeps them: pagechecks.ts.)
+    const voice = t.voice ? { voice: true } : {};
+    return { x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase(), ...voice };
   });
 }
 // The pictures placed in a group. ours(file): one uploaded to a page of the board's.

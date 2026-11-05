@@ -2,7 +2,6 @@
 // notebooksend.ts, notebookpictures.ts) with the same answers and refusals, for dev mode (notebookdata.js, on
 // mock/notebook.json) and every HQ browser check's stand-in (book/notebookroute.mjs lists them: a change runs those). No
 // DOM: the browser and node import it alike. The board's own notebooks only, every route the board's session.
-// (every HQ browser check's stand-in)
 //   - seed: { notebooks, pages, groups, slips, asks, names, people } as the store keeps them, a group's ink, texts,
 //     pictures and anchor as values, not JSON; asks: the agents' desk-phone cards about a note, as bookasks.ts's
 //     asksOn lists them, each with its note (asks), or with its group for a design ask on an Asks page. names: an
@@ -18,7 +17,7 @@ import { chapterOf, inChapters } from './notebookchapters.js';
 import { BOARD, GROUP_ROUTES, groupOf, insertGroup, keepPicture, pictureUrl, putAside } from './notebookplaygroups.js';
 import { seededGroup, unitsOn } from './notebookplaygroups.js';
 import { search } from './notebookplaysearch.js';
-import { PEOPLE_ROUTES } from './notebookplaypeople.js';
+import { PEOPLE_ROUTES, answeredBy, gatheredOn } from './notebookplaypeople.js';
 import { TIDY_ROUTES } from './notebookplaytidy.js';
 import { duplicatePage } from './notebookplayduplicate.js';
 import { closeRound, unwrapRound } from './notebookplayrounds.js';
@@ -49,6 +48,7 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     asking: (group, face) => ran(s, group, { asking: face }),
     trying: (group, tried) => ran(s, group, { tried }),
     seen: (group, by) => ran(s, group, { seen: by }),
+    answered: (group, to) => answeredBy(s, group, to),
     // An agent's desk-phone card about a sent group's note (group: its id), as bookasks.ts's asksOn lists it ({ agent,
     // kind, title, body, questions? }), its id, note and name filled in. → the card.
     ask: (group, card) => askAbout(s, group, card),
@@ -290,7 +290,7 @@ function listGroups(s, q) {
     page: p.id,
     notebook: p.notebook,
     title: p.label,
-    groups: unitsOn(s, p.id).map(g => groupOf(s, g, replies)),
+    groups: [...unitsOn(s, p.id).map(g => groupOf(s, g, replies)), ...gatheredOn(s, p)],
   };
 }
 // The board's page torn out onto Submit: each open group goes as its own note at once, the page stays and no page is
@@ -390,7 +390,6 @@ const notebookOf = (s, n) => ({
 const pageOf = (s, p) => ({
   ...{ id: p.id, notebook: p.notebook, kind: p.kind, title: p.label, archived: !!p.archived, zooms: { ...p.zooms } },
   ...{ chapter: chapterOf(p.kind, s.notebook(p.notebook)?.kind), ...(p.guest && { guest: p.guest }) },
-  ...(p.sketch && { sketch: true }), // (a design session's call page)
   ...(p.kind === 'call'
     ? { sending: false, sent: p.followed ? new Date(p.followed).toISOString() : null, readonly: s.shut(p) }
     : { sending: p.send_at !== null && !s.gone(p), sent: s.gone(p) ? new Date(p.send_at).toISOString() : null }),

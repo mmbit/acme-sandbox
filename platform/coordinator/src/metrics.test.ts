@@ -7,6 +7,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { harness } from './harness.ts';
+import { paidBasket } from './payments.fixture.ts';
 
 const RUN = mkdtempSync(`${tmpdir()}/metrics-run-`);   // the host's memory
 after(() => rmSync(RUN, { recursive: true, force: true }));
@@ -273,24 +274,6 @@ test("one app's dashboard: every day, the funnel's steps, countries, labels, wha
   assert.equal((await board('/api/numbers/..%2Fcompany')).status, 404);
 });
 
-// A paid basket of the shop's, stored as payments.ts and codes.ts keep one (no route short of a Stripe checkout and its
-// webhook makes one): its things (and a line of the shop's own going
-// with the first, when asked), and whether its buyer had paid for one before (null: not known)
-let baskets = 0;
-function paidBasket(at: string, things: number, back: boolean | null, o: { mode?: string; status?: string; amount?: number; own?: boolean } = {}) {
-  const n = ++baskets, session = `cs_live_basket${n}`, paidAt = `${at}T10:00:00.000Z`;
-  db.prepare(`insert into payments (id, created, product, mode, reference, amount, currency, status, updated, basket)
-    values (?, ?, 'front', ?, ?, ?, 'eur', ?, ?, ?)`).run(session, paidAt, o.mode ?? 'live', `bk${n}`, o.amount ?? 3995, o.status ?? 'paid', paidAt, `bk${n}`);
-  for (let i = 0; i < things + (o.own ? 1 : 0); i++) {
-    const line = `ln_basket${n}_${i}`;
-    db.prepare(`insert into pay_lines (id, created, product, mode, reference, amount, currency, description, ships_in, cutoff, status, session,
-      paid_at, updated, goes_with) values (?, ?, 'pebblepost', ?, ?, 3995, 'eur', '', 1, 12, 'paid', ?, ?, ?, ?)`)
-      .run(line, paidAt, o.mode ?? 'live', line, session, paidAt, paidAt, i === things ? `ln_basket${n}_0` : null);
-    db.prepare('insert into session_lines (session, line, position, card, saved) values (?, ?, ?, 3995, 0)').run(session, line, i);
-  }
-  if (back !== null) db.prepare('insert into code_orders (session, mode, paid, newcomer) values (?, ?, ?, ?)').run(session, o.mode ?? 'live', at, back ? 0 : 1);
-}
-
 test('a net the app doesn\'t know stays unknown: the dashboard gives no net while any kept order lacks one', async () => {
   const summary = (rows: unknown[]) => ({ batch: batch(), counts: [], orders: { from: plus(-1), to: today, made: Date.now(), rows } });
   await push(summary([row({ day: plus(-1), kept: 2, paid: 2, orders: 2, eur: 9.98, net: 3.8, netUnknown: 1 })]), as('pebblepost', 'preview'));
@@ -303,14 +286,14 @@ test('a net the app doesn\'t know stays unknown: the dashboard gives no net whil
 });
 
 test("the home carries the shop's live paid baskets per day: with more than one thing, and from a buyer who came back", async () => {
-  paidBasket(today, 1, false);
-  paidBasket(today, 2, true);
-  paidBasket(today, 1, true, { own: true });   // a line of the shop's own is no second thing
-  paidBasket(plus(-3), 3, null);
-  paidBasket(plus(-40), 2, true);   // before the home's 28 days
-  paidBasket(today, 2, true, { mode: 'test' });
-  paidBasket(today, 2, true, { status: 'test', amount: 0 });
-  paidBasket(today, 2, true, { amount: 0 });   // paid by vouchers alone
+  paidBasket(db, today, 1, false);
+  paidBasket(db, today, 2, true);
+  paidBasket(db, today, 1, true, { own: true });   // a line of the shop's own is no second thing
+  paidBasket(db, plus(-3), 3, null);
+  paidBasket(db, plus(-40), 2, true);   // before the home's 28 days
+  paidBasket(db, today, 2, true, { mode: 'test' });
+  paidBasket(db, today, 2, true, { status: 'test', amount: 0 });
+  paidBasket(db, today, 2, true, { amount: 0 });   // paid by vouchers alone
   // the orders the stalls put in the basket and those in a checkout opened (payments.ts lineSteps, as its baskets call
   // them), live only: one taken back from the day it was counted, a test line's in preview
   const { lineSteps } = await import('./payments.ts');

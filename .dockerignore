@@ -50,6 +50,10 @@
 !shared/watchalong/shown.ts
 # (its replay's page)
 !shared/watchalong/mirrorpage.ts
+# (the recorded page's stylesheets as their files say them.)
+!shared/watchalong/sheets.ts
+# (a recording read back on a thread of its own.)
+!shared/watchalong/playback.ts
 # the one headless Chromium driver, which the mirror and a company's print renders start.
 !shared/chromium/chromium.ts
 # the platform's formats, which a company's kits may import
@@ -143,6 +147,8 @@
 # a try's versions as the book shows them, which the book's page picture draws them by (bookversionsof.js;
 # platform/coordinator/src/ink/bookpicture.ts.)
 !platform/hq/shell/ink/bookversionsof.js
+# a voice note's slip, which the book's page picture draws as the book does (bookvoiceslip.js.)
+!platform/hq/shell/ink/bookvoiceslip.js
 !kits
 **/node_modules
 **/*.test.ts

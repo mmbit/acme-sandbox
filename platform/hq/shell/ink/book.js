@@ -29,6 +29,7 @@ import { undoKeys } from './bookundokeys.js';
 import { mountShelfWindow, openShelf } from './bookshelfwindow.js';
 import { pressesHeard } from './booksounds.js';
 import { mountCallMarks } from './bookcallmarks.js';
+import { coverPage } from './bookcover.js'; // (split out of book.js.)
 
 // How long the book slides from one open width to another, pushed aside quick and soft (the swing's: bookswing.js)
 const SLIDE_MS = 240,
@@ -45,6 +46,9 @@ let moving = []; // the slide or fade under way: its animations
 // and the viewer's bar keeps clear of it by --book-over (layOver, from viewer.js.)
 let over = false;
 let stage = null; // HQ's stage.js under the board's book (a guest's book has none)
+// A call guest's book: 'spread', over the whole screen, however it turns or splits and as it opens again, and out of
+// HQ's memory per shape (the room is on HQ's origin); else null.
+let roomMode = null;
 
 export async function initBook({ scope = null } = {}) {
   setScope(scope);
@@ -58,8 +62,9 @@ export async function initBook({ scope = null } = {}) {
   }
   await Promise.all(STYLES.map(href => stylesheet(href)));
   mountRoot();
-  state = recall(store, shape());
-  if (scope) state.mode = scope.spread ? 'spread' : 'open'; // (spread: a call's page, its guest's.)
+  if (scope?.spread) roomMode = 'spread';
+  state = recalled();
+  if (scope && !scope.spread) state.mode = 'open'; // (a guest's work or round: beside it)
   mountRail(parts.rail, { undo: () => pages.undo(), redo: () => pages.redo() });
   const calls = scope ? null : await import('../calldrop.js');
   pages = mountPages(parts.paper, { dev: world.dev, calls, shelf: scope ? null : openShelf });
@@ -94,7 +99,7 @@ function watchSize() {
     size = `${innerWidth}x${innerHeight}`;
     const acting = moving.length > 0 || swing.swinging();
     swing.cancel();
-    state = recall(store, shape());
+    state = recalled();
     show(layout(innerWidth, innerHeight, state), { fade: acting });
   }).observe(document.documentElement);
 }
@@ -155,13 +160,19 @@ function openTo(find) {
 // A page of the day shown turned to.
 export const showBookPage = id => pages?.show(id);
 const shape = () => shapeOf(innerWidth, innerHeight);
+// Remembered for this shape, a call guest's room's mode over it (roomMode).
+const recalled = () => ({ ...recall(store, shape()), ...(roomMode && { mode: roomMode }) });
+// Open, a call guest's book lies as its room has it (roomMode).
+const inRoom = next => (roomMode && next.mode !== 'folded' ? { ...next, mode: roomMode } : next);
+// The state remembered for this shape, never a call guest's room's (roomMode).
+const remember = () => roomMode || keep(store, shape(), state);
 // Go to a state, and remember it for this shape: opened or shut, the board swings (from where it is, mid-swing too);
 // from one open width to another, the book slides from where it is on the screen (where a drag left it), never from
 // where it was before. The book opens straight onto its page. With reduced motion it fades in or out.
 function go(next) {
   stop();
-  state = next;
-  keep(store, shape(), state);
+  state = inRoom(next);
+  remember();
   const to = layout(innerWidth, innerHeight, state);
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
     swing.cancel();
@@ -179,7 +190,7 @@ const shutOrShutting = () => (swing.heading() ?? (drawn.mode === 'folded' ? 'shu
 function mountSwing() {
   swing.mountSwing(root, parts, {
     board() {
-      const l = drawn.mode !== 'folded' ? drawn : layout(innerWidth, innerHeight, { ...state, mode: 'open' }),
+      const l = drawn.mode !== 'folded' ? drawn : layout(innerWidth, innerHeight, inRoom({ ...state, mode: 'open' })),
         at = placeOf(l);
       return { x: at.x, width: at.width, spread: l.mode === 'spread' };
     },
@@ -198,16 +209,19 @@ function mountSwing() {
     },
     widen,
     laidOpen: () => drawn.mode === 'open' && !over,
+    // (a call guest's whole-screen room shuts by its tab alone: a finger's swipe from the page's left edge there is
+    // Safari's Back.)
+    edgeShuts: () => roomMode !== 'spread',
     over: () => over,
     landed(dx) {
       const open = { ...state, mode: state.mode === 'folded' ? 'open' : state.mode };
-      state = dx ? released(innerWidth, innerHeight, open, dx) : open;
-      keep(store, shape(), state);
+      state = inRoom(dx ? released(innerWidth, innerHeight, open, dx) : open);
+      remember();
       show(layout(innerWidth, innerHeight, state));
     },
     shut() {
       state = { ...state, mode: 'folded' };
-      keep(store, shape(), state);
+      remember();
       show(layout(innerWidth, innerHeight, state));
     },
     edge: { start: tones, move: edgeMove, end: edgeEnd },
@@ -359,12 +373,6 @@ function show(l, { fade = false } = {}) {
   coverPage(l.mode === 'spread');
   bookstage.lying(stage, l.mode === 'spread');
   document.dispatchEvent(new CustomEvent('book:layout', { detail: l }));
-}
-
-// In the spread the book covers HQ's page on purpose, untappable; what floats over it in the top layer (a small call,
-// its cards) still can be.
-export function coverPage(covered) {
-  for (const el of document.body.children) el.inert = covered && !el.matches(':popover-open');
 }
 
 // The cover's outer edge: dragged, it resizes the open book, the edge following the finger (or the mouse) while held

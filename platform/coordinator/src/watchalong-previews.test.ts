@@ -1,7 +1,7 @@
 // node --test src/watchalong-previews.test.ts   (the harness's server, a stand-in for Caddy at the preview hosts; the
 // pictures need Chromium: CHROMIUM_PATH)
-// The watch-along's mirror loads a preview's pictures, fonts and stylesheets when its recording was there, and nothing
-// else.
+// The watch-along's mirror loads a preview's pictures, fonts and stylesheets when its recording was there, and HQ's
+// looks' Google fonts (a stand-in for Google behind fetch), and nothing else.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
@@ -49,6 +49,25 @@ const caddy = createServer(async (req, res) => {
 }).listen(0);
 await new Promise(resolve => caddy.once('listening', resolve));
 after(() => caddy.close());
+
+// A stand-in for Google Fonts behind fetch, from before the coordinator's modules load (webfonts.ts takes fetch then): a
+// stylesheet of fonts naming Pixel, a font file of the Wide glyph. google: what came to it.
+const GOOGLE_CSS = 'https://fonts.googleapis.com/css2?family=Pixel&display=swap',
+  GOOGLE_TTF = 'https://fonts.gstatic.com/s/pixel/v1/wide.ttf';
+const GOOGLE: Record<string, Buffer> = {
+  [GOOGLE_CSS]: Buffer.from(`@font-face { font-family: Pixel; src: url(${GOOGLE_TTF}) format('truetype') }`),
+  [GOOGLE_TTF]: FILES['/wide.ttf'],
+};
+const google: string[] = [];
+const fetched = globalThis.fetch;
+globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  const url = new URL(input instanceof Request ? input.url : input);
+  if (!['fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) return fetched(input, init);
+  google.push(url.href);
+  const file = GOOGLE[url.href];
+  return Promise.resolve(new Response(file ? new Uint8Array(file) : null, { status: file ? 200 : 404 }));
+}) as typeof fetch;
+after(() => (globalThis.fetch = fetched));
 
 const h = await harness('watchalong-previews', {
   env: { PUBLIC_HOST: HQ, PREVIEWS_VIA: `http://127.0.0.1:${(caddy.address() as AddressInfo).port}` },
@@ -120,8 +139,41 @@ const page = (more: string[] = []) => {
   ];
 };
 
+// HQ's page in a look whose lettering comes from Google Fonts, as the brownstone's: a line in its font with a button
+// after it, which was tapped, and a script at Google's font host the mirror must not load
+const lookPage = () => {
+  const t = Date.now();
+  const head = node('head', {}, [node('link', { rel: 'stylesheet', href: GOOGLE_CSS })]);
+  const line = node('div', { style: 'height: 60px; line-height: 60px; font-size: 40px; white-space: nowrap' }, [
+    node('span', { style: 'font-family: Pixel, monospace' }, [{ type: 3, textContent: 'WW', id: ++id }]),
+    node('button', {
+      style: 'display: inline-block; vertical-align: top; width: 60px; height: 60px; border: 0; background: #0a0',
+      'aria-label': 'Add',
+    }),
+  ]);
+  const body = node('body', { style: 'margin: 0' }, [
+    line,
+    node('img', { src: 'https://fonts.gstatic.com/s/pixel/v1/app.js', style: 'width: 10px; height: 10px' }),
+  ]);
+  const doc = {
+    type: 0,
+    childNodes: [{ type: 1, name: 'html', publicId: '', systemId: '', id: ++id }, node('html', {}, [head, body])],
+    id: ++id,
+  };
+  return [
+    { type: 4, data: { href: `${ORIGIN}/`, width: 400, height: 300 }, timestamp: t },
+    { type: 2, data: { node: doc, initialOffset: { left: 0, top: 0 } }, timestamp: t + 1 },
+    // (the button after "WW" in the look's font: 160 px in, 60 px wide)
+    {
+      type: 5,
+      data: { tag: 'tap', payload: { x: 190, y: 30, pointer: 'mouse', role: 'button', label: 'Add' } },
+      timestamp: t + 3,
+    },
+  ];
+};
+
 // The screen tool's picture at the tap, and the pass the stand-in saw, from a live call walked through that page
-const walked = async (more: string[] = []) => {
+const walked = async (recorded: object[] = page()) => {
   const ctx = await h.liveCall('wren');
   const started = await fetch(`${base}/api/watchalong/start`, {
     method: 'POST',
@@ -132,7 +184,7 @@ const walked = async (more: string[] = []) => {
   const posted = await fetch(`${base}${events}`, {
     method: 'POST',
     headers: { origin: ORIGIN },
-    body: JSON.stringify({ events: page(more) }),
+    body: JSON.stringify({ events: recorded }),
   });
   assert.equal(posted.status, 200);
   const screen = (body: Record<string, unknown>) =>
@@ -162,6 +214,17 @@ test(
     assert.ok(near(await colour(50, 50), RED), 'the picture');
     assert.ok(near(await colour(150, 50), BLUE), "the stylesheet's picture");
     assert.ok(near(await colour(190, 130), { r: 0, g: 170, b: 0 }), 'the button, laid out after the line in its font');
+  },
+);
+
+test(
+  "a look's Google font shows in the mirror's picture, fetched from Google's two font hosts and nothing else there",
+  { skip: noChromium },
+  async () => {
+    google.length = 0;
+    const { picture } = await walked(lookPage());
+    assert.ok(near(await colourAt(picture, 190, 30), { r: 0, g: 170, b: 0 }), 'the button, laid out after the line');
+    assert.deepEqual([...new Set(google)].sort(), [GOOGLE_CSS, GOOGLE_TTF]);
   },
 );
 

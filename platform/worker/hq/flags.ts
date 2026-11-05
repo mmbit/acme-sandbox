@@ -11,6 +11,7 @@ export type ItemFlags = {
   lands?: string;
   job?: string;
   goal?: string;
+  offPage?: boolean;
 };
 
 // --item, --replaces and --call <number> (hq items), --lands <job> (hq job: the failed job whose saved work it lands),
@@ -40,6 +41,9 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
       i++;
     } else if (flag === '--board-set' && command === 'item') {
       flags.boardSet = true;
+    } else if (flag === '--off-page' && command === 'item') {
+      // (a live call's task on its list alone, not on its notes page.)
+      flags.offPage = true;
     } else if (flag === '--goal') {
       if (value !== '-') {
         stop(

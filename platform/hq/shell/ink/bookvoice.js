@@ -1,8 +1,8 @@
 // A voice note: the mic on the tools' island, after Text. Tapped (by a finger, the Pencil or the mouse) it lights and
 // waits; a press then held on a spot of a page records there until it lifts. The words write themselves at that spot
-// as they're said, a box of words like any typed one, an ink loader after them while more are coming (bookheard.js),
-// and land there as the page's own words once the last are in, one step Undo takes back (booktape.js,
-// book.tape.words at a point). The mic goes out the moment the press lifts. A double tap held on the page
+// as they're said, on a slip of paper, the voice's bars after them while it's held and settled while more are coming
+// (bookheard.js), and land there as the page's own words on their slip once the last are in, one step Undo takes back
+// (booktape.js, book.tape.words at a point). The mic goes out the moment the press lifts. A double tap held on the page
 // (bookinput.js) is the same note at its spot (heldAt). Tapped again, or another tool picked, before a press, the mic
 // lets go; Escape lets a note go. The mic's tap is what asks for the microphone: it opens it then, ready for the
 // press, so the first word isn't lost waiting for it; a hold alone never asks. Nothing heard, or the microphone
@@ -26,6 +26,7 @@ import { followPress } from './bookpress.js';
 import { heardAt } from './bookheard.js';
 import { NOT_PAPER } from './bookinput.js';
 import { shut } from './booksave.js';
+import { slipProperties } from './bookvoiceslip.js';
 
 let lang = null;
 
@@ -34,6 +35,8 @@ let lang = null;
 export function mountVoice(book, after) {
   if (!canRecord) return;
   stylesheet('shell/ink/bookvoice.css');
+  // (the slip's look, which the store's picture and a canvas draw too.)
+  for (const [name, value] of Object.entries(slipProperties())) document.documentElement.style.setProperty(name, value);
   const mic = button({ icon: icon('mic'), label: word('voiceNote'), pressed: false });
   mic.classList.add('bk-mic');
   after.after(mic);
@@ -222,7 +225,7 @@ function language(book) {
         () => 'en',
       ));
 }
-// The mic's ring and the loader's dots move with the voice's level
+// The mic's ring and the slip's bars move with the voice's level
 function pulse(v) {
   const step = () => {
     if (v.done) return;

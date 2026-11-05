@@ -1,7 +1,7 @@
 // The watch-along end to end in Chromium: a page records itself and a page of another origin in its frame (as HQ and a
 // preview in its viewer), someone taps, types and moves on in the frame, and rrweb's replayer draws the moment back.
 // It checks what the recording holds and keeps out (typed values in the frame, a password, a hidden part, the address's
-// query) and that the frame's page is in the replay.
+// query, a stylesheet's query but a Google font's) and that the frame's page is in the replay.
 // The frame's page loads the recorder as review mode's script does (framed.js), only once asked; the desk's canvas is in the replay as
 // its pictures, and a private one never.
 // A pen stroke circles the shop's button in the frame (ink.js's pen): its ink is in the recording as data, sampled, with
@@ -59,6 +59,8 @@ const KEPT_OUT = [
   'data-jane',
   'M1.25 2.75',
 ];
+// A look's stylesheet of Google's fonts, linked once the page runs, as HQ's looks link theirs
+const GOOGLE_FONT = 'https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap';
 // rrweb's incremental source for a canvas's frames
 const CANVAS = 9;
 const batches = [];
@@ -106,6 +108,7 @@ try {
       'the address without its query',
     );
     assert.ok(!text.includes('?code'), 'no query string anywhere');
+    assert.ok(text.includes(`"href":"${GOOGLE_FONT}"`), "a stylesheet of Google's fonts keeps its whole address");
     // the private parts' canvases: the picture block and the sampler keep their frames out
     const pictured = new Set(events.filter(e => e.type === 3 && e.data.source === CANVAS).map(e => e.data.id));
     assert.equal(pictured.size, 1, "the desk's canvas is pictured, and its private ones never");
@@ -141,6 +144,7 @@ function navigationRecorded(events) {
 async function walkThrough(typed) {
   batches.length = 0;
   const { page, context, errors } = await openPage(browser, { viewport: { width: 800, height: 700 } });
+  await context.route('https://styles.test/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await page.goto(`${desk.origin}/?code=one-time-123&typed=${typed}`);
   await page.waitForFunction(() => window.watching);
   const frame = await shopFrame(page, 'Mugs');
@@ -254,6 +258,7 @@ function deskPage(shopOrigin) {
 <input type="hidden" value="HIDDEN-TOKEN">
 <canvas id="drawn" width="200" height="100"></canvas> <svg width="20" height="20"><path data-private d="M1.25 2.75L9 9"/></svg>
 <span data-private data-email="data-jane@example.com"><canvas id="theirs" width="50" height="50"></canvas></span>
+<link rel="stylesheet" href="https://styles.test/look.css?code=one-time-123">
 <iframe src="${shopOrigin}/shop.html?code=one-time-123" onload="this.dataset.loaded = 'loading'"></iframe>
 <script type="module">
 import { watch } from '/shared/watchalong/watchalong.js';
@@ -267,6 +272,7 @@ for (const [id, colour] of [['drawn', '#e02020'], ['theirs', '#20e020']]) {
 }
 const typed = new URLSearchParams(location.search).get('typed');
 window.watching = watch({ url: '/events', typed, canvasFps: 2 });
+document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: '${GOOGLE_FONT}' }));
 setTimeout(() => {
   document.querySelector('#later').title = 'Changed Jane';
   document.querySelector('#later').setAttribute('style', "background-image:url('${picture('LATE-BACKDROP')}')");

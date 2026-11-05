@@ -995,7 +995,7 @@ test("a task drawn after a failed one is its owner's call: a redo queued without
   );
   const stall = {
     on: 'stalled',
-    why: `task #${one} before it in its deliverable failed with nothing in its place: its owner lands it again (hq job --lands ${one}) or puts a queued task in its place (hq stop ${one} "why" --for <job>)`,
+    why: `task #${one} before it in its deliverable failed with nothing in its place: its owner lands it again (hq job --lands ${one}) or puts a task queued or under way since in its place (hq stop ${one} "why" --for <job>)`,
   };
   assert.deepEqual(
     predictions

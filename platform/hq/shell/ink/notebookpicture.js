@@ -2,6 +2,7 @@
 // (bookpicture.ts); dev mode has no store, so the page's groups are drawn here, its ink, typed words and pictures on the
 // paper, kept till the page changes. An address for an <img>.
 import { draw as ink } from '/__review/ink.js';
+import { layered } from '/__review/inkshape.js';
 
 const PICTURE_PX = 360, // (its width; at most 1.5 as tall: a grown page shows its top, as the grid does)
   TEXT_PX = 18,
@@ -38,7 +39,7 @@ async function drawn(page, groups) {
   }
   // (a highlighter's strokes under the ink, as on the page)
   const strokes = groups.flatMap(gr => gr.ink ?? []);
-  ink(g, [...strokes.filter(st => st.alpha < 1), ...strokes.filter(st => !(st.alpha < 1))]);
+  ink(g, layered(strokes));
   for (const t of groups.flatMap(gr => gr.texts ?? [])) typed(g, t);
   const blob = await new Promise(res => canvas.toBlob(res));
   return blob ? URL.createObjectURL(blob) : '';

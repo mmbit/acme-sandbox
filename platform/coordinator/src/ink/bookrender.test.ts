@@ -346,3 +346,26 @@ test("a later unit's highlighter lies under an earlier unit's pen line, as the b
   // (twice the page's px)
   assert.ok(at(drawn, 300, 200)[0] < 30, `the line clean on top: ${at(drawn, 300, 200)}`);
 });
+
+test("a notebook page's units lie on their post-its on the dotted paper, a scrap's words written on its card", async () => {
+  const drawn = await pixels(
+    await render(
+      {
+        ...{ w: 400, h: 300, ink: [], scraps: [], dotted: true },
+        cards: [{ x: 24, y: 24, w: 320, h: 160 }],
+        under: [{ x: 24, y: 100, w: 320, text: 'On the card', onCard: true }],
+      },
+      '.',
+    ),
+  );
+  // twice the page's px: the post-it from (48, 48), its words dark on its own yellow, the paper's dots round it
+  const postit = ([r, g, b]: number[]) => r === 253 && g === 241 && b === 169;
+  assert.ok(postit(at(drawn, 60, 60)) && postit(at(drawn, 680, 360)), 'the post-it, corner to corner');
+  assert.ok(postit(at(drawn, 54, 204)), 'no post-it of its own for its words (#fff3a8): one paper');
+  let inked = 0;
+  for (let y = 200; y < 260; y++) for (let x = 60; x < 300; x++) if (at(drawn, x, y)[0] < 120) inked++;
+  assert.ok(inked > 100, 'its words on it');
+  let dots = 0;
+  for (let y = 400; y < 600; y++) for (let x = 0; x < 800; x++) if (at(drawn, x, y)[0] < 245) dots++;
+  assert.ok(dots > 50, "the paper's dots under it");
+});

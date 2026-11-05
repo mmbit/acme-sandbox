@@ -4,9 +4,10 @@
 // and back still selecting; a picture taped in drawn on and scaled by its frame at once; Duplicate, and a paste of
 // words; a box of words moved by Select with nothing drawn, the handwriting beside it keeping its focus, a letter
 // deleted and a space put in without a keyboard, and new boxes in a row (by hand at the board's iPad sizes:
-// penhand.mjs). Each asserts what the board sees and what the store keeps.
+// penhand.mjs). Each in a scrap opened on the page (the grid takes no ink), asserting what the board sees and what the
+// store keeps.
 import assert from 'node:assert/strict';
-import { freePage, onDesk, paperBox, pasteGreen, pick, savedWhere } from './mouse.mjs';
+import { freePage, inScrap, onDesk, pasteGreen, pick, savedWhere } from './mouse.mjs';
 import { MINI, middleOf, until } from './kit.mjs';
 import { hands } from './hands.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
@@ -41,7 +42,8 @@ async function taps(browser, c) {
   c.pages.splice(c.pages.length - 1, 1, free);
   const { page, pen, errors, done } = await onMini(browser, c);
   try {
-    const words = page.locator('#book .bk-typed');
+    const paper = await inScrap(page, c, free, pen.tap),
+      words = page.locator(`${SHOWN} .bk-typed`);
     await tool(page, 'Pen');
     await pen.tap(middleOf(await words.boundingBox()));
     await until(() => editing(page), 'the box edited by a tap');
@@ -50,7 +52,6 @@ async function taps(browser, c) {
     await page.keyboard.press('Escape');
     await savedWhere(c, free.id, p => p.texts[0].text === 'Order the teal mugs today' && p.ink.length === 0);
     // a tap on bare paper is a dot (an i's, a full stop)
-    const paper = await paperBox(page);
     await pen.tap([paper.x + 300, paper.y + 620]);
     await savedWhere(c, free.id, p => p.ink.length === 1);
     // a picture taped in (picked as it lands: a tap on bare paper lets it go), tapped with the highlighter: no dot
@@ -83,7 +84,7 @@ async function offTheEdge(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
   try {
-    const paper = await paperBox(page),
+    const paper = await inScrap(page, c, free, pen.tap),
       // (right of the tool strip down the paper's left)
       [x, y] = [paper.x + 160, paper.y + 160],
       edge = MINI.width - 3;
@@ -112,6 +113,7 @@ async function picture(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
   try {
+    await inScrap(page, c, free, pen.tap);
     await tool(page, 'Pen');
     const at = await tapedIn(page, c, free),
       was = stored(c, free).scraps[0];
@@ -144,7 +146,7 @@ async function duplicates(browser, c) {
     });
   try {
     // (its select box starting right of the tool strip down the paper's left)
-    const paper = await paperBox(page),
+    const paper = await inScrap(page, c, free, pen.tap),
       [x, y] = [paper.x + 160, paper.y + 200];
     await tool(page, 'Pen');
     await pen.stroke(line([x, y], 160));
@@ -176,18 +178,18 @@ async function boxes(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
   try {
-    const paper = await paperBox(page),
+    const paper = await inScrap(page, c, free, pen.tap),
       [x, y] = [paper.x + 120, paper.y + 200];
     await tool(page, 'Text');
     await pen.tap([x, y]);
     await until(() => editing(page), 'a new box, the caret in it');
     await page.keyboard.type('one more please');
     // a Pencil's line just under the words: the words kept as typed, no new box, nothing read into them
-    const first = await page.locator('#book .bk-typed[data-editing]').boundingBox();
+    const first = await page.locator(`${SHOWN} .bk-typed[data-editing]`).boundingBox();
     await pen.stroke(line([first.x + 20, first.y + first.height + 10], 30));
     await page.waitForTimeout(QUIET_MS);
-    assert.equal(await page.locator('#book .bk-typed').count(), 1, 'no new box beside it');
-    assert.equal(await page.locator('#book .bk-typed-words').textContent(), 'one more please', 'the words as typed');
+    assert.equal(await page.locator(`${SHOWN} .bk-typed`).count(), 1, 'no new box beside it');
+    assert.equal(await page.locator(`${SHOWN} .bk-typed-words`).textContent(), 'one more please', 'the words as typed');
     await c.shot('book-pen-keys', page);
     // a second box further down, and a third: each one adds
     await pen.tap([x, y + 160]);
@@ -201,7 +203,7 @@ async function boxes(browser, c) {
     assert.deepEqual(typed.texts.map(t => t.text).sort(), ['one more please', 'three', 'two']);
     // Select, and the Pencil on the first box carries it down and right; nothing drawn
     await tool(page, 'Select');
-    const box = middleOf(await page.locator('#book .bk-typed').filter({ hasText: 'one more please' }).boundingBox());
+    const box = middleOf(await page.locator(`${SHOWN} .bk-typed`).filter({ hasText: 'one more please' }).boundingBox());
     await pen.stroke(path(box, [box[0] + 140, box[1] + 80]));
     const oneMore = p => p.texts.find(t => t.text === 'one more please'),
       // (down: across, it's at its scrap's right side already, where it stays whole)
@@ -225,7 +227,8 @@ async function grip(browser, c, device) {
   const mini = device === 'mini',
     { page, pen, errors, done } = mini ? await onMini(browser, c) : await onDesk(browser, c);
   try {
-    const box = page.locator('#book .bk-typed'),
+    await inScrap(page, c, free, mini ? pen.tap : undefined);
+    const box = page.locator(`${SHOWN} .bk-typed`),
       handle = box.locator('.bk-typed-grip');
     await (mini ? tool(page, 'Pen') : pick(page, 'Pen'));
     // (a mouse shows it on hover; a touch screen always)
@@ -242,7 +245,7 @@ async function grip(browser, c, device) {
     if (mini) await pen.tap(middleOf(words));
     else await page.mouse.click(...middleOf(words));
     await until(() => editing(page), 'the box edited by a tap on its words');
-    const bin = await page.locator('#book .bk-typed[data-editing] .bk-typed-keys').boundingBox();
+    const bin = await page.locator(`${SHOWN} .bk-typed[data-editing] .bk-typed-keys`).boundingBox();
     assert.ok(!overlap(await handle.boundingBox(), bin), 'the grip clear of the bin');
     await c.shot(`book-pen-grip-${device}`, page);
     await page.keyboard.press('Escape');
@@ -258,7 +261,7 @@ async function grip(browser, c, device) {
     assert.equal(moved.ink.length, 0, 'moving a box by its grip draws nothing');
     const after = await box.boundingBox();
     assert.ok(Math.abs(after.x - (words.x - 4 + 100)) < 4, `the box under the pen where it let go: ${after.x}`);
-    assert.equal(await page.locator('#book .bk-sel').count(), 0, 'nothing left picked: the pen still in hand');
+    assert.equal(await page.locator(`${SHOWN} .bk-sel`).count(), 0, 'nothing left picked: the pen still in hand');
     assert.equal(await editing(page), false, 'the words not opened by the drag');
     await c.shot(`book-pen-grip-${device}-moved`, page);
     assert.deepEqual(errors, []);
@@ -289,8 +292,10 @@ async function onMini(browser, c) {
 // A tool taken in hand by a finger's tap, unless it's in hand already (pressed again, it opens its card over the paper
 // beside the strip): the marker picked on the pen's card where the rail shows the pen alone (mouse.mjs pick).
 export const tool = (page, name) => pick(page, name, 'tap');
+// the opened scrap's page, the grid's under it
+export const SHOWN = '#book .bk-page[data-focus]';
 export const key = (page, name) =>
-  page.locator('#book .bk-typed[data-editing] .bk-typed-keys').getByRole('button', { name });
+  page.locator(`${SHOWN} .bk-typed[data-editing] .bk-typed-keys`).getByRole('button', { name });
 const bar = page => page.locator('#book .bk-sel-bar');
 export const line = ([x, y], dx) => Array.from({ length: 16 }, (_, i) => [x + (i * dx) / 15, y + 2 * Math.sin(i / 2)]);
 const path = ([x0, y0], [x1, y1]) =>
@@ -298,10 +303,10 @@ const path = ([x0, y0], [x1, y1]) =>
 // Whether a box of words has the caret (n: the boxes there are by then)
 export const editing = (page, n = 1) =>
   page.evaluate(
-    n =>
-      document.querySelectorAll('#book .bk-typed').length === n &&
-      !!document.activeElement?.closest('#book .bk-typed[data-editing]'),
-    n,
+    ([n, shown]) =>
+      document.querySelectorAll(`${shown} .bk-typed`).length === n &&
+      !!document.activeElement?.closest(`${shown} .bk-typed[data-editing]`),
+    [n, SHOWN],
   );
 // A picture pasted onto the page in view, picked as it lands: its middle on the screen, between its frame's corners
 // as the page draws them (a sketch page's box is only as big as what's on it, so it's no measure of the page's px).

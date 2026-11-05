@@ -9,7 +9,6 @@ import { fakeLettermint } from './fixture.ts';
 import { harness, VOICE_TOKEN } from './harness.ts';
 import { cookieOf } from './testdoor.ts';
 import { playwright } from '../../../shared/browser/browser.mjs';
-import { bodyOf } from '../../hq/shell/ink/scrapunit.js';
 
 // (the pictures are taken in the coordinator's Chromium: the push checks' is Playwright's, as pagecheck.test.ts finds it)
 process.env.CHROMIUM_PATH ??= process.env.BROWSER_HEADLESS_SHELL ?? playwright().chromium.executablePath();
@@ -49,10 +48,10 @@ test("the call's agent saves a prototype: a clip on the call's page, v2 beside v
   assert.equal(v2.version, 2);
   // One clip, the agent's, its versions under it as frames with their pictures and links
   const groups = said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups as any[];
-  const clip = groups.find(g => g.words === 'Flip card' || g.texts?.some((t: any) => t.text === 'Flip card'));
+  const clip = groups.find(g => g.children?.some((c: any) => c.link === v1.link));
   assert.ok(clip, JSON.stringify(groups));
-  // (no room to write under its name: its versions hang right under it.)
-  assert.equal(clip.h, bodyOf(clip), 'its versions right under its name');
+  // (nothing on it, no post-it with its name: the clip is its versions alone, its name call_prototypes'.)
+  assert.deepEqual([clip.ink, clip.texts, clip.pictures, clip.words, clip.h], [[], [], [], '', 0]);
   const versions = clip.children.filter((c: any) => c.style === 'version');
   assert.deepEqual(
     versions.map((v: any) => [v.version, v.link, !!v.picture, v.text]),
@@ -113,6 +112,17 @@ test("the call's agent saves a prototype: a clip on the call's page, v2 beside v
   const made = said(await h.agent('prototype', job.token, { call, name: 'Order flow', files }));
   assert.equal(made.version, 1);
   assert.equal((await h.send(`/${made.id}/pic.svg`, { host, cookie: board })).status, 200);
+  // (the call's page as a job reads it, hq sketch: its prototypes by name, as their clips carry none.)
+  const sketch = said(await h.agent(`sketch?id=${page}`, job.token));
+  assert.deepEqual(
+    sketch.prototypes.map((p: any) => [p.name, p.version]),
+    [
+      ['Order flow', 1],
+      ['Flip card', 3],
+      ['Flip card', 2],
+      ['Flip card', 1],
+    ],
+  );
   assert.equal(
     (await h.agent('prototype', job.token, { call, name: 'Dotted', files: { '.env': 'eA==', 'index.html': '' } }))
       .status,

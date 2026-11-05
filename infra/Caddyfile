@@ -76,6 +76,13 @@
 			import upstream
 		}
 	}
+	# a guest carrying the call the board left them: public, the voice line redeems their one-time ticket with the
+	# coordinator (callguests.ts).
+	handle /voice/guest {
+		reverse_proxy voice:8080 {
+			import upstream
+		}
+	}
 	# the Overseer's fixed actions on the host (infra/shell.py), which take only GitHub's tokens for the overseer workflow
 	handle /__shell {
 		reverse_proxy host.docker.internal:8722

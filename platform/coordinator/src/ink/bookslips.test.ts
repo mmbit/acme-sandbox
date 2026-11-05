@@ -247,13 +247,12 @@ const until = async (ok: () => boolean) => {
   for (let i = 0; i < 100 && !ok(); i++) await new Promise(res => setTimeout(res, 20));
 };
 
-test("words typed in a box on a page are judged, a call's page as any: an answer is typed under it, in the agent's ink", async () => {
+test("words typed in a box on a page are judged, never on a call's page: an answer is typed under it, in the agent's ink", async () => {
   const { inkOf } = await import('../../../hq/shell/ink/agentink.js');
   const typedEvents: Record<string, unknown>[] = [];
   const stop = onPublish(e => void (e.type === 'book' && e.text === 'page' && typedEvents.push({ ...e })));
   const quickRuns = () => (db.prepare('select count(*) n from quick_runs').get() as { n: number }).n;
-  const { call } = await h.liveCall('juno');
-  const page = await newPage({ kind: 'call', call });
+  const page = await newPage({ kind: 'free' });
   const question = { x: 40, y: 60, w: 160, text: 'What time is it?', color: '#2a2352' };
   const save = async (texts: unknown[]) => {
     const since = (await h.board(`/api/book/page?id=${page.id}`)).body.updated;
@@ -271,7 +270,7 @@ test("words typed in a box on a page are judged, a call's page as any: an answer
   assert.equal(quickRuns(), before + 1, "the judge's answer: it asks");
   const asked = db.prepare('select job from book_typed_asks where page = ?').get(page.id) as { job: number };
   const run = await h.claimJob(asked.job);
-  assert.equal(run.agent, 'juno', "the call's agent answers");
+  assert.equal(run.agent, 'juno', 'on a free page the CEO answers');
   assert.match(run.prompt, /What time is it\?/);
   const typedAt = (job: number) =>
     (db.prepare('select typed from book_typed_asks where job = ?').get(job) as { typed: string | null }).typed;
@@ -297,22 +296,26 @@ test("words typed in a box on a page are judged, a call's page as any: an answer
   // the box moved, or the page saved again with the answer on it, asks nothing again
   await save([{ ...question, x: 80 }, answered]);
   assert.equal(quickRuns(), before + 1);
-  // on a sheet's page its owner answers, on a free page the CEO
+  // on a sheet's page its owner answers
   const sheetPage = await newPage({ kind: 'sheet', owner: 'wren', url: '/?open=studio' });
-  const free = await newPage({ kind: 'free' });
-  for (const [p, agent] of [
-    [sheetPage, 'wren'],
-    [free, 'juno'],
-  ] as const) {
-    await h.board('/api/book/page/save', { id: p.id, ink: [], scraps: [], texts: [question] });
-    await judgeSays('What time is it?', 'answer');
-    const typed = () => db.prepare('select job from book_typed_asks where page = ?').get(p.id) as { job: number };
-    await until(() => !!typed());
-    const asked = typed();
-    assert.equal((db.prepare('select agent from jobs where id = ?').get(asked.job) as { agent: string }).agent, agent);
-    // a run done with no answer types nothing on, so nothing landed (chat.ts hears it as the run finishes)
-    await h.finish(await h.claimJob(asked.job), { status: 'done', result: '' });
-    assert.equal(typedAt(asked.job), null, 'a done run with nothing typed on: no landed answer');
-  }
+  await h.board('/api/book/page/save', { id: sheetPage.id, ink: [], scraps: [], texts: [question] });
+  await judgeSays('What time is it?', 'answer');
+  const typed = () => db.prepare('select job from book_typed_asks where page = ?').get(sheetPage.id) as { job: number };
+  await until(() => !!typed());
+  const sheetAsk = typed();
+  assert.equal(
+    (db.prepare('select agent from jobs where id = ?').get(sheetAsk.job) as { agent: string }).agent,
+    'wren',
+  );
+  // a run done with no answer types nothing on, so nothing landed (chat.ts hears it as the run finishes)
+  await h.finish(await h.claimJob(sheetAsk.job), { status: 'done', result: '' });
+  assert.equal(typedAt(sheetAsk.job), null, 'a done run with nothing typed on: no landed answer');
+  // on a call's page the call's agent is with the board: nothing is judged
+  const { call } = await h.liveCall('juno');
+  const callPage = await newPage({ kind: 'call', call });
+  await h.board('/api/book/page/save', { id: callPage.id, ink: [], scraps: [], texts: [question] });
+  await new Promise(res => setTimeout(res, 100));
+  assert.equal((await h.worker('reads/claim')).body.reading, undefined);
+  assert.equal(db.prepare('select job from book_typed_asks where page = ?').get(callPage.id), undefined);
   stop?.();
 });

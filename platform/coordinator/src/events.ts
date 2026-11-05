@@ -56,9 +56,9 @@ export const redactJob = (job: RunningJob): RunningJob => ({
   ...job, task: redact(job.task)!, project: redact(job.project), thread: redact(job.thread),
 });
 
-// an event as the events table keeps it
+// an event as the events table keeps it (job: the run it comes from, for activity.ts.)
 type Stored = Pick<Event, 'ts' | 'type' | 'agent' | 'to' | 'text' | 'state'>;
-const insert = db.prepare('insert into events (ts, type, agent, "to", text, state) values (?, ?, ?, ?, ?, ?)');
+const insert = db.prepare('insert into events (ts, type, agent, "to", text, state, job) values (?, ?, ?, ?, ?, ?, ?)');
 // The board's lines of the latest events a page opens with (subscribe), by their row: in memory only, never stored,
 // so after a restart those show their text.
 const REPLAY = 50;
@@ -90,7 +90,7 @@ function publishNow(event: Event & { ts: string }, by: Source) {
     const total = e.total ?? 0, now = Date.parse(e.ts!), kept = total < (s?.tokens?.at(-1)?.[1] ?? 0) ? [] : (s?.tokens ?? []);
     if (s) s.tokens = [...kept.filter(([at]) => at > now - TOKENS_KEPT_MS), [now, total]];
   } else if (e.type !== 'machines' && e.type !== 'studio' && e.type !== 'book' && e.type !== 'viewmarks') {
-    const row = Number(insert.run(e.ts, e.type, e.agent ?? null, e.to ?? null, e.text ?? null, e.state ?? null).lastInsertRowid);
+    const row = Number(insert.run(e.ts, e.type, e.agent ?? null, e.to ?? null, e.text ?? null, e.state ?? null, e.job ?? null).lastInsertRowid);
     if (board) boardLines.set(row, board);
     if (boardLines.size > REPLAY) boardLines.delete(boardLines.keys().next().value!);
   }

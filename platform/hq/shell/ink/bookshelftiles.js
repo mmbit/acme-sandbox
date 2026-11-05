@@ -21,7 +21,8 @@ export const ICONS = {
 const SENT_MARK =
   '<svg class="bk-stamp bk-stamped" viewBox="0 0 96 40" aria-hidden="true"><rect x="2" y="2" width="92" height="36" rx="7"/><rect x="6.5" y="6.5" width="83" height="27" rx="4"/><text x="48" y="27.6" text-anchor="middle">SENT</text></svg>';
 
-// A page's tile: its picture (a grown page's top) lying on the paper, its stamp once sent, its title and day under it;
+// A page's tile: its picture (a grown page's top) lying on the paper, its stamp once sent, its title and day under it
+// (a call's has its day in its title);
 // an archived one's small box brings it back
 export function pageTile(p, { here, drag = false, archived = false }) {
   const name = p.title || untitledPage(),
@@ -33,7 +34,10 @@ export function pageTile(p, { here, drag = false, archived = false }) {
     p.picture ? `<img src="${esc(p.picture)}" alt="" draggable="false">` : ''
   }${(p.sent || p.sending) && p.kind !== 'call' ? SENT_MARK.replace('bk-stamp', `bk-stamp${p.sent ? '' : ' bk-stamp-wet'}`) : ''}</span><span class="bk-tile-name"><span>${esc(
     p.title,
-  )}</span>${p.day ? `<small class="bk-tile-day">${esc(dayName(p.day))}</small>` : ''}</span></button>${
+  )}</span>${
+    // (a call's title starts with its day and time: no second date under it, as the view's head)
+    p.day && p.kind !== 'call' ? `<small class="bk-tile-day">${esc(dayName(p.day))}</small>` : ''
+  }</span></button>${
     archived
       ? `<button type="button" class="bk-tile-act" data-act="restore" aria-label="Back into the notebook: ${esc(name)}">${ICONS.restore}</button>`
       : ''

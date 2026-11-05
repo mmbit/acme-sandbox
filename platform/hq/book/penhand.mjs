@@ -1,12 +1,13 @@
 // book-check.mjs's stories of the Pencil on the book's paper by hand, at the board's iPad sizes
 // (shell/ink/booktexts.js, bookpan.js, bookscope.js; Ink's folder), with the Pencil in either engine (hands.mjs): a
 // Pencil's tap on a box's bin deleting it (Undo bringing it back), and a box tapped past its scrap's edge kept, a
-// refusal out of shape said plainly. Each asserts what the board sees and what the store keeps.
+// refusal out of shape said plainly. Each in a scrap opened on the page (the grid takes no ink), asserting what the
+// board sees and what the store keeps.
 import assert from 'node:assert/strict';
-import { freePage, paperBox, savedWhere } from './mouse.mjs';
+import { freePage, inScrap, savedWhere } from './mouse.mjs';
 import { MINI, UPRIGHT, middleOf, until } from './kit.mjs';
 import { mini } from './start.mjs';
-import { QUIET_MS, editing, key, line, tool } from './pen.mjs';
+import { QUIET_MS, SHOWN, editing, key, line, tool } from './pen.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function handStories(c) {
@@ -33,7 +34,7 @@ async function keys(browser, c, viewport) {
   const { page, pen, errors, done } = await mini(browser, c, { viewport });
   const size = `${viewport.width} × ${viewport.height}`;
   try {
-    const paper = await paperBox(page),
+    const paper = await inScrap(page, c, free, pen.tap),
       at = [paper.x + 120, paper.y + 200];
     await tool(page, 'Text');
     await pen.stroke([at, [at[0] + 30, at[1] + 4], [at[0] + 60, at[1] + 8]]);
@@ -60,12 +61,14 @@ async function keys(browser, c, viewport) {
     await page.keyboard.press('Escape');
     await savedWhere(c, free.id, p => p.texts.length === 1);
     // tapped again, the box's bin deletes it; Undo brings it back
-    await pen.tap(middleOf(await page.locator('#book .bk-typed').boundingBox()));
+    await pen.tap(middleOf(await page.locator(`${SHOWN} .bk-typed`).boundingBox()));
     await until(() => editing(page), `the box edited again (${size})`);
     await pen.tap(middleOf(await key(page, 'Delete the text box').boundingBox()));
     await savedWhere(c, free.id, p => p.texts.length === 0);
-    assert.equal(await page.locator('#book .bk-typed').count(), 0, `the box gone from the page (${size})`);
-    await pen.tap(middleOf(await page.locator('#book').getByRole('button', { name: 'Undo' }).first().boundingBox()));
+    assert.equal(await page.locator(`${SHOWN} .bk-typed`).count(), 0, `the box gone from the page (${size})`);
+    await pen.tap(
+      middleOf(await page.locator('#book .bk-scrap-history').getByRole('button', { name: 'Undo' }).boundingBox()),
+    );
     const back = await savedWhere(c, free.id, p => p.texts.length === 1);
     assert.equal(back.texts[0].text, 'one more', `Undo brings the box back (${size})`);
     assert.deepEqual(errors, []);
@@ -83,7 +86,7 @@ async function pastTheEdge(browser, c, viewport) {
   const size = `${viewport.width} × ${viewport.height}`,
     said = () => page.locator('#book .bk-refusal:not([hidden])').allTextContents();
   try {
-    const paper = await paperBox(page);
+    const paper = await inScrap(page, c, free, pen.tap);
     await tool(page, 'Text');
     // (left of the tools at the paper's right.)
     await pen.tap([(await page.locator('#book .bk-strip').boundingBox()).x - 40, paper.y + 220]);
@@ -138,10 +141,12 @@ const refused = (page, [x, y]) =>
 // The keys beside the box being typed in: their names and middles on the screen
 const keysOf = page =>
   page.evaluate(() =>
-    [...document.querySelectorAll('#book .bk-typed[data-editing] .bk-typed-keys .bk-btn')].map(b => {
-      const r = b.getBoundingClientRect();
-      return { name: b.getAttribute('aria-label'), at: [r.x + r.width / 2, r.y + r.height / 2] };
-    }),
+    [...document.querySelectorAll('#book .bk-page[data-focus] .bk-typed[data-editing] .bk-typed-keys .bk-btn')].map(
+      b => {
+        const r = b.getBoundingClientRect();
+        return { name: b.getAttribute('aria-label'), at: [r.x + r.width / 2, r.y + r.height / 2] };
+      },
+    ),
   );
 // The keys Scribble would read as the words' (their field and its reach): one that doesn't fill a 40 px box round its
 // middle, or comes within 8 px of the field
@@ -152,8 +157,9 @@ const reach = page =>
       .map(b => [b.getAttribute('aria-label'), b.getBoundingClientRect()])
       .filter(
         ([, r]) =>
-          r.width < 40 ||
-          r.height < 40 ||
+          // (to half a px: an opened scrap's zoom puts its keys a hair off whole px)
+          r.width < 39.5 ||
+          r.height < 39.5 ||
           (r.left < field.right + 8 &&
             r.right > field.left - 8 &&
             r.top < field.bottom + 8 &&

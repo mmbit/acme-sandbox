@@ -1,7 +1,7 @@
 // The book's eraser: it takes ink where it passes, at the size chosen (bookpalette.js), as a real eraser does: a line
 // it crosses is cut there and the rest stays, a filled shape it touches goes whole (bookstrokes.js rub). Pictures,
-// typed words and post-its are never its: they go with a scratch-out over their group or its clip's Delete
-// (bookgroups.js), or Select's Delete. A rub, however long, is one step for Undo and Redo (bookedit.js).
+// typed words and post-its are never its: they go with Select's Delete, or a whole scrap from its ⋯ menu (no line
+// deletes anything). A rub, however long, is one step for Undo and Redo (bookedit.js).
 //
 // It keeps up with the pen over any ink: each step cuts only the strokes near it, and the page is painted again once a
 // frame, only where ink went (bookpage.js rubbed), however many steps and coalesced points the frame brought.

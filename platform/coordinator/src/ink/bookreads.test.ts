@@ -20,9 +20,8 @@ async function until(what: () => unknown, why: string) {
   throw new Error(`never: ${why}`);
 }
 
-// Call #262: the board's new call had a new page, and it asked about the practice session's page before it, full on
-// its screen; the agent's sketch tool said that page had nothing on it (it read the old book's columns, empty on a
-// Notebook page, whose notes are its units).
+// A call's new page, and the board asks about the page before it, full on its screen: the agent's sketch tool reads it
+// as it is, not from the old book's columns, empty on a Notebook page, whose notes are its units.
 test("an earlier call's full notes page reads as it is on the next call, never as empty", async () => {
   const first = await h.liveCall('juno');
   const page = said(await h.board('/api/notebooks/call', { call: first.call })).page.id as number;

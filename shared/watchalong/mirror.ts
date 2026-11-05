@@ -3,24 +3,25 @@
 // replayed to that time). README.md has the design.
 //   - One Chromium for every mirror, started with the first and closed with the last; a tab per live session. A
 //     mirror closes when its session ends (close), or after IDLE_MS with nothing recorded and nothing asked.
-//   - The replay never reaches outside: its own files come from here, and everything the recorded page asks for goes
-//     to the owner's answer with the origins of the recording's pages that the owner lets it show (the coordinator's:
-//     HQ's own pictures and stylesheets from disk, and a preview's pictures, fonts and stylesheets when the recording
-//     was there and the session may show it), or is refused.
+//   - The replay never reaches outside: its own files come from mirrorpage.ts (answered), and everything the recorded
+//     page asks for goes to the owner's answer with the origins of the recording's pages that the owner lets it show
+//     (the coordinator's: HQ's own pictures and stylesheets from disk, a preview's pictures, fonts and stylesheets
+//     when the recording was there and the session may show it, and HQ's looks' Google fonts), or is refused.
+//   - The page's pictures it can't load by their address (a route's behind the viewer's sign-in, a blob) come in the
+//     recording (routepictures.js), and the replay gets those by their address. A picture on screen that didn't load is
+//     marked as not captured in the picture taken, never shown broken.
 //   - Pictures are JPEG (PNG when asked), LONG px on their long side, a tap ringed where it was, the pen's ink drawn.
 //   - Every step has STEP_MS: one that fails or runs past it closes its own tab. A live session's mirror then opens
 //     again from the recording when next asked for, and isn't seen until then (seen), so its page can say so. Chromium
 //     closes too only when it doesn't reply within REPLY_MS once a step ran past its time (outOfTime), and the next
 //     mirror opens in a fresh one.
-import { readFileSync } from 'node:fs';
-import { launch, type Answer, type Asked, type Browser, type Tab } from '../chromium/chromium.ts';
+import { launch, type Answer, type Browser, type Tab } from '../chromium/chromium.ts';
 import type { RecordedEvent } from './store.ts';
-import { OWN, type Own } from './mirrorpage.ts';
-import { shown, upTo } from './shown.ts';
+import { answered, ORIGIN, type Answering } from './mirrorpage.ts';
+import { addPagesAndPictures, shown, upTo } from './shown.ts';
+import { cssIn, noSheets, sheeted, type Sheets } from './sheets.ts';
 
 export const IDLE_MS = 10 * 60_000;
-// The replay's own files, on an origin that never resolves
-const ORIGIN = 'https://mirror.invalid';
 const QUALITY = 80;
 // The longest a replay waits for what the recorded page asks for (its pictures) before the picture is taken
 export const LOADING_MS = 1_000; // (exported: the owner's answer takes no longer.)
@@ -48,12 +49,13 @@ type Mirror = {
   browser: Promise<Browser>; // (the Chromium it's in)
   loading: Set<string>;
   pages: Set<string>;
+  pictures: Map<string, NonNullable<Answer>>; // (the recording's own pictures by their address: routepictures.js.)
+  sheets: Sheets; // (its linked stylesheets' own text: sheets.ts.)
   shows: Shows;
   used: number;
   turn: Promise<unknown>;
   size: string;
 };
-type Answering = (asked: Asked, pages: Set<string>) => Promise<Answer>;
 export type Shows = (origin: string) => boolean;
 
 export class Mirrors {
@@ -90,8 +92,8 @@ export class Mirrors {
     const tab = this.opened(browser, shows);
     const opening = timed(
       tab.then(async mirror => {
-        addPages(mirror, events);
-        await evaluate(mirror.tab, `mirror.live(${JSON.stringify(shown(events))})`);
+        addPagesAndPictures(mirror, events);
+        await evaluate(mirror.tab, `mirror.live(${await this.sheeted(mirror, shown(events))})`);
         return mirror;
       }),
       'opening',
@@ -118,8 +120,9 @@ export class Mirrors {
     void opening
       ?.then(mirror => {
         mirror.used = Date.now();
-        addPages(mirror, events);
-        return this.inTurn(id, opening, mirror, () => evaluate(mirror.tab, `mirror.add(${JSON.stringify(events)})`));
+        addPagesAndPictures(mirror, events);
+        const add = async () => evaluate(mirror.tab, `mirror.add(${await this.sheeted(mirror, events)})`);
+        return this.inTurn(id, opening, mirror, add);
       })
       .then(() => this.mirrors.get(id) === opening && this.reached.set(id, true))
       .catch(() => undefined);
@@ -141,8 +144,8 @@ export class Mirrors {
     try {
       return await timed(
         tab.then(async mirror => {
-          addPages(mirror, events);
-          await evaluate(mirror.tab, `mirror.at(${JSON.stringify(upTo(events, time))}, ${time})`);
+          addPagesAndPictures(mirror, events);
+          await evaluate(mirror.tab, `mirror.at(${await this.sheeted(mirror, upTo(events, time))}, ${time})`);
           return picture(mirror, shot);
         }),
         'past moment',
@@ -197,14 +200,15 @@ export class Mirrors {
   private async opened(launching: Promise<Browser>, shows: Shows): Promise<Mirror> {
     this.tabs++;
     const loading = new Set<string>(),
-      pages = new Set<string>();
+      pages = new Set<string>(),
+      pictures = new Map<string, NonNullable<Answer>>();
     let asked = 0;
     const made = launching.then(browser =>
       browser.tab(async request => {
         const id = ++asked;
         loading.add(`${id}`);
         try {
-          return await this.served(request, pages);
+          return await answered(request, { replay: this.replay, answer: this.answer, pages, pictures });
         } finally {
           loading.delete(`${id}`);
         }
@@ -212,7 +216,18 @@ export class Mirrors {
     );
     try {
       const tab = await timed(made.then(paged), 'page', () => this.outOfTime(launching));
-      return { tab, browser: launching, loading, pages, shows, used: Date.now(), turn: Promise.resolve(), size: '' };
+      return {
+        tab,
+        browser: launching,
+        loading,
+        pages,
+        pictures,
+        sheets: noSheets(),
+        shows,
+        used: Date.now(),
+        turn: Promise.resolve(),
+        size: '',
+      };
     } catch (err) {
       void made.then(tab => tab.close()).catch(() => undefined);
       await this.release(launching).catch(() => undefined);
@@ -262,18 +277,9 @@ export class Mirrors {
     await (await browser).close();
   }
 
-  private served(asked: Asked, pages: Set<string>): Promise<Answer> {
-    const url = new URL(asked.url);
-    if (url.origin !== ORIGIN) return asked.method === 'GET' ? this.answer(asked, pages) : Promise.resolve(null);
-    const own = OWN[url.pathname];
-    const body = (own: Own) =>
-      own.file
-        ? readFileSync(new URL(own.file, this.replay))
-        : own.url
-          ? readFileSync(own.url)
-          : Buffer.from(own.text!);
-    return Promise.resolve(own ? { type: own.type, body: body(own) } : null);
-  }
+  // The events as JSON, their stylesheets as the owner answers them (sheets.ts.)
+  private sheeted = (mirror: Mirror, events: RecordedEvent[]) =>
+    sheeted(events, mirror.sheets, async url => cssIn(await this.answer({ url, method: 'GET' }, mirror.pages)));
 
   // A live mirror's steps, one at a time, each within STEP_MS
   private inTurn<T>(id: number, opening: Promise<Mirror>, mirror: Mirror, step: () => Promise<T>): Promise<T> {
@@ -322,21 +328,6 @@ async function replies(browser: Promise<Browser>) {
     );
   return Promise.race([replied, late]).finally(() => clearTimeout(timer));
 }
-
-// The origins of the pages these events were on that the mirror may show: the recorded page's addresses, and the page
-// moments its frames sent up
-function addPages(mirror: Mirror, events: RecordedEvent[]) {
-  for (const event of events) {
-    const data = event.data as { href?: unknown; tag?: unknown; payload?: { address?: unknown } };
-    const address =
-      event.type === META ? data.href : event.type === CUSTOM && data.tag === 'page' && data.payload?.address;
-    if (typeof address !== 'string' || !URL.canParse(address)) continue;
-    const { origin } = new URL(address);
-    if (mirror.shows(origin)) mirror.pages.add(origin);
-  }
-}
-const META = 4,
-  CUSTOM = 5;
 
 // The replay as it is now: what it asked for loaded (or LOADING_MS gone), drawn, then taken, its tap ringed
 async function picture(mirror: Mirror, shot: Shot): Promise<Picture | undefined> {

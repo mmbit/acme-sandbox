@@ -205,22 +205,22 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every delivera
   why); the CEO sees every one with `hq inbox --all` and in the summary. The owner's planning job for the proposal's
   project, while one is open (queued, running or blocked, on any engine), takes it: it reads that project's inbox at
   its start and again before it ends, and what reached it after it started (new, or handed on with its project) and is
-  still open when it ends gets the next one (`proposals.sweep`, every minute). With none open, a running Claude session
-  of the owner hears it at its next step; otherwise HQ queues a new planning job, a one-task wrapper in the project, so
-  a pause on one of an owner's projects holds only that project's sorting. With org.yaml's
+  still open when it ends gets the next one (`proposals.sweep`, every minute). With none open, HQ queues a new planning
+  job, a one-task wrapper in the project, so a pause on one of an owner's projects holds only that project's sorting.
+  An owner's work session never holds it, as one busy with its own task may never sort it. With org.yaml's
   `review.drawWindowedChanges: true` (off unless set), a review's "changes" on a deliverable with a window is drawn at once,
   as `hq inbox accept findings:<pr> --for <author> --findings <blocking ids>` would: the PR's author fixes every
   blocking finding (or checks the touch-ups) in the reviewed deliverable, and the owner's running session hears of the task
   (a held notice, which lapses unread) and may cancel and redraw it (job #9562). A draw HQ can't make at once (`hq inbox
-  accept` refuses it) leaves the item with its owner as any other, findings and all, and its ruling isn't ruled again
-. Other findings on a deliverable with a
-  window (a close, or any of them without that setting) wait in no planning job that isn't running:
-  the owner's running session hears them first and holds them while it runs (once it ends, yields or parks on a card,
-  the sweep hands them on and its unread notice lapses rather than becoming a message job), and a planning job holding
-  any orders by the earliest of their windows, as the deliverable's own work does (job #8577). A "changes" item a later
-  round or the merge has left closes by itself in the sweep, and while one waits with no fix task drawn, the deliverable's
-  ETA says so, with no merge in sight. A proposal whose owner can't be told (the messages refuse the line)
-  is refused, and nothing of it is kept, nor shown in HQ's feed. The CEO hears its own at the hourly check instead. When `hq project owner`
+  accept` refuses it) leaves the item with its owner as any other, findings and all, and its ruling isn't ruled again.
+  Other findings on a deliverable with a window (a close, or any of them without that setting) also reach the owner's
+  running Claude session at its next step, which may decide them first, while the planning job holds them all the same.
+  That notice is held: unread when the session ends or parks on a card, or once the item is decided, it lapses rather
+  than becoming a message job. A planning job holding any orders by the earliest of their windows, as the deliverable's
+  own work does (job #8577). A "changes" item a later round or the merge has left closes by itself in the sweep, and
+  while one waits with no fix task drawn, the deliverable's ETA says so, with no merge in sight. An item whose owner's
+  session can't be told (the messages refuse the line) is refused, and nothing of it is kept, nor shown in HQ's feed.
+  The CEO hears its own at the hourly check instead. When `hq project owner`
   hands a project on, its open proposals reach the new owner the same way, and the old owner's planning job for it that
   hasn't started stands down if nothing is left for it.
 - Nothing HQ makes runs under a template name or as a bundle (`sorting.ts`). A

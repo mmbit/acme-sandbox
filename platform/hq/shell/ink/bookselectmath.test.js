@@ -5,6 +5,7 @@ import {
   boundsOf,
   boxPoly,
   gestureOf,
+  groupOf,
   inside,
   mapBox,
   moveBy,
@@ -127,6 +128,20 @@ test('a stroke is taken in when most of its points are; a picture or words when 
   assert.deepEqual(got.scraps, [scraps[0]]);
   assert.deepEqual(got.texts, [texts[0]]);
   assert.equal(got.ink[0], ink[0], "the page's own objects");
+});
+
+// (a picture alone on an opened scrap.)
+test('a press picks its group whole; on an opened scrap a picture alone, and its lines and words without the pictures', () => {
+  const pics = [{ g: 7 }, { g: 7 }],
+    ink = [line([[0, 0]], { g: 7 })],
+    texts = [{ g: 7 }],
+    grid = { groups: new Map([[7, {}]]), ink, scraps: pics, texts };
+  assert.deepEqual(groupOf(grid, { kind: 'scraps', item: pics[0] }), { ink, scraps: pics, texts });
+  const opened = { ...grid, focus: 7 };
+  assert.deepEqual(groupOf(opened, { kind: 'scraps', item: pics[1] }), { scraps: [pics[1]] });
+  assert.deepEqual(groupOf(opened, { kind: 'ink', item: ink[0] }), { ink, scraps: [], texts });
+  // (not saved yet: alone)
+  assert.deepEqual(groupOf(grid, { kind: 'scraps', item: { g: undefined } }), { scraps: [{ g: undefined }] });
 });
 
 test('the thing on top under a point: words over ink, ink over a highlighter, all over a picture', () => {

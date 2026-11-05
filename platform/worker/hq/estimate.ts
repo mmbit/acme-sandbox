@@ -133,7 +133,7 @@ type Outlook = {
   left_minutes: number;
   waits: Wait[];
   cards?: { request: number; at: number }[];
-  held?: number | null;
+  safe: number | null;
 };
 type Found = {
   job?: Job;
@@ -210,9 +210,7 @@ function outlookLine(o: Outlook, words: string, origin?: string) {
   const left = `${workDuration(o.left_minutes, origin)} of ${workUnit(origin)} left; `;
   const later = o.start !== null && o.start > Date.now() + 60_000;
   const start = later ? `it starts about ${at(o.start!)}, and ` : '';
-  const held =
-    o.held && o.held > (o.merged ?? 0) ? ` (by ${at(o.held)} four times in five: the time a promise holds to)` : '';
-  const merged = o.merged === null ? 'no projected merge in sight' : `projected merge ${at(o.merged)}${held}`;
+  const merged = o.merged === null ? 'no projected merge in sight' : `projected merge ${at(o.merged)}`;
   const waits = o.waits.length ? ` Waits on: ${o.waits.map(waitWords).join('; ')}.` : '';
   const cards = o.cards?.length
     ? ` It counts on the board answering ${o.cards.map(c => `card #${c.request} by ${at(c.at)}`).join(' and ')}, as it usually does.`
@@ -220,7 +218,7 @@ function outlookLine(o: Outlook, words: string, origin?: string) {
   const basis = o.unpricedSeats?.length
     ? ` Seat fill rates are not measured yet for ${o.unpricedSeats.join(', ')}.`
     : '';
-  return `${who}: ${left}${start}${merged}.${waits}${cards}${basis}`;
+  return `${who}: ${left}${start}${merged}${safeWords(o.merged, o.safe)}.${waits}${cards}${basis}`;
 }
 
 export const waitWords = (w: Wait) => wordsOf(w, at);
@@ -280,6 +278,15 @@ export const at = (ms: number) =>
     timeZone: TIME_ZONE,
     timeZoneName: 'short',
   });
+
+// The one time to tell the board after an ETA (outlookLine's, outlooks.ts's), never an "at the latest" beside it: live four
+// times in five (forecast.ts safe); none while the slow play doesn't finish it.
+export function safeWords(eta: number | null, safe: number | null) {
+  if (eta === null) return '';
+  return safe === null
+    ? "; no time to tell the board: nothing finishes it four times in five within the forecast's horizon"
+    : `; the one time to tell the board: live ${at(safe)}, four times in five, never the ETA beside it`;
+}
 
 // ---- queue changes
 

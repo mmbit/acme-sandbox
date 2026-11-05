@@ -6,7 +6,7 @@
 // from the desk's top-left, the screen's top: the paper runs under the status bar's blur and beside the tools, and
 // ink goes there too; size is its { w, h } and the room its content keeps clear of, { top, right } (the blur's and the
 // tools' island's: README, The book's frame). The page's px are its own (bookrow.js).
-import { canvasPans, dotsShown, drawScale, pageAt, shownBox, unitsPans, unitsZoom, zoomWithin } from './bookrow.js';
+import { scrapPans, dotsShown, drawScale, pageAt, shownBox, unitsPans, unitsZoom, zoomWithin } from './bookrow.js';
 import { isCanvas } from './sketchcanvas.js';
 
 // the paper's dot grid, one dot every DOT_PX of the page (bookdesk.css)
@@ -28,10 +28,11 @@ export const contentOf = book => ({ w: book.size.w - book.size.right, h: book.si
 // whatever the zoom; and the pan that shows a place there at a zoom of scale
 export const placeOf = book => ({ x: book.pan.x, y: book.pan.y + book.size.top / book.scale });
 export const panTo = (book, place, scale = book.scale) => ({ x: place.x, y: place.y - book.size.top / scale });
-// A page's fit: the scale a page of units is laid at to the paper's width (bookunits.js), the least it zooms out to; a
-// sketch page's 1, its own px
+// A page's fit: the scale a page of units is laid at to the paper's width (bookunits.js), the least it zooms out to; an
+// opened scrap's 1, its own px.
 export const fitOf = page => page?.scale ?? 1;
-// The zoom a page is shown at when asked for s, every page pinch-zooming: a sketch page's within its reach (bookrow.js zoomWithin); a page of units' from its fit in (unitsZoom)
+// The zoom a page is shown at when asked for s, every page pinch-zooming: an opened scrap's within its reach
+// (bookrow.js zoomWithin); a page of units' from its fit in (unitsZoom).
 export const zoomOf = (book, s) => {
   const page = viewOf(book)?.page;
   if (!page) return s;
@@ -44,18 +45,17 @@ export const zoomOf = (book, s) => {
 export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   const v = viewOf(book);
   if (!v || !book.size.w) return;
-  // (a sketch page zooms, and pans down, a near-endless canvas, and across only as far as it's zoomed or drawn past
-  // the paper; a page of units zooms in from its masonry's
-  // scale and pans across it as far as it's zoomed past its width, and down. Neither above or left of its top-left,
-  // the corner the view's title lies over at rest: bookrow.js.)
+  // (a page of units zooms in from its masonry's scale and pans across it as far as it's zoomed past its width, and
+  // down. Neither above or left of its top-left, the corner the view's title lies over at rest: bookrow.js.
   scale = zoomOf(book, scale);
   const zoomed = scale !== book.scale;
   book.scale = scale;
   // (scrolled on past the page's foot by about a screen, never moved there by itself: a unit's room dragged shorter
   // leaves the page where it is, past its end, and from there it scrolls back up but no further down.)
   // (isCanvas takes the page)
+  // (an opened scrap is endless every way)
   const reach = isCanvas(v.page)
-      ? canvasPans(v.page, book.size, scale, FOOT_SHOWN)
+      ? scrapPans(v.page, book.size, scale)
       : unitsPans(v.page, book.size, scale, FOOT_SHOWN),
     held = v.page.resizing || book.heldPastEnd === v.page ? book.pan.y : -Infinity,
     lowest = Math.max(reach.y1, held);
@@ -76,9 +76,12 @@ export function draw(book) {
   book.world.style.transform = `translate3d(${-pan.x * s}px, ${-pan.y * s}px, 0) scale(${s})`;
   // (the zoom for the dots and for what keeps its size on screen over the page: a selection's frame.)
   desk.setProperty('--bk-scale', s);
-  desk.setProperty('--bk-dots-shown', dotsShown(s));
-  desk.backgroundSize = `${DOT_PX * s}px ${DOT_PX * s}px`;
-  desk.backgroundPosition = `${-pan.x * s}px ${-pan.y * s}px`;
+  // (an opened scrap's sheet has no dots: the grid's stay as they were under it.)
+  if (!viewOf(book)?.page.focus) {
+    desk.setProperty('--bk-dots-shown', dotsShown(s));
+    desk.backgroundSize = `${DOT_PX * s}px ${DOT_PX * s}px`;
+    desk.backgroundPosition = `${-pan.x * s}px ${-pan.y * s}px`;
+  }
   book.drawn ??= drawScale(s);
   book.views.forEach((v, i) => v.show(i === book.cur ? shown(book) : null, book.drawn));
   book.head.update(); // (the title and the day of what's showing: bookviewhead.js.)

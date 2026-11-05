@@ -2,17 +2,18 @@
 // booktools.js, bookprefs.js): on a desktop with a mouse, the pen in use as the book opens (the rail: bar.mjs; the
 // wheel: wheel.mjs), Ctrl's drag selecting and giving the tool back, a tap on the rail's mic and a spot held a voice
 // note whose words write themselves there, a press held still only a dot, the preferences (in the dots) kept on this
-// device; on a touch screen (the fingers and the Pencil in either engine, hands.mjs), one finger drawing and two moving
-// the page with no stray line, a slide along the rail picking a tool, drifting off it too, the Pencil tapping the mic
-// and holding a spot, the Pencil held still only ink, and a finger that pans once the pen's been used, as the
-// preferences have it unless turned off (on a fresh device the first pen anywhere in HQ turns that on, once, and only
-// the board turns it off); and by hand at the board's iPad sizes, the Pencil writing and one finger or two scrolling a
-// long page with the text tool on, leaving no ink and no box of words. Each asserts what the board sees and what the
-// store keeps.
+// device; on a touch screen (the fingers and the Pencil in either engine, hands.mjs), a slide along the rail picking a
+// tool, drifting off it too, one finger scrolling the grid and drawing nothing there, and in a scrap opened by a
+// finger's tap one finger drawing and two moving it with no stray line, the Pencil tapping the mic and holding a spot,
+// the Pencil held still only ink, and a finger that pans once the pen's been used, as the preferences have it unless
+// turned off (on a fresh device the first pen anywhere in HQ turns that on, once, and only the board turns it off); and
+// by hand at the board's iPad sizes, the Pencil writing in a long opened scrap and one finger or two scrolling it with
+// the text tool on, leaving no ink and no box of words. Each asserts what the board sees and what the store keeps. The
+// pen draws in a scrap opened on the page (the grid takes no ink: a finger scrolls it).
 import assert from 'node:assert/strict';
-import { desk, freePage, paperBox, savedWhere, colourIn, BLUE } from './mouse.mjs';
+import { desk, freePage, inScrap, paperBox, savedWhere, colourIn, BLUE, inkOn, cardInSight } from './mouse.mjs';
 import { press } from './bar.mjs';
-import { PREFERENCES, QUIET_MS, MINI, UPRIGHT, middleOf, until, wordsHeard } from './kit.mjs';
+import { PREFERENCES, QUIET_MS, MINI, UPRIGHT, middleOf, openScrap, until, wordsHeard } from './kit.mjs';
 import { mini } from './start.mjs';
 import { SAID } from './voice.mjs';
 
@@ -23,13 +24,13 @@ export function stripStories(c) {
     'controls with a mouse: the mic tapped, then a spot held, puts the words there as they’re said; Undo takes them back; a press held still is a dot':
       browser => voiceByMouse(browser, c),
     'controls with a mouse: Preferences, from the dots, stick on this device': browser => preferences(browser, c),
-    'controls on a touch screen: one finger draws, two move the page, a slide along the rail picks a tool': browser =>
-      fingers(browser, c),
+    'controls on a touch screen: a slide along the rail picks a tool, one finger scrolls the grid, in an opened scrap one finger draws and two move it':
+      browser => fingers(browser, c),
     'controls with the Pencil: the mic tapped right after writing, then a spot held, dictates there, the Pencil held still is only ink, a finger pans once the pen is in use':
       browser => pencil(browser, c),
-    'a fresh iPad: a finger draws till the first pen anywhere in HQ, then scrolls, after a reload too; turned off, it stays off':
+    'a fresh iPad: a finger draws in an opened scrap till the first pen anywhere in HQ, then scrolls it, after a reload too; turned off, it stays off':
       browser => firstPen(browser, c),
-    'by hand on an iPad mini, sideways and upright: the Pencil writes, a finger or two scrolls with the text tool on, by default':
+    'by hand on an iPad mini, sideways and upright: the Pencil writes in an opened scrap, a finger or two scrolls it with the text tool on, by default':
       async browser => {
         for (const viewport of [MINI, UPRIGHT]) await scrolling(browser, c, viewport);
       },
@@ -42,7 +43,7 @@ async function mouse(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await desk(browser, c);
   try {
-    const paper = await paperBox(page);
+    const paper = await inScrap(page, c, free);
     assert.equal(await pressed(page), 'Pen', 'the pen in use');
     const mid = middleOf(paper);
     // a blue line, its key pressed with the mouse over the book: the colour keys are the book's only while the
@@ -73,8 +74,7 @@ async function voiceByMouse(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await desk(browser, c);
   try {
-    const paper = await paperBox(page),
-      mid = middleOf(paper);
+    const mid = middleOf(await inScrap(page, c, free));
     // a press held still a second and a half: a dot, and nothing listens or opens (no long press anywhere)
     await stillFor(
       page,
@@ -97,7 +97,7 @@ async function voiceByMouse(browser, c) {
       [mid[0] - 100, mid[1] + 60],
       'book-voice-listening',
     );
-    await page.locator('#book').getByRole('button', { name: 'Undo', exact: true }).click();
+    await page.locator('#book .bk-scrap-history').getByRole('button', { name: 'Undo', exact: true }).click();
     await savedWhere(c, free.id, p => p.texts.length === 0);
     assert.deepEqual(errors, []);
   } finally {
@@ -132,55 +132,60 @@ async function preferences(browser, c) {
 
 async function fingers(browser, c) {
   const free = freePage(c);
+  // (a grid longer than the screen: nine scraps, each a tall line)
+  for (let i = 0; i < 9; i++) c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [tall(i)] });
   const { page, touch, errors, done } = await mini(browser, c);
   try {
-    const paper = await paperBox(page),
-      mid = middleOf(paper);
-    // a slide along the rail: each tool's name as it passes, the one it lifts on picked, no hold
-    const b = name => page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox();
-    const [select, eraser] = [await b('Select'), await b('Eraser')];
-    await touch.down([middleOf(select)]);
-    // (drifting off the rail onto the paper beside it: the tool level with the finger, the rail standing upright.
-    await touch.move([[eraser.x - 30, eraser.y + eraser.height / 2]], 8);
-    await until(async () => (await page.locator('#bk-tip').textContent()).startsWith('Eraser'), "the eraser's name");
-    await c.shot('book-strip-slide', page);
-    await touch.up();
-    await until(async () => (await pressed(page)) === 'Eraser', 'the eraser picked by the slide');
+    await slid(page, touch, c);
     await page.locator('#book .bk-strip').getByRole('button', { name: 'Pen', exact: true }).tap();
-    // one finger draws
     await page.keyboard.press('0'); // (Blue, the pen's tenth colour)
-    await touch.stroke([[mid[0] - 100, mid[1]]], [[mid[0] + 100, mid[1]]]);
-    await savedWhere(c, free.id, p => p.ink.length === 1);
-    assert.ok((await colourIn(page, BLUE)).n > 100, 'the blue line shows');
-    const before = await placed(page);
-    // two fingers drawing nothing
-    await touch.stroke(
-      [
-        [mid[0] - 60, mid[1] + 120],
-        [mid[0] + 60, mid[1] + 120],
-      ],
-      [
-        [mid[0] - 60 + 90, mid[1] + 160],
-        [mid[0] + 60 + 90, mid[1] + 160],
-      ],
-    );
-    // The page scrolls down only, never sideways: a page this short stays put.
-    const after = await placed(page);
-    assert.equal(after[0], before[0], `two fingers never move the page sideways: ${JSON.stringify([before, after])}`);
+    // one finger on the grid scrolls it, on a fresh device too: the grid takes no ink
+    const ink = inkOn(c, free),
+      mid = middleOf(await paperBox(page)),
+      top = await placed(page);
+    await touch.stroke([[mid[0], mid[1] + 150]], [[mid[0], mid[1] - 150]]);
     await page.waitForTimeout(QUIET_MS);
-    assert.equal(stored(c, free).ink.length, 1, 'no stray line from two fingers');
+    const scrolled = await placed(page);
+    assert.ok(scrolled[1] < top[1] - 100, `one finger scrolled the grid: ${top} → ${scrolled}`);
+    assert.equal(inkOn(c, free), ink, 'no ink on the grid from a finger');
+    // a finger's tap on a card in sight opens its scrap, and on it one finger draws
+    await openScrap(page, fingerOf(touch), undefined, await cardInSight(page));
+    const at = middleOf(await page.locator('#book .bk-sheet').boundingBox());
+    await touch.stroke([[at[0] - 100, at[1]]], [[at[0] + 100, at[1]]]);
+    await until(() => inkOn(c, free) === ink + 1, "the finger's line saved in the scrap");
+    assert.ok((await colourIn(page, BLUE)).n > 100, 'the blue line shows');
+    // two fingers move the opened scrap, drawing nothing
+    const before = await placed(page);
+    const two = (dx, dy) => [-60, 60].map(x => [at[0] + x + dx, at[1] + 120 + dy]);
+    await touch.stroke(two(0, 0), two(90, 40));
+    await page.waitForTimeout(QUIET_MS);
+    const after = await placed(page);
+    assert.notDeepEqual(after, before, 'two fingers moved the opened scrap');
+    assert.equal(inkOn(c, free), ink + 1, 'no stray line from two fingers');
     assert.deepEqual(errors, []);
   } finally {
     await done();
   }
 }
 
+// A slide along the rail: each tool's name as it passes, the one it lifts on picked, no hold
+async function slid(page, touch, c) {
+  const b = name => page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox();
+  const [select, eraser] = [await b('Select'), await b('Eraser')];
+  await touch.down([middleOf(select)]);
+  // (drifting off the rail onto the paper beside it: the tool level with the finger, the rail standing upright.
+  await touch.move([[eraser.x - 30, eraser.y + eraser.height / 2]], 8);
+  await until(async () => (await page.locator('#bk-tip').textContent()).startsWith('Eraser'), "the eraser's name");
+  await c.shot('book-strip-slide', page);
+  await touch.up();
+  await until(async () => (await pressed(page)) === 'Eraser', 'the eraser picked by the slide');
+}
+
 async function pencil(browser, c) {
   const free = freePage(c);
   const { page, pen, touch, errors, done } = await mini(browser, c);
   try {
-    const paper = await paperBox(page),
-      mid = middleOf(paper);
+    const mid = middleOf(await inScrap(page, c, free, pen.tap));
     // the Pencil held still a second and a half: a dot, and nothing listens or opens
     await stillFor(page, [mid[0] + 120, mid[1] + 200], pen.down, pen.up);
     await savedWhere(c, free.id, p => p.ink.length === 1);
@@ -205,11 +210,12 @@ async function pencil(browser, c) {
   }
 }
 
-// A fresh iPad, nothing kept on it: a finger draws; the first pen tap anywhere in HQ, here on
-// HQ's own page beside the book, turns "touch always scrolls" on, once; from then a finger moves the page with no pen
+// A fresh iPad, nothing kept on it: a finger draws in an opened scrap; the first pen tap anywhere in HQ, here on
+// HQ's own page beside the book, turns "touch always scrolls" on, once; from then a finger moves the scrap with no pen
 // first, after a reload too. Turned off in Preferences, it stays off however often the pen comes back.
 async function firstPen(browser, c) {
   const free = freePage(c);
+  c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [tall(0)] });
   const { page, pen, touch, errors, done } = await mini(browser, c);
   const kept = () => page.evaluate(() => JSON.parse(localStorage.getItem('ink.prefs') ?? '{}'));
   const { draws, pans } = fingerLines(page, touch, c, free);
@@ -225,7 +231,7 @@ async function firstPen(browser, c) {
     await pen.tap(onHq);
     await until(async () => (await kept()).penPans === true, 'the first pen, outside the book, turned it on');
     await reopen(page, c);
-    await pans('after a reload, a finger moves the page with no pen first');
+    await pans('after a reload, a finger moves the scrap with no pen first');
     await press(page, PREFERENCES);
     const card = page.getByRole('dialog', { name: PREFERENCES });
     assert.equal(await card.getByLabel('Touch always scrolls').isChecked(), true, 'on in Preferences');
@@ -242,23 +248,26 @@ async function firstPen(browser, c) {
   }
 }
 
-// A finger's line across the free page's paper: it draws (the line saved), or it moves the page and leaves nothing
+// A finger's line across the free page's scrap, opened by a finger's tap if it isn't: it draws (the line saved), or
+// it moves the scrap and leaves nothing
 function fingerLines(page, touch, c, free) {
   const finger = async () => {
-    const n = stored(c, free).ink.length,
-      [x, y] = middleOf(await paperBox(page));
+    if (!(await page.locator('#book .bk-sheet').isVisible()))
+      await openScrap(page, fingerOf(touch), undefined, await cardInSight(page));
+    const n = inkOn(c, free),
+      [x, y] = middleOf(await page.locator('#book .bk-sheet').boundingBox());
     await touch.stroke([[x - 80, y + 60]], [[x + 40, y - 60]]);
     return n;
   };
   return {
     draws: async why => {
       const n = await finger();
-      await savedWhere(c, free.id, p => p.ink.length > n).catch(() => assert.fail(why));
+      await until(() => inkOn(c, free) > n, why);
     },
     pans: async why => {
       const n = await finger();
       await page.waitForTimeout(QUIET_MS);
-      assert.equal(stored(c, free).ink.length, n, why);
+      assert.equal(inkOn(c, free), n, why);
     },
   };
 }
@@ -269,22 +278,21 @@ async function reopen(page, c) {
   await c.settled(page, 'open');
 }
 
-// The board's walk-through by hand, nothing set on the device: a long page, the Pencil writes a line, the
-// text tool picked; a finger's drag up and then two fingers' scroll the page each time, and neither leaves ink or a
-// box of words
+// The board's walk-through by hand, nothing set on the device: a scrap with a line far down it, opened by the Pencil,
+// longer than the screen; the Pencil writes a line on it, the text tool picked; a finger's drag up and then two
+// fingers' scroll it each time, and neither leaves ink or a box of words
 async function scrolling(browser, c, viewport) {
   const free = freePage(c);
-  // (a line written far down it: the page as tall as what's on it, longer than the screen)
+  // (a line written far down it: the scrap as tall as what's on it, longer than the screen)
   free.ink.push({
     color: '#1d9a5b',
     size: 5,
-    points: Array.from({ length: 40 }, (_, i) => [80 + (i % 2) * 400, i * 70, 0.5, i * 16]),
+    points: Array.from({ length: 40 }, (_, i) => [20 + (i % 2) * 260, i * 70, 0.5, i * 16]),
   });
   const { page, pen, touch, errors, done } = await mini(browser, c, { viewport });
   const size = `${viewport.width} × ${viewport.height}`;
   try {
-    const paper = await paperBox(page),
-      mid = middleOf(paper);
+    const mid = middleOf(await inScrap(page, c, free, pen.tap));
     await pen.stroke([
       [mid[0] - 80, mid[1]],
       [mid[0], mid[1] + 10],
@@ -302,7 +310,7 @@ async function scrolling(browser, c, viewport) {
       );
       await page.waitForTimeout(QUIET_MS);
       const after = await placed(page);
-      assert.ok(after[1] < before[1] - 100, `${fingers} finger(s) scrolled the page at ${size}: ${before} → ${after}`);
+      assert.ok(after[1] < before[1] - 100, `${fingers} finger(s) scrolled the scrap at ${size}: ${before} → ${after}`);
       assert.equal(
         await page.locator('#book .bk-typed').count(),
         0,
@@ -323,6 +331,14 @@ async function scrolling(browser, c, viewport) {
 
 // ---- helpers
 
+// A tall line down a scrap (in its own px), the i-th of a story's long grid
+const tall = i => ({
+  color: '#1d9a5b',
+  size: 5,
+  points: Array.from({ length: 12 }, (_, k) => [40 + (k % 2) * 240, 20 + k * 40, 0.5, i * 1000 + k * 16]),
+});
+// A finger's tap, as openScrap takes a pen's
+const fingerOf = touch => ({ tap: at => touch.down([at]).then(() => touch.up()) });
 // The mic tapped (tap(name): the rail's button of that name pressed by the mouse, the Pencil or Safari's), then a spot
 // on the paper held (down(at) and up(at), at: on the screen): the words show there as they're heard, the mic red while
 // it's held; let go, the mic out at once and the words land at the spot. shot: the listening's picture's name.

@@ -215,12 +215,32 @@
   font: 600 20px/1.3 var(--bk-font, system-ui, sans-serif);
   letter-spacing: 0.01em;
 }
-#book .bk-view-day {
+/* the day and, on a read-only page, its lock: one quiet line under the title */
+#book .bk-view-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 6px 0 0;
+}
+#book .bk-view-line:not(:has(> :not([hidden]))),
+#book .bk-view-locked[hidden] {
+  display: none;
+}
+#book :is(.bk-view-day, .bk-view-locked) {
+  margin: 0;
   font: 500 12px/1 var(--bk-font, system-ui, sans-serif);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--bk-muted, #8a849c);
+}
+#book .bk-view-locked {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+#book .bk-view-locked svg {
+  width: 13px;
+  height: 13px;
 }
 /* The title written where it shows (Rename page: booktitle.js), on a ruled line over a patch of the paper, an error
    quietly under it */

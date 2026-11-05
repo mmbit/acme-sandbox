@@ -125,13 +125,15 @@ export function changedWindowReadings(after: number) {
   }[];
 }
 
+// (each with when its revision was reported: headroom.ts reads kept intervals for an earlier time by it)
 export function windowReadings(seat: string, quota: 'five' | 'week', after: number, at: number) {
   return db
     .prepare(
-      `select at, used, resets from (
-        select at, used, resets, row_number() over (partition by at order by reported_at desc, rowid desc) revision
+      `select at, used, resets, reported_at reported from (
+        select at, used, resets, reported_at,
+        row_number() over (partition by at order by reported_at desc, rowid desc) revision
         from seat_window_observations where seat = ? and quota = ? and at > ? and at <= ? and reported_at <= ?
       ) where revision = 1 order by at`,
     )
-    .all(seat, quota, after, at, at) as { at: number; used: number; resets: number | null }[];
+    .all(seat, quota, after, at, at) as { at: number; used: number; resets: number | null; reported: number }[];
 }

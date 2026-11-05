@@ -1,7 +1,8 @@
 // The book's judge: every note the board makes in its book, once it rests, is read by a small model that says whether
-// it calls for a reply now and what kind:
-//   - answer: a question or a doubt a few words settle; the quick run writes them (bookanswer.ts answerNow).
-//   - try: a change to something the board can see, where a few versions to look at help it decide (booktry.ts tryNow).
+// the board asks an agent for something now, and what. The book is where the board thinks, never an order to build:
+// a reply comes only when the board really asks for one:
+//   - answer: a question a few words settle; the quick run writes them (bookanswer.ts answerNow).
+//   - try: the board asks to see versions of something (booktry.ts tryNow).
 //   - pick: a reply on one of a try's versions that chooses it; that version is picked (bookpick.ts pickNow).
 //   - cross: a reply on one of a try's versions that rules it out (bookpick.ts crossNow).
 //   - none: everything else, most notes: it waits for its sheet as ever, and shows nothing.
@@ -15,11 +16,13 @@
 // What it judges (a target): a group on a notebook page (grp: a scrap, a drawing, a reply under an answer), a note on the
 // old book's pages (note), or a box typed on one (page + text: booktyped.ts). Only the board's own: a guest's note is
 // outside text (charter rule 9) and waits for the board's plane. Judging runs after the board's request has answered.
+// Never on a call's notes page, live or ended: the call's agent is with the board there and hears its ink (callguests.ts
+// markForVoice), and its follow-up takes the page after; nothing else reacts to it.
 import { db, lacks, once, redacted, remember, setting } from '../db.ts';
 import { dayAllowance } from '../dayallowance.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused } from '../pagechecks.ts';
-import { BOARD } from './book.ts';
+import { BOARD, row as pageOf } from './book.ts';
 import { answeredOf, drawnOf, seenOf, type Seen } from './bookseen.ts';
 
 // Each judging spends a little of a Claude seat's window, which the company's jobs live on: JUDGES_A_DAY bounds what a
@@ -117,27 +120,30 @@ export const schemaOf = (onVersion: boolean) => ({
 // (its examples name no company's agents; handwriting read in the picture)
 // (everyday words, "circle" never "ring")
 const PROMPT = `You read one note the board (the person who runs the company) just made in its book in HQ, and decide \
-whether an agent replies to it right away, and how. A note is a mark on a page: words typed or said aloud, or \
+whether it asks an agent for something now, and what. A note is a mark on a page: words typed or said aloud, or \
 written by hand, often with a circle, an arrow or a scribble on the page around it. The picture shows the ink, the \
-handwriting too: read it there. Every note reaches its agent with its sheet later in any case: a reply now comes on top of that.
+handwriting too: read it there. The book is where the board thinks: most notes are its own, and an agent replies only \
+when the board really asks it something. Every note reaches its agent with its sheet later in any case.
 
-- answer: the board asks or doubts something, and a few words from an agent settle it: what something on the page \
-means, whether something is done or live, why something is the way it is. An agent writes a short answer beside the note.
-- try: the board asks for a change to something it can see, or wonders about one, and seeing a few versions side by \
-side would help it decide: a colour, a size, a picture, a layout, words it isn't sure of. An agent makes a few versions.
+- answer: the board asks a question, and a few words from an agent settle it: what something on the page means, \
+whether something is done or live, why something is the way it is, where something comes from. An agent writes a \
+short answer beside the note.
+- try: the board asks to see versions or alternatives of something it can see: an agent makes a few to look at. Only \
+when it asks for them: a change it notes, a wish or a thought about one is none.
 - pick: only for a note on one of an agent's versions (it replies to a version): the board chooses that version. A \
 circle drawn round it, a tick on it, an arrow at it with "deze", "this one" or "ja". \
 The picture shows the version's frame with the board's ink over it. A note on a version that asks for more ("this, but \
-softer") is a try, a doubt about it an answer.
+softer") is a try, a question about it an answer.
 - cross: only for a note on one of an agent's versions: the board rules that version out. A cross or a line through \
 it, "nee", "no", "not this one".
-- none: everything else, and that's most notes: work that's clear as written (it's done when the sheet goes), a \
-reminder, a thought, a reaction, a tick, a scribble. None costs nothing and shows nothing.
+- none: everything else, and that's most notes: a thought, an idea, a sketch, a plan, a reminder, a reaction, a mark, \
+a change or a wish noted, work to do. The book is never an order to build: a sketch or a request to make something \
+waits for its sheet, or for a call. None costs nothing and shows nothing.
 
 Judge what the board means, in whatever language it writes, never how the words look: a question can come without a \
-question mark, and a plain request can end in one. Read handwriting with the page around it in mind. When the words alone don't \
-settle it, the picture, the page and what the note replies to do. Between answer and none: an answer nobody needed \
-costs little, a doubt left hanging costs more. Choose try only when versions would really help the board decide.
+question mark, and a thought to itself can end in one. Read handwriting with the page around it in mind. When the \
+words alone don't settle it, the picture, the page and what the note replies to do. When it isn't clear that the \
+board asks something of an agent, it's none: a reply nobody asked for is clutter on the board's page.
 
 why: one short line for whoever checks the verdicts later: what the note asks for, and so this reply.
 
@@ -145,11 +151,15 @@ Notes and their verdicts:
 - "what does reach count here" (handwritten, a circle round a figure on HQ's Gazette page) -> answer: asks what a figure means; a sentence settles it.
 - "is this live yet" (typed, on a shop's product page) -> answer: asks whether it has shipped.
 - "waarom?" (handwritten, an arrow at a paused project in HQ) -> answer: asks why it's paused; the agent can say.
-- "ik snap niet waar dit getal vandaan komt" (said, on an invoice page) -> answer: a doubt about where a number comes from, no question mark needed.
-- "warmer?" (handwritten, a circle round an app's header) -> try: wonders about a colour; versions show it.
-- "try this bigger" (handwritten, a circle round a logo) -> try: a visible change whose right size is a matter of looking.
-- "misschien hier een foto" (said, on a landing page's opening) -> try: wonders about a picture there; a few to choose from.
-- "swap" (handwritten, a circle and an arrow between two cards) -> try: a layout change best judged by seeing it.
+- "waar is dit voor?" (said, on a scrap of a settings page) -> answer: asks what something is for.
+- "ik snap niet waar dit getal vandaan komt" (said, on an invoice page) -> answer: asks where a number comes from, no question mark needed.
+- "werk hier drie alternatieven van uit" (handwritten, a circle round an app's header) -> try: asks for three alternatives.
+- "a few options for this headline?" (typed, on a landing page) -> try: asks to see options.
+- "warmer?" (handwritten, a circle round an app's header) -> none: a thought about a colour; nothing asked of an agent.
+- "try this bigger" (handwritten, a circle round a logo) -> none: a change it wants; it goes with the sheet, no versions asked for.
+- "misschien hier een foto" (said, on a landing page's opening) -> none: an idea for itself.
+- "swap" (handwritten, a circle and an arrow between two cards) -> none: a layout change noted for its sheet.
+- "bouw dit" (handwritten, beside a screen sketched on a free page) -> none: the book is no order to build; it goes with its sheet or to a call.
 - "fix the typo" (handwritten, a circle round "recieve") -> none: clear work, done when the sheet goes.
 - "Can you make the button blue?" (typed, on HQ's settings page) -> none: a clear request, work to do, not a question to answer.
 - "hello, anyone there?" (handwritten, on a free page) -> answer: asks whether anyone reads it; a word back settles it.
@@ -160,7 +170,7 @@ Notes and their verdicts:
 - "ok doe maar" (handwritten, replying to an answer suggesting a fix) -> none: a go-ahead, the work follows.
 - no words, a circle round the whole frame (handwritten, on version 2 of 3, "Brick red") -> pick: circles one version to choose it.
 - "✔" (handwritten, on version 1 of 3, "Sand and honey") -> pick: ticks the version it likes.
-- "this, but softer" (handwritten, on version 3 of 3, "Late sun") -> try: wants one more round from that version.
+- "this, but softer" (handwritten, on version 3 of 3, "Late sun") -> try: asks for one more round from that version.
 - a cross over the frame (handwritten, on version 1 of 2, "Bold") -> cross: rules that one out.
 - "nee" (handwritten, on version 2 of 3, "Sand and honey") -> cross: doesn't want that one.`;
 
@@ -178,6 +188,7 @@ const judging = new Map<string, Promise<Verdict | null>>();
 // via: where its verdict goes, when not answerNow and tryNow (a typed box: booktyped.ts)
 export async function judge(t: Target, via?: Partial<Routes>): Promise<Verdict | null> {
   try {
+    if (await onCallPage(t)) return null;
     const seen = await seenOf(t);
     if (!seen || seen.by !== BOARD) return null;
     const key = `${keyOf(t)}:${seen.drawn}`,
@@ -358,5 +369,11 @@ function keep(t: Target, v: { reply: Reply; why: string }, seen: Seen): Verdict 
       ).lastInsertRowid,
   );
   return { id, ...v };
+}
+// Whether a target is on a call's notes page (the book's or My journal's), live or ended.
+async function onCallPage(t: Target) {
+  const [groups, notes] = await Promise.all([import('../notebookgroups.ts'), import('./booknotes.ts')]);
+  const page = t.grp ? groups.row(t.grp)?.page : t.note ? notes.note(t.note)?.page : t.page;
+  return page !== undefined && pageOf(page, null)?.kind === 'call';
 }
 const keyOf = (t: Target) => (t.grp ? `group ${t.grp}` : t.note ? `note ${t.note}` : `a box on page ${t.page}`);

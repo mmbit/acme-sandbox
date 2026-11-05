@@ -8,7 +8,8 @@
 The board's side is synthesised with Piper (en_US-lessac-medium.onnx next to the other models, else Pocket TTS for
 English) and mixed into quiet room noise; the agent's side is a stand-in Claude session, and its reply is heard for
 10 s. Each case says whether the reply was stopped, how long after the sound began, and what the agent was asked.
-Outside the image: a venv with numpy sherpa-onnx piper-tts websockets livekit, and the models the Dockerfile fetches.
+Outside the image: a venv with numpy sherpa-onnx piper-tts websockets livekit pyyaml, and the models the Dockerfile
+fetches.
 
 echo: the folder holds real recordings of a voice played through a device's speaker and picked up by its microphone,
 as Microsoft's AEC Challenge records them (its datasets/blind_test_set_icassp2022/farend-singletalk on GitHub: X_mic.wav
@@ -43,10 +44,13 @@ except ImportError:  # (the agent's voice doesn't matter here: 2 s of near silen
         def generate_audio_stream(self, state, text, stop=None):
             yield types.SimpleNamespace(numpy=lambda: np.zeros(32000, np.float32))
     sys.modules['pocket_tts'] = types.SimpleNamespace(TTSModel=types.SimpleNamespace(load_model=Quiet))
+    # (Pocket TTS's.)
+    sys.modules.setdefault('torch', types.SimpleNamespace(manual_seed=lambda seed: None))
 import server  # noqa: E402
 from piper import PiperVoice  # noqa: E402
 
 RATE, rng = server.RATE, np.random.default_rng(7)
+QUIET_DBFS = -40
 REPLY = ("Sure, I'll check the orders now. Then I'll look at the invoices. And after that, the parcels. "
          "Then the returns from last week. And I'll tell you what I find.")
 
@@ -117,7 +121,8 @@ def silence(sec):
 class Brain:
     def __init__(self):
         self.asked, self.busy, self.token, self.voice, self.respell = [], False, '', 'alba', {}
-        self.tz, self.seat = 'UTC', None
+        # (call: no HQ call row.)
+        self.tz, self.seat, self.call = 'UTC', None, None
 
     def moved(self):
         return False
@@ -184,10 +189,13 @@ async def case(wiring, lang, sound, at, phone, played=None, earlier=None):
 
 def echoes(folder, later=0):
     """Echo cases from recordings: the agent's voice as the microphone heard it (`later` ms later than recorded), alone
-    and with someone talking over it 3 s in, and what played (8 s from where it's loud), after the 8 s before them, as
-    an earlier reply."""
+    and with someone talking over it 3 s in (as loud as the echo there, 6 and 12 dB quieter, and in Dutch as loud; none
+    over an echo under QUIET_DBFS there), and what played (8 s from where it's loud), after the 8 s before them, as an
+    earlier reply."""
     folder, out = Path(folder), []
     talkers = [recorded(str(f))[:3 * RATE] for f in sorted(folder.glob('*nearend*_mic.wav'))]
+    dutch = voice('nl', 'Nee wacht, ik bedoelde de facturen van vorige week.')[:3 * RATE]
+    rms = lambda x: float(np.sqrt(np.mean(x ** 2)) + 1e-9)
     for k, mic in enumerate(sorted(folder.glob('*farend*_mic.wav'))):
         heard, played = [recorded_as_is(str(f)) for f in (mic, mic.with_name(mic.name.replace('_mic', '_lpb')))]
         heard = np.concatenate([np.zeros(later * RATE // 1000, np.float32), heard])[:len(heard)]
@@ -197,12 +205,22 @@ def echoes(folder, later=0):
         heard, played = heard[start + 8 * RATE:start + 16 * RATE], played[start + 8 * RATE:start + 16 * RATE]
         heard[:later * RATE // 1000] = 0  # (the echo of the earlier reply's end is cut: its voice is not in `played`)
         talker = talkers[k % len(talkers)] if talkers else voice('en', "Hold on, that's not what I asked, I meant the invoices.")
+        overs = [('en', talker, 0), ('en', talker, -6), ('en', talker, -12), ('nl', dutch, 0)]
+        # (a talker as loud as an echo under QUIET_DBFS is silent: the reply would play on and count as a miss)
+        if 20 * np.log10(rms(heard[3 * RATE:6 * RATE])) < QUIET_DBFS:
+            print(f'{mic.name[:12]} echo under {QUIET_DBFS} dBFS where the talker comes in: no talker over it', flush=True)
+            overs = []
         # (as recorded: a browser whose canceller took none of it out; 20 dB down: what one that took most of it leaves)
         for gain, level in ((1, ''), (0.1, ' -20 dB')):
-            over = heard * gain
-            over[3 * RATE:3 * RATE + len(talker)] += talker[:len(over) - 3 * RATE]
-            out += [('en', f'{mic.name[:12]} echo{level}', heard * gain, played, (earlier[0] * gain, earlier[1])),
-                    ('en', f'{mic.name[:12]} echo{level}, talked over', over, played, (earlier[0] * gain, earlier[1]))]
+            echo = heard * gain
+            out.append(('en', f'{mic.name[:12]} echo{level}', echo, played, (earlier[0] * gain, earlier[1])))
+            for lang, said, db in overs:
+                said = said[:len(echo) - 3 * RATE]
+                over = echo.copy()
+                over[3 * RATE:3 * RATE + len(said)] += (said * rms(echo[3 * RATE:3 * RATE + len(said)]) / rms(said)
+                                                        * 10 ** (db / 20))
+                out.append((lang, f'{mic.name[:12]} echo{level}, {lang} {db:+d} dB over', over, played,
+                            (earlier[0] * gain, earlier[1])))
     return out
 
 

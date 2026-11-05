@@ -3,8 +3,9 @@
 // note at that spot. A tap, then a second press there, held still as long as this device's preferences say
 // (shared/review/prefs.js holdMs), with the pen or the marker, by the Pencil or a finger where a finger draws: the line
 // it began and the first tap's dot are let go, and the book records there as when the mic is tapped and a spot held
-// (bookvoice.js heldAt), the words writing themselves where it was held. Nothing else waits on a press held still: a
-// single one is ink, and a second press that moves draws.
+// (bookvoice.js heldAt), the words writing themselves where it was held. While the second press waits, a ring fills
+// round the pen's point (bookholdring.js), gone the moment the press wanders, lifts or meets a second finger
+// Nothing else waits on a press held still: a single one is ink, and a second press that moves draws.
 //
 // book.input: { fingerPans(), claims(e) }. claims(e): whether a press on the paper is the strip's, for a part that
 // hears a finger's tap itself (Select's Paste: bookselectpaste.js fingerTaps).
@@ -12,6 +13,7 @@ import { prefs, holdMs } from '/__review/prefs.js';
 import { isTap, wandered } from '/__review/tap.js';
 import { unmake } from './bookpan.js';
 import { shut } from './booksave.js';
+import { holdRing } from './bookholdring.js';
 
 // a double tap: its second press this soon after the first one's lift, and this near it (px)
 const DOUBLE_MS = 350,
@@ -25,7 +27,7 @@ const INKS = ['pen', 'highlighter'];
 
 export function mountInput(book) {
   // down: the press on the paper now, for whether it's a tap; last: the last tap, the first half of a double tap maybe;
-  // hold: a double tap's second press, still, its timer running
+  // hold: a double tap's second press, still, its timer running and its ring filling
   const input = { book, down: null, last: null, hold: null };
   book.desk.addEventListener('pointerdown', e => pressed(input, e), true);
   addEventListener('pointermove', e => input.hold && moved(input, e), true);
@@ -33,8 +35,9 @@ export function mountInput(book) {
   // (a press let go unmade is this file's own: held)
   addEventListener('pointercancel', e => !e.unmade && lifted(input, e), true);
   return (book.input = {
-    // A finger moves the page, rather than drawing, where this device's preferences say so (on since its first pen)
-    fingerPans: () => prefs().penPans,
+    // A finger moves the page, rather than drawing, where this device's preferences say so (on since its first pen),
+    // and always on the grid, which takes no ink
+    fingerPans: () => prefs().penPans || !book.scrap?.view(),
     claims: e => !!e.target?.closest?.('.bk-strip'),
   });
 }
@@ -47,7 +50,8 @@ function pressed(input, e) {
   input.down = { e, stepAtPress: input.book.steps.at(-1) };
   const first = input.last;
   if (!doubled(first, e) || !holds(input.book, e)) return;
-  input.hold = { down: e, first, timer: setTimeout(() => held(input), holdMs()) };
+  const ms = holdMs();
+  input.hold = { down: e, first, timer: setTimeout(() => held(input), ms), ring: holdRing(e, ms) };
 }
 const doubled = (first, e) =>
   !!first &&
@@ -80,16 +84,18 @@ function lifted(input, e) {
 }
 function letGo(input) {
   clearTimeout(input.hold?.timer);
+  input.hold?.ring.gone();
   input.hold = null;
 }
 
-// Held still long enough: the line it began and whatever took the press let go unmade, the first tap's dot taken back,
-// and the voice note listening, for that spot on the page
+// Held still long enough: its ring closed, the line it began and whatever took the press let go unmade, the first tap's
+// dot taken back, and the voice note listening, for that spot on the page
 function held(input) {
   const { book } = input,
-    { down, first } = input.hold,
+    { down, first, ring } = input.hold,
     at = book.at(down.clientX, down.clientY);
   input.hold = input.down = input.last = null;
+  ring.full();
   if (book.ink.drawing) book.ink.cancel();
   unmake(book.desk, down);
   book.tools.undot(first.stepAtPress);

@@ -78,7 +78,10 @@ Later:
 - **Figures go in a table** (a Markdown table): the desk phone shows it as a table on the card's first screen.
 - **Claude: yes** for web tasks the board can do with Claude in Chrome. Claude never handles keys.
 - **Questions are fields.** Anything the board must answer beyond the one choice goes in `--questions <file.json>`
-  on `hq ask` or `hq request`: a yes or no, a number with its unit, a short text, or a choice (the shape `hq` shows).
+  on `hq ask` or `hq request`: a yes or no, a number with its unit, a short text, a choice, or a pick-many (`"many":
+  true`, tick boxes; the shape `hq` shows). A pick-many is for any question several of whose answers can be true
+  together: a list of changes starts all ticked, a question of fact (where the board saw something, which of these
+  apply) starts with none (`"picked": []`); a decision with one true answer stays one pick (the board, 5 November).
   Each is its own field on the desk phone, and the answer lists each with the board's answer. Never numbered lines in
   the text, and never under the `---`, which is background the board probably won't need.
 - **The fewest questions, and never one a photo answers** (the board, 4 November, on a test parcel's card of 24

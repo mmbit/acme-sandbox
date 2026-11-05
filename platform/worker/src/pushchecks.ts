@@ -40,13 +40,17 @@ const NO_ROOM_TRIES = 3;
 // name: its key in the record; launch: starts it (detached.ts launch); turn: waits for a place to run it, if it must
 // (one an earlier process launched takes its place too, so the checks still running count against the limit).
 // A check here runs to its end: it's our own code, so a slow one is fixed where it is, its time in the log (outcomeOf).
-// lent: a launch first that sends it to a lent machine's helper, with a time limit of its own: a pass or a failure
-// there is the check's, and any other end (not taken, lost, its limit) launches it here.
+// here: what a launch here waits for and holds to its end (fresh: false for one an earlier process launched, which
+// holds it too). lent: a launch that sends it to a lent machine's helper, with a time limit of its own where it has one:
+// a pass or a failure there is the check's, and any other end (not taken, lost, its limit) launches it here. Each
+// launch, a run again included, goes there while `present` says a helper is there now (asked again each time: a first
+// answer goes stale), and here once the lent machine gave no verdict.
 export type CheckSpec<Name extends string = string> = {
   name: Name;
   launch: () => Launched;
   turn?: (f: () => Promise<CheckOutcome>) => Promise<CheckOutcome>;
-  lent?: { ms: number; launch: () => Launched };
+  here?: (f: () => Promise<CheckOutcome>, fresh: boolean) => Promise<CheckOutcome>;
+  lent?: { ms?: number; launch: () => Launched; present?: () => Promise<boolean> };
 };
 // keep: writes the run's record with these checks in it; watch and unwatch: the shares' view of a running check
 // (worker.ts checking); said: its outcome in the worker's log; reachable: resolves once HQ answers (a check that lost
@@ -114,32 +118,37 @@ async function runCheck<Name extends string>(
     check.launched = undefined;
   }
   // (a lent launch's limit and that it's the lent one go in the record, so a reload keeps them whatever the spec says now)
-  const start = (launch: () => Launched, lent?: { ms: number }) => {
+  const start = (launch: () => Launched, lent?: { ms?: number }) => {
     o.signal?.throwIfAborted();
     Object.assign(check, { launched: launch(), began: Date.now(), ms: lent?.ms, lent: !!lent, stopped: [] });
     check.platformStops = check.roomStops = undefined;
     keep();
   };
-  if (!check.launched) {
-    if (spec.lent) start(spec.lent.launch, spec.lent);
-    else start(spec.launch);
-  }
-  for (;;) {
+  let noVerdict = false;
+  const where = async () => (spec.lent && !noVerdict && ((await spec.lent.present?.()) ?? true) ? 'lent' : 'here');
+  // One launch watched to its end: started first unless it's the one the record has. One here waits for its place.
+  const attempt = async (fresh: boolean) => {
+    const place = fresh ? await where() : check.lent ? 'lent' : 'here';
+    const watch = async () => {
+      if (fresh) start(place === 'lent' ? spec.lent!.launch : spec.launch, place === 'lent' ? spec.lent : undefined);
+      return watchLaunch(spec.name, check, o, wait, tracked);
+    };
+    return place === 'here' && spec.here ? spec.here(watch, fresh) : watch();
+  };
+  for (let fresh = !check.launched; ; fresh = true) {
     o.signal?.throwIfAborted();
-    const { unreached, noRoom, ...ended } = await watchLaunch(spec.name, check, o, wait, tracked);
+    const { unreached, noRoom, ...ended } = await attempt(fresh);
     const until = runsAgain(spec.name, check, { unreached, noRoom }, o);
     if (until) {
       await until();
       dropLaunch(o.runs, check.launched!);
-      if (check.lent && spec.lent) start(spec.lent.launch, spec.lent);
-      else start(spec.launch);
       continue;
     }
     if (noRoom && !check.lent) return { ...ended, platform: true };
     if (!check.lent || ended.passed !== null) return ended;
     o.said(spec.name, 'had no verdict from the lent machine, so it runs here');
     dropLaunch(o.runs, check.launched!);
-    start(spec.launch);
+    noVerdict = true;
   }
 }
 

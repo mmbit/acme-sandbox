@@ -96,11 +96,14 @@ export const within = (b, [x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <=
 // Whether two boxes overlap
 export const meets = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
 // A thing on a page with the rest of its group ({ ink, scraps, texts }), or the thing alone when it has none yet (not
-// saved) or the page has no groups
+// saved) or the page has no groups. On an opened scrap, everything on it is that scrap's group, but its pictures are
+// each their own: one is picked alone, and its lines and words without them (pictures pasted
+// there make no group; our scraps are still picked whole: bookselect.js choose).
 export function groupOf(page, { kind, item }) {
   const g = item.g;
   if (g === undefined || !page.groups?.has(g)) return { [kind]: [item] };
-  return membersOf(page, g);
+  if (g !== page.focus) return membersOf(page, g);
+  return kind === 'scraps' ? { scraps: [item] } : { ...membersOf(page, g), scraps: [] };
 }
 // Everything on a page in group g ({ ink, scraps, texts }): its elements with the group's id (el.g, booksave.js). What
 // a press picks and what a live move carries whole (bookselectlift.js)

@@ -14,12 +14,21 @@ export async function coordinator() {
   return { h, mail, origin: ORIGIN, preview: PREVIEW };
 }
 
-export async function openVisitor(state, viewport, cookie = '', browser = state.browser, video = false) {
+// options: video records the page into state.shots; the rest go to openPage, as newContext's (permissions, bypassCSP).
+// (options)
+export async function openVisitor(
+  state,
+  viewport,
+  cookie = '',
+  browser = state.browser,
+  { video = false, ...options } = {},
+) {
   const opened = await openPage(browser, {
     viewport,
     ignoreHTTPSErrors: true,
     hasTouch: true,
     ...(video && state.shots ? { recordVideo: { dir: state.shots, size: viewport } } : {}),
+    ...options,
   });
   // Review mode keeps its UI in a closed shadow root. The browser check opens that root to press its real controls.
   await opened.context.addInitScript(() => {

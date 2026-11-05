@@ -2,7 +2,7 @@
 // (a group's box is checked in notebookstack.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { changesOf, emptyParts, keyOf, scratched } from './bookgroupmath.js';
+import { changesOf, emptyParts, keyOf } from './bookgroupmath.js';
 
 const line = (x0, y0, x1, y1) => ({
   size: 2,
@@ -10,31 +10,6 @@ const line = (x0, y0, x1, y1) => ({
     [x0, y0],
     [x1, y1],
   ],
-});
-
-test('a scratch-out deletes the group it covers most of, at least half', () => {
-  const groups = [
-    { id: 1, box: { x: 0, y: 0, w: 100, h: 100 } },
-    { id: 2, box: { x: 200, y: 0, w: 100, h: 100 } },
-  ];
-  const zig = [
-    [10, 10],
-    [90, 30],
-    [10, 50],
-    [90, 70],
-    [10, 90],
-  ];
-  assert.equal(scratched(zig, groups).id, 1);
-  assert.equal(
-    scratched(
-      [
-        [0, 0],
-        [20, 20],
-      ],
-      groups,
-    ),
-    null,
-  );
 });
 
 test("a page's change: groups changed are edited, groups emptied deleted, the rest left alone", () => {

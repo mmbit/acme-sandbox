@@ -344,9 +344,10 @@ test("a call about a customer card and the intercom's lines reach the board and 
 test("a call with the CEO has its heartbeat at hand, its page and our goals; a colleague's call doesn't", async () => {
   fresh();
   const { writePad } = await import('./pad.ts');
-  writePad('Goal: first paying customers.\nWatching: payments tried.', { agent: 'juno', job: 1 });
+  writePad('Goal: first paying customers.\nWatching: payments tried.', null, { agent: 'juno', job: 1 });
   const ceo = await context('juno');
-  assert.match(ceo.prompt, /Your page \(hq pad\), the plan you run the company by, as you last wrote it:\nGoal: first paying customers\.\nWatching: payments tried\.\nOur goals:\n- none marked yet/);
+  // the page is its memory: what a later call must know goes on it, from the call itself with its page tool
+  assert.match(ceo.prompt, /Your page \(hq pad\) is your memory across all your work[^]*must still know, for\nwhatever reason: put it on the page with the page tool the moment it's settled, so it holds before this call's follow-up, which adds what the call missed[^]*UTC:\nGoal: first paying customers\.\nWatching: payments tried\.\nOur goals:\n- none marked yet/);
   assert.doesNotMatch((await context('bolt')).prompt, /Your page|Our goals/);
 });
 
@@ -438,6 +439,27 @@ test('a repeat of a call-end HQ already took adds no second call and no second f
   assert.equal(before.told, 1, 'the board heard nobody follows it up');
   assert.equal((await endFailed()).status, 200);
   assert.deepEqual({ calls: count('calls'), told: told() }, before);
+});
+
+// The voice line kept a call's lines in HQ as it went (call.ts kept), then lost the call, and the sweep ended it with
+// those lines. The whole transcript, handed over later, takes their place, and a repeat of that end changes nothing.
+test('a call the sweep ended with the lines kept so far gets the whole transcript when it comes, once', async () => {
+  fresh();
+  const { sweep, LIVE_MS } = await import('./ledger.ts');
+  const ctx = await context('kit');
+  const kept = ['Board: can you build the page?'],
+    whole = [...kept, 'Kit: yes, by tonight.', 'Board: and the deck with it.'];
+  assert.equal((await h.voice('call-lines', { agent: 'kit', token: ctx.token, lines: kept })).status, 200);
+  sweep(Date.now() + LIVE_MS + 60_000);
+  const row = () => db.prepare('select status, lines, lines_at from calls where id = ?').get(ctx.call) as { status: string; lines: string; lines_at: string | null };
+  assert.deepEqual({ ...row() }, { status: 'ended', lines: JSON.stringify(kept), lines_at: null }, 'swept with the kept lines');
+  assert.equal((await hangUp('kit', whole, { token: ctx.token })).status, 200);
+  const late = { ...row() };
+  assert.equal(late.lines, JSON.stringify(whole), 'the whole transcript');
+  const count = (table: string) => (db.prepare(`select count(*) n from ${table}`).get() as { n: number }).n;
+  const once = { calls: count('calls'), jobs: count('jobs') };
+  assert.equal((await hangUp('kit', whole, { token: ctx.token })).status, 200);
+  assert.deepEqual({ calls: count('calls'), jobs: count('jobs'), row: { ...row() } }, { ...once, row: late }, 'a repeat changes nothing');
 });
 
 // A job queued on a call waits for the call to end (server.ts, wakes.ts ended), so what the board adds on the call goes

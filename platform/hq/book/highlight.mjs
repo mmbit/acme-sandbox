@@ -1,8 +1,9 @@
 // node platform/hq/book-check.mjs --stories highlighter [--webkit]   (desktop mouse and iPad mini Pencil)
+// Each draws in a new scrap opened by a tap on the blank page, its points from just left of the sheet's left edge.
 import assert from 'node:assert/strict';
 import { freePage, onDesk, paperBox, pick, savedWhere } from './mouse.mjs';
-import { DESKTOP, MINI, pressAlong, until } from './kit.mjs';
-import { fromBar, inUnit } from './notebookscreen.mjs';
+import { DESKTOP, MINI, openScrap, pressAlong, until } from './kit.mjs';
+import { inUnit } from './notebookscreen.mjs';
 
 export function highlightStories(c) {
   return Object.fromEntries(
@@ -30,14 +31,19 @@ async function play(browser, c, pencil, story) {
     },
   });
   try {
-    const box = await paperBox(page);
+    const desk = await paperBox(page),
+      tap = pencil ? at => pressAlong(page, [at]) : ([x, y]) => page.mouse.click(x, y),
+      { gid, sheet } = await openScrap(page, { tap }, undefined, [desk.x + 120, desk.y + 200]);
+    assert.ok(gid, 'a new scrap opened');
+    // (the stories' points, 140 to 420 across, clear of the tools island at the sheet's right)
+    const paper = { x: sheet.x - 110, y: sheet.y };
     const draw = points =>
       stroke(
         page,
-        points.map(([x, y]) => [box.x + x, box.y + y]),
+        points.map(([x, y]) => [paper.x + x, paper.y + y]),
         pencil,
       );
-    await story(page, c, free, draw, pencil);
+    await story(page, c, free, draw, pencil, paper);
     assert.deepEqual(
       errors.filter(error => !/No active pointer|can not be found here/.test(error)),
       [],
@@ -52,7 +58,7 @@ async function play(browser, c, pencil, story) {
   }
 }
 
-async function addsMarks(page, c, free, draw) {
+async function addsMarks(page, c, free, draw, pencil, paper) {
   await pick(page, 'Pen');
   await draw([
     [180, 180],
@@ -65,8 +71,7 @@ async function addsMarks(page, c, free, draw) {
   const marked = await savedWhere(c, free.id, p => p.ink.length === 2);
   assert.deepEqual(marked.ink[0], original.ink[0], 'highlighting back and forth keeps the group intact');
   await pick(page, 'Text');
-  const paper = await paperBox(page);
-  await page.mouse.click(paper.x + 120, paper.y + 300);
+  await page.mouse.click(paper.x + 150, paper.y + 300);
   await page.keyboard.type('Keep these words');
   await page.keyboard.press('Escape');
   const typed = await savedWhere(c, free.id, p => p.texts.length === 1);
@@ -80,7 +85,7 @@ async function addsMarks(page, c, free, draw) {
   assert.deepEqual(kept.texts, typed.texts, 'a highlighter strike leaves every word intact');
 }
 
-async function erasesMarks(page, c, free, draw) {
+async function erasesMarks(page, c, free, draw, pencil, paper) {
   await pick(page, 'Pen');
   await draw([
     [250, 180],
@@ -97,7 +102,6 @@ async function erasesMarks(page, c, free, draw) {
   assert.equal(groups.length, 1, 'pen and marker share a group');
   await draw(Array.from({ length: 12 }, (_, i) => [i % 2 ? 140 : 420, 175 + i * 10]));
   await page.waitForTimeout(1000);
-  const paper = await paperBox(page);
   assert.ok(await inkInColumn(page, paper.x + 170, paper.y + 150), 'the highlighter is visible');
   await pick(page, 'Eraser');
   const erasedAt = [];
@@ -108,13 +112,14 @@ async function erasesMarks(page, c, free, draw) {
     ]);
     assert.equal(await inkInColumn(page, paper.x + x, paper.y + 150), 0, 'all ink at the eraser is gone');
     // (the store keeps a unit's ink in its own px: the eraser's column there.)
-    erasedAt.push(await inUnit(page, groups[0].id, paper.x + x));
+    erasedAt.push(await inUnit(page, null, paper.x + x));
     await savedWhere(c, free.id, p => p.ink.length > 0 && erasedAt.every(x => offColumn(p.ink, x)));
   }
 }
 
-// A scratch-out with the pen, and the clip menu's Delete, each take the group's painted ink off at once (no wait)
-async function deletesMarks(page, c, free, draw) {
+// Select's bar's Delete takes the group's painted ink off at once (no wait), and Undo paints it again. (No line deletes
+// anything)
+async function deletesMarks(page, c, free, draw, pencil, paper) {
   await pick(page, 'Pen');
   await draw([
     [250, 180],
@@ -127,26 +132,24 @@ async function deletesMarks(page, c, free, draw) {
     [140, 230],
   ]);
   await savedWhere(c, free.id, p => p.ink.length === 2);
-  const paper = await paperBox(page);
   const painted = () => Promise.all([170, 250].map(x => inkInColumn(page, paper.x + x, paper.y + 150)));
   await until(async () => (await painted()).every(Boolean), 'the pen line and its highlight painted');
-  await pick(page, 'Pen');
-  // (from its right: its clip is a button of its own)
-  await draw(Array.from({ length: 12 }, (_, i) => [i % 2 ? 140 : 420, 175 + i * 10]));
-  assert.deepEqual(await painted(), [0, 0], "the scratch-out takes the group's ink and highlight off at once");
+  await pick(page, 'Select');
+  await page.mouse.click(paper.x + 250, paper.y + 200);
+  await page.locator('#book .bk-sel-bar').getByRole('button', { name: 'Delete', exact: true }).click();
+  assert.deepEqual(await painted(), [0, 0], "Select's bar's Delete takes the ink and highlight off at once");
   await savedWhere(c, free.id, p => p.ink.length === 0);
-  await page.locator('#book').getByRole('button', { name: 'Undo' }).first().click();
+  // (the opened scrap's Undo, on the tools' island)
+  await page.locator('#book .bk-scrap-history').getByRole('button', { name: 'Undo' }).click();
   await until(async () => (await painted()).every(Boolean), 'Undo paints them again');
   await savedWhere(c, free.id, p => p.ink.length === 2);
-  await fromBar(page, null, 'Delete');
-  assert.deepEqual(await painted(), [0, 0], "Select's bar's Delete takes them off at once too");
 }
 
 // The marker drawn across a pen's line and a box of typed words, held before its lift: what the screen shows round
 // them then is what it shows once the marker is dry, the ink and the words over it both times (the Ink README, The
 // book's frame). Pixels that differ by more than CLOSE in a channel are counted; a line that stays as it was changes
 // at most a few soft-edge pixels, a marker over the ink and the words hundreds.
-async function under(page, c, free, draw, pencil) {
+async function under(page, c, free, draw, pencil, paper) {
   await pick(page, 'Pen');
   await draw([
     [250, 140],
@@ -154,8 +157,7 @@ async function under(page, c, free, draw, pencil) {
   ]);
   await savedWhere(c, free.id, p => p.ink.length === 1);
   await pick(page, 'Text');
-  const paper = await paperBox(page);
-  await page.mouse.click(paper.x + 120, paper.y + 300);
+  await page.mouse.click(paper.x + 150, paper.y + 300);
   await page.keyboard.type('Keep these words');
   await page.keyboard.press('Escape');
   await savedWhere(c, free.id, p => p.texts.length === 1);
@@ -242,9 +244,10 @@ async function inkInColumn(page, x, y) {
 
 async function stroke(page, points, pencil) {
   if (!pencil) {
+    // (as a hand moves the mouse: ink.js follows a few long jumps only part of the way)
     await page.mouse.move(...points[0]);
     await page.mouse.down();
-    for (const point of points.slice(1)) await page.mouse.move(...point, { steps: 2 });
+    for (const point of dense(points).slice(1)) await page.mouse.move(...point);
     return page.mouse.up();
   }
   await pressAlong(page, dense(points));

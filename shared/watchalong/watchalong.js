@@ -5,14 +5,9 @@ import { hearInk } from './strokes.js';
 import { hearMedia } from './media.js';
 import { hearTopLayer } from './toplayer.js';
 import { frames, toFramer } from './frames.js';
+import { FLUSH_MS, sender } from './sender.js';
+import { STYLESHEETS } from './fonthosts.js';
 
-// A batch goes once a second, or sooner once this many events wait (a full snapshot is one big event)
-const FLUSH_MS = 1000,
-  BATCH_EVENTS = 200;
-// A post holds at most what the store takes in one batch (store.ts BATCH_BYTES). A page holds what the server hasn't
-// taken up to about three minutes of HQ with canvas frames (2.9 MB a minute as posted, measured), then gives up.
-const BATCH_BYTES = 8 << 20,
-  HELD_BYTES = 8 << 20;
 // A tap: the pointer comes up within this far and this soon of where it went down
 const TAP_PX = 10,
   TAP_MS = 800;
@@ -34,8 +29,6 @@ const PRIVATE_PICTURES = ['img', 'picture', 'video', 'canvas', 'svg', 'iframe']
   .flatMap(tag => [`${PRIVATE} ${tag}`, `${tag}${PRIVATE}`])
   .concat(`svg ${PRIVATE}`)
   .join(', ');
-// The store's answers that end a watch-along, and why: 404 unknown, 409 over, 413 an event too large to post, 507 full
-const ENDINGS = { 404: 'over', 409: 'over', 413: 'too big', 507: 'full' };
 // rrweb's event types and sources this file reads
 const FULL_SNAPSHOT = 2,
   INCREMENTAL = 3,
@@ -97,9 +90,12 @@ function recordPage(typed, canvasFps, emit) {
   const stopRecording = record({ ...settings(typed), emit });
   // canvases on HQ's own page only (its building): no frame or preview loads canvas.js
   let stopped = false,
-    stopCanvases = null;
+    stopCanvases = null,
+    stopPictures = null;
   if (canvasFps > 0)
     import('./canvas.js').then(({ sampleCanvases }) => !stopped && (stopCanvases = sampleCanvases(canvasFps, emit)));
+  // the page's pictures a replay can't load by their address, carried
+  import('./routepictures.js').then(({ carryPictures }) => !stopped && (stopPictures = carryPictures()));
   const stopChanges = hearChanges();
   frameChannels.startAll(typed);
   const loaded = event => event.target instanceof HTMLIFrameElement && frameChannels.start(event.target, typed);
@@ -108,50 +104,10 @@ function recordPage(typed, canvasFps, emit) {
     document.removeEventListener('load', loaded, true);
     stopped = true;
     stopCanvases?.();
+    stopPictures?.();
     stopChanges();
     stopRecording?.();
     frameChannels.stopAll();
-  };
-}
-
-// The page's events to the store, one post on its way at a time: once a second, or sooner once BATCH_EVENTS wait.
-// What the server hasn't taken goes again with the next. onEnd(why) once the server says it's over or stays out of reach,
-// onSeen(seen) as it says whether the agent sees the page: with nothing to send (a quiet page, or paused) an empty batch
-// still asks, so the page hears it all the same.
-function sender(url, onEnd, onSeen) {
-  let waiting = [],
-    held = [],
-    inFlight = null;
-  const send = async leaving => {
-    held = [...held, ...waiting];
-    waiting = [];
-    do {
-      const batch = firstBatch(held);
-      const { status, seen } = batch.length || !held.length ? await post(url, batch, leaving) : { status: 413 };
-      if (status !== 200) return refused(status);
-      if (typeof seen === 'boolean') onSeen(seen);
-      held = held.slice(batch.length);
-    } while (held.length);
-  };
-  const refused = status => {
-    if (ENDINGS[status]) onEnd(ENDINGS[status]);
-    else if (bytesOf(JSON.stringify(held)) > HELD_BYTES) onEnd('unreachable');
-  };
-  const flush = (leaving = false) => (inFlight ??= send(leaving).finally(() => (inFlight = null)));
-  const tick = setInterval(flush, FLUSH_MS);
-  const leave = () => flush(true);
-  addEventListener('pagehide', leave);
-  return {
-    push: event => waiting.push(event) >= BATCH_EVENTS && flush(),
-    // everything recorded so far, sent
-    drain: async () => {
-      await inFlight;
-      await flush();
-    },
-    close() {
-      clearInterval(tick);
-      removeEventListener('pagehide', leave);
-    },
   };
 }
 
@@ -231,8 +187,9 @@ const secret = field =>
 
 // A page's address keeps its origin and path: no query or fragment (a one-time code, a search), and no path part that
 // is a token (a join or guest link's). So do the links and frames on it, and a link of another kind keeps only its
-// kind (mailto:, tel:). A picture keeps its whole address, which the replay loads it by. Inside a private part, only
-// the attributes the replay draws by stay, and its style without pictures.
+// kind (mailto:, tel:). A picture keeps its whole address, which the replay loads it by, and so does a link to a
+// stylesheet of Google's fonts, whose query names the fonts (a look's). Inside a
+// private part, only the attributes the replay draws by stay, and its style without pictures.
 const withoutSecrets = event => {
   if (event.type === META) event.data.href = address(event.data.href);
   if (event.type === FULL_SNAPSHOT) scrub(event.data.node, false);
@@ -240,6 +197,7 @@ const withoutSecrets = event => {
     for (const added of event.data.adds) scrub(added.node, inPrivatePart(added.parentId));
     for (const changed of event.data.attributes) {
       const element = record.mirror.getNode(changed.id);
+      withAddress(changed.attributes, element);
       scrubAttributes(changed.attributes, element?.tagName?.toLowerCase() ?? '', inPrivatePart(changed.id));
     }
   }
@@ -249,16 +207,29 @@ const withoutSecrets = event => {
 const inPrivatePart = id => !!record.mirror.getNode(id)?.closest?.(PRIVATE);
 function scrub(node, inPrivate) {
   const isPrivate = inPrivate || Object.hasOwn(node.attributes ?? {}, 'data-private');
-  if (node.attributes) scrubAttributes(node.attributes, node.tagName, isPrivate);
+  if (node.attributes) {
+    withAddress(node.attributes, record.mirror.getNode(node.id));
+    scrubAttributes(node.attributes, node.tagName, isPrivate);
+  }
   for (const child of node.childNodes ?? []) scrub(child, isPrivate);
+}
+// A linked stylesheet rrweb inlined (_cssText, its rules as this browser reads them back) keeps its address, which
+// rrweb drops: a mirror replays it as its file says it (sheets.ts), as Chromium leaves out a shorthand with a var() in
+// it (HQ's font).
+function withAddress(attributes, element) {
+  // (a framed page's link is of its own window's HTMLLinkElement)
+  if (typeof attributes._cssText === 'string' && !attributes.href && element?.localName === 'link' && element.href)
+    attributes.href = element.href;
 }
 // rr_src: where rrweb keeps a frame's address
 function scrubAttributes(attributes, tag, isPrivate) {
   if (isPrivate) for (const name of Object.keys(attributes)) if (!DRAWN.test(name)) delete attributes[name];
   if (isPrivate && attributes.style) attributes.style = withoutPictures(attributes.style);
   for (const name of ['href', 'rr_src', ...(tag === 'iframe' ? ['src'] : [])])
-    if (typeof attributes[name] === 'string') attributes[name] = linkWithoutDetails(attributes[name]);
+    if (typeof attributes[name] === 'string' && !(name === 'href' && tag === 'link' && fonts(attributes.href)))
+      attributes[name] = linkWithoutDetails(attributes[name]);
 }
+const fonts = href => URL.canParse(href) && new URL(href).hostname === STYLESHEETS;
 // A private element's style keeps its layout but none of its pictures (a background, a mask, a cursor, a variable that
 // holds one): every declaration whose value, as the browser reads it, has an address goes. rrweb sends a change as the
 // whole attribute or as a diff ({ name: value | [value, priority] | false }). A shorthand using var() has no parsed
@@ -361,34 +332,3 @@ const tidy = words => {
   const line = words.replace(/\s+/g, ' ').trim();
   return line.length > LABEL_CHARS ? `${line.slice(0, LABEL_CHARS - 1)}…` : line;
 };
-
-// The first events, in order, that one post can hold: none when the first alone is past BATCH_BYTES
-function firstBatch(events) {
-  let bytes = bytesOf('{"events":[]}');
-  const batch = [];
-  for (const event of events) {
-    bytes += bytesOf(JSON.stringify(event)) + 1;
-    if (bytes > BATCH_BYTES) break;
-    batch.push(event);
-  }
-  return batch;
-}
-const bytesOf = text => new TextEncoder().encode(text).length;
-
-// A batch to the store: its answer's status (0 when the network failed) and seen. One leaving the page goes with
-// keepalive, which the browser caps at 64 KB.
-async function post(url, events, leaving) {
-  const body = JSON.stringify({ events });
-  try {
-    const answer = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body,
-      keepalive: leaving && bytesOf(body) < 60_000,
-    });
-    const said = answer.ok ? await answer.json().catch(() => ({})) : {};
-    return { status: answer.status, seen: said?.seen };
-  } catch {
-    return { status: 0 };
-  }
-}

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as inkjs from './ink.js';
-import { HALO } from './inkshape.js';
+import { HALO, layered } from './inkshape.js';
 
 const K = 2; // device px to the CSS px, an iPad's
 const RED = { color: '#ff5a5f', size: 5 };
@@ -244,14 +244,27 @@ test("a Pencil's four events a frame are painted once a frame, and the lift at o
   assert.equal(wet.length, Math.floor((HANDS.pen.length - 1) / 4) + 1);
 });
 
-test('a line ends where it was drawn as the pen lifted: the lift adds nothing, wherever it says it went up', () => {
+test('a line ends where the pen last was as it lifted, caught up from its smoothing, wherever the lift says it went up', () => {
   const events = HANDS.pen,
-    up = events.at(-1);
+    up = events.at(-1),
+    last = events.at(-2).getCoalescedEvents?.().at(-1) ?? events.at(-2),
+    at = v => Math.round(v * 100) / 100;
   let beforeLift = null;
   const { stroke } = live([...events.slice(0, -1), { ...up, clientX: up.clientX + 7, clientY: up.clientY - 9 }], RED, {
     each: ({ e, stroke: drawn }) => e === events.at(-2) && (beforeLift = drawn.points),
   });
-  assert.deepEqual(stroke.points, beforeLift);
+  const end = beforeLift.at(-1),
+    origin = box();
+  assert.ok(
+    Math.hypot(end[0] - (last.clientX - origin.left), end[1] - (last.clientY - origin.top)) > 1,
+    'short before',
+  );
+  assert.deepEqual(stroke.points.slice(0, -1), beforeLift);
+  assert.deepEqual(stroke.points.at(-1).slice(0, 3), [
+    at(last.clientX - origin.left),
+    at(last.clientY - origin.top),
+    end[2],
+  ]);
 });
 
 test('a move whose coalesced list is empty still draws its own point', () => {
@@ -354,4 +367,13 @@ test("the strip's pens are among the notebook's, red first", () => {
       k.name,
     );
   assert.equal(inkjs.INKS[0].name, 'Red');
+});
+
+test('the highlighter lies under the pencil and the pen, whichever came first; each kind in its own order', () => {
+  const pen1 = { color: '#000' },
+    marker1 = { color: '#ff0', alpha: 0.42 },
+    pencil = { color: '#555', alpha: 0.7 },
+    marker2 = { color: '#0f0', alpha: 0.42 },
+    pen2 = { color: '#00f' };
+  assert.deepEqual(layered([pen1, marker1, pencil, marker2, pen2]), [marker1, marker2, pencil, pen1, pen2]);
 });

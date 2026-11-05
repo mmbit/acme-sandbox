@@ -30,13 +30,12 @@ measurement uncertainty, separate from your estimate confidence. The weekly audi
 misses by saved confidence level. Keep the original evidence note: revisions do not replace it in calibration.`;
 
 // The one time the board hears, wherever an agent gives it one (a call, the intercom, a call's follow-up, a job): the
-// plan's, with no margin of our own on top and never a later second time beside it; doubt goes with its reason
-// (board, call 256).
+// plan's, with no margin of our own on top and never a later second time beside it; doubt goes with its reason.
 export const ONE_TIME =
   "Give the board one plain time: the plan's time to tell the board, as the tool gives it (live four times in five), " +
   'never an ETA, a "done about" or a planned finish, which are as likely late as early. That time holds the plan\'s ' +
   'margin already: add none of your own, never work a time out in your head, and never put a second, later time ' +
   'beside it. A real reason to think it may run long is said as that reason, with the one time. Good: "Live at a ' +
   'quarter to one; it may run over, as it\'s the first build on the new engine." Bad: "Ready at a quarter to one, ' +
-  'live at the latest a quarter to two." Asked whether a time holds, a plain answer ("we\'ll do our best, it\'ll ' +
-  'most likely make it") beats working the sum out again.';
+  'live at the latest a quarter to two." Asked whether a time holds, read the plan\'s time again and answer plainly ' +
+  'from it ("yes, it\'ll most likely make it", or why not), never a sum worked out in your head.';

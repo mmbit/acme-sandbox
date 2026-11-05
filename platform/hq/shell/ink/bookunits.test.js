@@ -31,7 +31,9 @@ globalThis.document = { addEventListener: () => {}, dispatchEvent: () => {}, cre
 globalThis.location = { hostname: '', search: '', pathname: '/' };
 // (dev mode's store, notebookplay.js, seeded with the pages below: each test draws on one of its own)
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => SEED });
-const { inkUnit, layUnits, heightOf } = await import('./bookunits.js');
+const { cardOf, heightOf, inkUnit, layUnits } = await import('./bookunits.js');
+const { UNIT_W } = await import('./scrapunit.js');
+const { boxOf } = await import('./bookrow.js');
 const { changed, readAgain, readPage, saved } = await import('./booksave.js');
 const { widthFor } = await import('./masonry.js');
 
@@ -93,8 +95,7 @@ const PAGES = {
       ],
     },
   ],
-  // (three of an agent's scraps, a picture and its room to write each: the first two side by side, the third under the
-  // first)
+  // (three of an agent's scraps, a picture each: the first two side by side, the third under the first)
   4: [0, 1, 2].map(() => ({ scrap: true, ink: [], h: 260 })),
   // (yesterday's word, alone in the left column)
   3: [
@@ -109,36 +110,7 @@ const PAGES = {
       created: YESTERDAY,
     },
   ],
-  // (sketch pages from before canvases: an agent's scrap, and the board's word beside it in the right column)
-  5: [
-    { scrap: true, ink: [], h: 160 },
-    {
-      column: 1,
-      ink: [
-        [
-          [20, 20],
-          [120, 50],
-        ],
-      ],
-    },
-  ],
-  6: [
-    { scrap: true, ink: [], h: 160 },
-    {
-      column: 1,
-      ink: [
-        [
-          [20, 20],
-          [120, 50],
-        ],
-      ],
-    },
-  ],
 };
-// (the same sketch, shown on two screens, and on one for a word near its right edge)
-PAGES[7] = PAGES[8] = PAGES[14] = PAGES[5];
-// (three scraps, for an arrow drawn from one onto the next and kept)
-PAGES[9] = PAGES[4];
 // (the board's wide drawing in the left column, its line reaching into the right, and two scraps after it)
 PAGES[10] = [
   {
@@ -154,13 +126,12 @@ PAGES[10] = [
 ];
 // (the board's small drawing in the left column, a scrap beside it and one under it)
 PAGES[11] = [PAGES[1][0], ...PAGES[4].slice(0, 2)];
-// (the board's duck in the left column: its round outline, 280 by 220 and empty inside, and its beak; a page of units,
-// and the same as a sketch)
+// (the board's duck in the left column: its round outline, 280 by 220 and empty inside, and its beak)
 const ROUND = Array.from({ length: 49 }, (_, i) => [
   150 + 140 * Math.cos((i / 48) * 2 * Math.PI),
   130 + 110 * Math.sin((i / 48) * 2 * Math.PI),
 ]);
-PAGES[12] = PAGES[13] = [
+PAGES[12] = [
   {
     column: 0,
     ink: [
@@ -288,37 +259,6 @@ const placeOf = (page, id) => page.places.find(p => p.id === id);
 // (the page's scraps' places, by id)
 const cards = page => Object.fromEntries(page.places.filter(p => p.id > 400).map(p => [p.id, [p.x, p.y]]));
 
-test("ink drawn beside a scrap stays where it was drawn as the scrap's room grows and is dragged", async () => {
-  const { view } = await pageOf(4),
-    { page } = view,
-    first = placeOf(page, 400);
-  // (a circle and an arrow in the gap beside the first scrap, by its room)
-  draw(view, [
-    [
-      [first.x + first.w + 2, first.y + 180],
-      [first.x + first.w + 20, first.y + 200],
-      [first.x + first.w + 4, first.y + 220],
-    ],
-    [
-      [first.x + first.w + 22, first.y + 150],
-      [first.x + first.w + 10, first.y + 190],
-    ],
-  ]);
-  const drawn = inked(page);
-  // (writing in its room past its foot, which grows to hold it)
-  draw(view, [
-    [
-      [first.x + 20, first.y + first.h - 10],
-      [first.x + 200, first.y + first.h + 60],
-    ],
-  ]);
-  assert.ok(heightOf(page, 400) > 260, 'the room grew');
-  assert.deepEqual(inked(page).slice(0, 2), drawn, 'the circle and arrow stay where they were drawn as it grows');
-  page.resizing = { id: 400, h: 600 };
-  layUnits(view, WIDTH);
-  assert.deepEqual(inked(page).slice(0, 2), drawn, '… and as its room is dragged taller');
-});
-
 test('a scribble on the note at the bottom lands on it, and no scrap moves', async () => {
   const { view } = await pageOf(4),
     { page } = view,
@@ -336,42 +276,19 @@ test('a scribble on the note at the bottom lands on it, and no scrap moves', asy
   assert.deepEqual(cards(page), before, 'every scrap where it was');
 });
 
-test('an arrow from one scrap onto the one beside it moves no scrap, drawn, saved or the page opened again', async () => {
-  const opened = await pageOf(9),
-    { page } = opened.view,
-    [first, next] = [placeOf(page, 900), placeOf(page, 901)],
-    before = cards(page);
-  assert.ok(next.x > first.x + first.w, 'the next scrap beside the first');
-  // (from the first scrap's words into the middle of the next)
-  draw(opened.view, [
-    [
-      [first.x + 200, first.y + 100],
-      [next.x + 60, next.y + 120],
-    ],
-  ]);
-  const drawn = inked(page);
-  assert.equal(page.ink[0].g, 900, 'the arrow is the first scrap’s');
-  assert.deepEqual(cards(page), before, 'every scrap where it was');
-  await save(opened);
-  assert.deepEqual(cards(page), before, '… once saved');
-  const again = (await pageOf(9)).view.page;
-  assert.deepEqual(cards(again), before, '… and with the page opened again');
-  assert.deepEqual(inked(again), drawn, 'the arrow where it was drawn');
-});
-
-test("the board's drawing reaching into the next column takes it: no scrap after it lies over its ink, at every width", async () => {
+test("the board's drawing reaching into the next column is fitted to its one column, and no scrap after it lies over its card, at every width", async () => {
   const { view } = await pageOf(10),
     { page } = view;
   for (const width of [widthFor(1) + 16, WIDTH, widthFor(3) + 16]) {
     layUnits(view, width);
-    const xs = page.ink[0].points.map(p => p[0]),
-      ys = page.ink[0].points.map(p => p[1]),
-      [x0, x1, y1] = [Math.min(...xs), Math.max(...xs), Math.max(...ys)];
+    const card = placeOf(page, 1000);
+    assert.ok(page.fits.get(1000).k < 1, `shown smaller to fit at ${width} px`);
+    assert.equal(card.w, UNIT_W, 'never wider than a column');
     for (const id of [1001, 1002]) {
       const p = placeOf(page, id);
       assert.ok(
-        p.y > y1 || p.x > x1 || p.x + p.w < x0,
-        `scrap ${id} at ${p.x},${p.y} clear of the drawing's line at ${width} px`,
+        p.y >= card.y + card.h || p.x >= card.x + card.w || p.x + p.w <= card.x,
+        `scrap ${id} at ${p.x},${p.y} clear of the drawing's card at ${width} px`,
       );
     }
   }
@@ -401,191 +318,89 @@ const quak = (x, y) =>
     [x + 24 * k, y + 30],
   ]);
 
-for (const [id, kind, open] of [
-  [12, 'a page of units', () => pageOf(12)],
-  [13, 'a sketch page', () => sketchOf(13, WIDTH)],
-])
-  test(`a word written in the empty frame of the board's drawing stays apart from it; by its ink, it joins it (${kind})`, async () => {
-    const shown = await open(),
-      { view } = shown,
-      { page } = view,
-      duck = placeOf(page, id * 100),
-      [cx, cy] = [duck.x + 150, duck.y + 130];
-    // (in the middle of the outline, over 64 px from every line of it, the frame's box all round it)
-    draw(view, quak(cx - 48, cy - 15));
-    const word = page.ink.slice(-4).map(el => el.g);
-    assert.ok(
-      word.every(g => g !== id * 100),
-      `QUAK isn't the duck's: ${word}`,
-    );
-    assert.equal(new Set(word).size, 1, 'its letters are one drawing of their own');
-    // (a word inside the outline by its left side, within 64 px of its ink)
-    draw(view, quak(duck.x + 22, duck.y + 115));
-    assert.ok(
-      page.ink.slice(-4).every(el => el.g === id * 100),
-      'written by the outline, it is the duck’s',
-    );
-    await save(shown);
-    const kept = page.ink.filter(el => el.g === page.ink.at(-8).g);
-    assert.equal(kept.length, 4, 'saved and read again, QUAK is still a unit of its own');
-  });
-
-test("a scrap's room grown keeps every scrap in its column", async () => {
-  const { view } = await pageOf(4),
-    { page } = view,
-    columns = Object.fromEntries(page.places.map(p => [p.id, p.x]));
-  page.resizing = { id: 400, h: 900 };
-  layUnits(view, WIDTH);
-  assert.deepEqual(Object.fromEntries(page.places.map(p => [p.id, p.x])), columns, 'none moved across');
-});
-
-// A line written low in a scrap's room, above its foot: the store keeps the scrap's height without the post-it words
-// drawn in its body, so once saved the scrap is as tall as it was, and the note under it stays put.
-test("a line low in a scrap's room, its post-it words drawn, grows it only past its ink once saved", async () => {
-  const shown = await pageOf(4),
+test("a word written in the empty frame of the board's drawing stays apart from it; by its ink, it joins it", async () => {
+  const id = 12,
+    shown = await pageOf(id),
     { view } = shown,
     { page } = view,
-    // (its post-it words, 40 px tall, under its picture: bookunitcards.js)
-    words = { dataset: { g: '400' }, offsetHeight: 40, style: {} };
-  view.el.querySelectorAll = selector => (selector.includes('bk-words') ? [words] : []);
-  view.place();
-  const tall = heightOf(page, 400),
-    first = placeOf(page, 400),
-    under = placeOf(page, 402);
-  assert.equal(tall, 260 + 48, 'its room, its words added');
-  // (past its room as the store set it, short of its foot as drawn)
-  draw(view, [
-    [
-      [first.x + 20, first.y + tall - 30],
-      [first.x + 200, first.y + tall - 20],
-    ],
-  ]);
-  assert.equal(heightOf(page, 400), tall, 'drawn, as tall as it was');
-  await save(shown);
-  assert.equal(page.groups.get(400).h, 260, 'the store keeps its room as set');
-  assert.equal(heightOf(page, 400), tall, 'saved, as tall as it was');
-  assert.deepEqual([placeOf(page, 402).x, placeOf(page, 402).y], [under.x, under.y], 'the note under it stays put');
-  // (and one from its room past its foot grows it to the line's foot, no further)
-  draw(view, [
-    [
-      [first.x + 20, first.y + tall - 10],
-      [first.x + 200, first.y + tall + 40],
-    ],
-  ]);
-  await save(shown);
-  assert.equal(heightOf(page, 400), tall + 40 + 4, 'grown to the line and its pen, no further');
-});
-
-// A sketch page (a canvas: sketchcanvas.js) shown at width, which a test changes as the board resizes the notebook
-async function sketchOf(id, width) {
-  const page = { id, chapter: 'sketch' },
-    view = {
-      page,
-      width,
-      el: element(),
-      place: () => layUnits(view, view.width),
-      pinned() {},
-      redraw() {},
-      refuse: words => (view.said = words),
-    },
-    book = { dev: true, views: [view] };
-  await readPage(book, page);
-  view.place();
-  return { book, view };
-}
-// The notebook made as narrow as a phone's page, and as wide as a desktop's
-const NARROW = widthFor(1) + 16,
-  WIDE = widthFor(4) + 16;
-
-test("a sketch's strokes stay where they were drawn at any notebook width, the old ones as first shown", async () => {
-  const shown = await sketchOf(5, WIDTH),
-    { view } = shown,
-    { page } = view,
-    first = inked(page);
-  const masonry = await pageOf(6);
-  assert.deepEqual(first, inked(masonry.view.page), 'an old sketch shows as it did at this width');
-  assert.deepEqual([...page.pins.keys()], [500, 501], 'and keeps those places');
-  // (a word written on the right, as the board did)
-  draw(view, [
-    [
-      [520, 300],
-      [640, 330],
-    ],
-  ]);
-  await save(shown);
+    duck = placeOf(page, id * 100),
+    [cx, cy] = [duck.x + 150, duck.y + 130];
+  // (in the middle of the outline, over 64 px from every line of it, the frame's box all round it)
+  draw(view, quak(cx - 48, cy - 15));
+  const word = page.ink.slice(-4).map(el => el.g);
   assert.ok(
-    page.places.every(p => page.groups.get(p.id).place),
-    'every unit has its place in the store',
+    word.every(g => g !== id * 100),
+    `QUAK isn't the duck's: ${word}`,
   );
-  const drawn = inked(page);
-  for (const width of [NARROW, WIDE, WIDTH]) {
-    view.width = width;
-    view.place();
-    assert.deepEqual(inked(page), drawn, `nothing moves at ${width} px`);
-    assert.equal(page.scale, 1, 'drawn at its own size');
-  }
-  view.width = NARROW;
-  view.place();
-  assert.ok(page.w >= 640 + 2, 'the page reaches the word on the right, past a narrow paper');
-  await readAgain(shown.book, page);
-  view.place();
-  assert.deepEqual(inked(page), drawn, 'read again, everything where it was');
-  // (a word written up and left of the page's origin, the board's zoom panned there)
-  draw(view, [
-    [
-      [-300, -200],
-      [-180, -170],
-    ],
-  ]);
+  assert.equal(new Set(word).size, 1, 'its letters are one drawing of their own');
+  // (a word inside the outline by its left side, within 64 px of its ink)
+  draw(view, quak(duck.x + 22, duck.y + 115));
+  assert.ok(
+    page.ink.slice(-4).every(el => el.g === id * 100),
+    'written by the outline, it is the duck’s',
+  );
   await save(shown);
-  view.place();
-  const far = page.places.find(p => p.x < 0);
-  assert.ok(far && page.groups.get(far.id).place.y < 0, 'a unit of its own where it was drawn, kept by the store');
-  assert.ok(page.x <= -300 && page.y <= -200, `the page reaches it up and left: ${page.x}, ${page.y}`);
-  assert.deepEqual(inked(page).slice(0, drawn.length), drawn, 'and nothing else moved');
+  const kept = page.ink.filter(el => el.g === page.ink.at(-8).g);
+  assert.equal(kept.length, 4, 'saved and read again, QUAK is still a unit of its own');
 });
 
-test("a sketch page's word written apart near its right edge leaves the page the paper's width", async () => {
-  const { view } = await sketchOf(14, WIDTH),
-    { page } = view;
-  // (a short word near the paper's right edge, far from the board's word and the scrap)
-  draw(view, [
+// A unit's card on the grid, given what's on it (scrap px): one drawing of the board's, its ink in lines
+const PAPER = 16, // (the paper a card keeps round its ink: bookunits.js CARD_PAD)
+  reach = boxOf(line([[0, 0]])).x1; // (how far a line's pen reaches past its points)
+const cardFor = lines => {
+  const page = {
+    groups: new Map([[1, { id: 1, kind: 'drawing' }]]),
+    ink: lines.map(points => ({ ...line(points), g: 1 })),
+    scraps: [],
+    texts: [],
+  };
+  return { card: cardOf(page, 1), page };
+};
+
+test("a scrap's card on the grid: as drawn while what's on it fits, the least tall when there's little", () => {
+  const { card, page } = cardFor([
     [
-      [WIDTH - 90, 520],
-      [WIDTH - 40, 540],
+      [40, 40],
+      [200, 90],
     ],
   ]);
-  assert.ok(page.ink.at(-1).g < 0, 'a unit of its own');
-  assert.equal(page.w, WIDTH, 'the page no wider than the paper: the board’s drawing has no paper of its own');
-});
-
-test("a unit another screen wrote on first keeps that screen's strokes as this screen's place for it is saved", async () => {
-  const desk = await sketchOf(7, WIDE),
-    pad = await sketchOf(7, WIDTH);
-  // (the iPad places the page's units, and writes on the board's word)
-  const [x, y] = pad.view.page.ink.find(el => el.g === 701).points[0];
-  draw(pad.view, [
+  assert.deepEqual(card, { h: 120, k: 1, x0: 0, y0: 0, plain: true }, 'a short drawing: the least card');
+  assert.equal(heightOf(page, 1), 120, 'and the grid lays it that tall');
+  const tall = cardFor([
     [
-      [x + 10, y + 10],
-      [x + 90, y + 30],
+      [40, 40],
+      [200, 300],
     ],
-  ]);
-  await save(pad);
-  // (the desktop saves its own places for them before it has read the page again)
-  changed(desk.book, desk.view.page);
-  await saved(desk.book, desk.view.page);
-  const { page } = (await sketchOf(7, WIDE)).view;
-  assert.equal(page.groups.get(701).ink.length, 2, "the iPad's stroke stays");
-  assert.deepEqual(page.groups.get(701).place, pad.view.page.groups.get(701).place, "at the iPad's place");
+  ]).card;
+  assert.deepEqual(
+    tall,
+    { h: 300 + reach + PAPER, k: 1, x0: 0, y0: 0, plain: true },
+    'as tall as its ink and the paper round it',
+  );
 });
 
-test("a screen that reads its units' places from another before saving its own lets its own go", async () => {
-  const desk = await sketchOf(8, WIDE),
-    pad = await sketchOf(8, WIDTH);
-  await save(pad);
-  await readAgain(desk.book, desk.view.page);
-  desk.view.place();
-  changed(desk.book, desk.view.page);
-  await saved(desk.book, desk.view.page);
-  assert.equal(desk.view.page.pins.size, 0, 'nothing left to save at the next lay');
+test("a scrap's card fitted: what's too tall shown smaller, centred across; what reaches up or left of its corner shown whole", () => {
+  const tall = cardFor([
+    [
+      [40, 40],
+      [200, 1200],
+    ],
+  ]).card;
+  const h = 1200 + reach + PAPER;
+  assert.ok(Math.abs(tall.k - (1.4 * UNIT_W) / h) < 1e-9, 'no taller than its most');
+  assert.ok(Math.abs(tall.h - Math.ceil(1.4 * UNIT_W)) <= 1);
+  assert.ok(tall.x0 < 0 && Math.abs(tall.x0 + (UNIT_W - UNIT_W * tall.k) / 2 / tall.k) < 1e-9, 'centred across');
+  assert.equal(tall.plain, false);
+  const out = cardFor([
+    [
+      [-60, -30],
+      [100, 60],
+    ],
+  ]).card;
+  assert.deepEqual(
+    [out.x0, out.y0],
+    [-60 - reach - PAPER, -30 - reach - PAPER],
+    'from the ink above and left of its corner',
+  );
+  assert.ok(out.k < 1 && Math.abs((UNIT_W - out.x0) * out.k - UNIT_W) < 1e-9, 'shown as wide as the column');
 });

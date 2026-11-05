@@ -6,7 +6,7 @@ import { transcribe, turnEnded } from './callscreen.js';
 // A call that ended without a hang-up (the page left or reloaded, or the line dropped) waits HOLD_MS on the line's end
 // (platform/voice, HOLD): calling the same agent again in that time, from any of HQ's pages on this browser, rejoins it.
 // (The line rejoins a dial to an agent whose call is still on by itself too, as from a page that froze and never said it
-// lost the call: this only says Rejoining.: it was 30 s)
+// lost the call: this only says Rejoining.)
 // Kept from pickup to hang-up as { id, agent, request, lost }, lost: when this page lost it (0 while it still has it).
 const HOLD_MS = 600000,
   HELD = 'heldCall';

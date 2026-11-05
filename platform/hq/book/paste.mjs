@@ -3,8 +3,14 @@
 // coordinator's fetch played here), a picture file dragged in, pasted words landing as a box at a readable width,
 // a pasted web page's HTML keeping its paragraphs, a pasted link landing as its words, a link whose picture didn't come
 // or is one HQ can't draw saying why, a file of another kind refused in words, and Undo taking each back. Each asserts what the board sees and what the store keeps.
+// A picture dropped on the grid is a scrap of its own there; one dropped in an opened scrap, and words pasted there,
+// land in it where they're let go (bookscrapopen.js).
+// Pictures dropped side by side in an opened scrap stay apart: the Pencil's tap with Select picks the one tapped, and
+// it moves alone.
 import assert from 'node:assert/strict';
-import { onDesk, freePage, savedWhere, colourIn, paperBox, GREEN, BLUE } from './mouse.mjs';
+import { onDesk, freePage, inScrap, savedWhere, colourIn, paperBox, pick, GREEN, BLUE } from './mouse.mjs';
+import { closeScrap } from './kit.mjs';
+import { hands } from './hands.mjs';
 
 // a picture on another site (never fetched: the coordinator's /api/book/fetch is played)
 const SITE_PICTURE = 'https://pictures.example/mug/green.png',
@@ -14,7 +20,9 @@ const SITE_PICTURE = 'https://pictures.example/mug/green.png',
   // (a picture HQ can't draw, a phone's HEIC: the coordinator answers 415, not marked a page.)
   HEIC = 'https://pictures.example/mug/blue.heic';
 // (the book's readable width for words put on a page: booktexts.js READ)
-const READ = 560;
+const READ = 560,
+  // (the boxes of words in the opened scrap)
+  TYPED = '#book .bk-page[data-focus] .bk-typed';
 
 // c: book-check.mjs's played store and helpers, as mouseStories gets them
 export function pasteStories(c) {
@@ -23,6 +31,8 @@ export function pasteStories(c) {
       browser => pictures(browser, c),
     'pasted words land as a box at a readable width, a page keeps its paragraphs, a link lands as its words': browser =>
       words(browser, c),
+    'two pictures dropped in an opened scrap stay apart: the Pencil taps one with Select, it alone is picked and moves':
+      browser => apart(browser, c),
   };
 }
 
@@ -35,29 +45,68 @@ async function pictures(browser, c) {
     const asked = await playFetch(page, { [SITE_PICTURE]: await png(page, '#1d9a5b') });
     const paper = await paperBox(page),
       at = { x: paper.x + paper.width * 0.4, y: paper.y + paper.height * 0.55 };
-    // an <img> dragged from a web page in another tab: Chrome hands over its address and HTML, no file
+    // an <img> dragged from a web page in another tab onto the grid: Chrome hands over its address and HTML, no file.
+    // A scrap of its own, its card the grid's one
     await dropOn(page, at, { 'text/uri-list': SITE_PICTURE, 'text/html': `<img src="${SITE_PICTURE}" alt="">` });
     const placed = await savedWhere(c, free.id, p => p.scraps?.length === 1);
     assert.deepEqual(asked, [SITE_PICTURE], "the coordinator fetched the site's picture, once");
     await page.waitForTimeout(c.settle);
-    const green = await colourIn(page, GREEN);
-    assert.ok(green.n > 2000, `the dragged picture shows on the paper (${green.n} px)`);
-    assert.ok(Math.hypot(green.x - at.x, green.y - at.y) < 40, 'taped where it was let go');
+    await onItsCard(page);
     await c.shot('book-paste-dragged-address', page);
-    // a picture file dragged in from the desktop beside it
-    const there = { x: paper.x + paper.width * 0.7, y: paper.y + paper.height * 0.4 };
+    // a picture file dragged in from the desktop beside it, onto that scrap opened: in it where let go
+    const sheet = await inScrap(page, c, free),
+      there = { x: sheet.x + sheet.width * 0.3, y: sheet.y + sheet.height * 0.75 };
     await dropOn(page, there, {}, await png(page, '#2f6bdc'));
     await savedWhere(c, free.id, p => p.scraps.length === 2);
     await page.waitForTimeout(c.settle);
     const blue = await colourIn(page, BLUE);
     assert.ok(blue.n > 2000 && Math.hypot(blue.x - there.x, blue.y - there.y) < 40, 'the file taped where let go');
-    // Undo takes each back, the last first
+    await c.shot('book-paste-dropped-in-scrap', page);
+    // Undo takes each back, the last first: the file in the scrap, then the scrap on the grid
     await undo(page);
     await savedWhere(c, free.id, p => p.scraps.length === 1 && p.scraps[0].file === placed.scraps[0].file);
+    await closeScrap(page, { tap: ([x, y]) => page.mouse.click(x, y) });
+    await page.mouse.move(paper.x + paper.width / 2, paper.y + paper.height / 2);
     await undo(page);
     await savedWhere(c, free.id, p => p.scraps.length === 0);
     await page.waitForTimeout(c.settle);
     assert.ok((await colourIn(page, GREEN)).n < 50 && (await colourIn(page, BLUE)).n < 50, 'both gone from the paper');
+    c.noErrorsIn(errors);
+  } finally {
+    await done();
+    c.pages.splice(c.pages.indexOf(free), 1);
+  }
+}
+
+async function apart(browser, c) {
+  const free = freePage(c);
+  const { page, errors, done } = await onDesk(browser, c);
+  try {
+    const sheet = await inScrap(page, c, free),
+      at = f => ({ x: sheet.x + sheet.width * f, y: sheet.y + sheet.height * 0.45 });
+    await dropOn(page, at(0.25), {}, await png(page, '#1d9a5b'));
+    await savedWhere(c, free.id, p => p.scraps.length === 1);
+    await dropOn(page, at(0.75), {}, await png(page, '#2f6bdc'));
+    const was = await savedWhere(c, free.id, p => p.scraps.length === 2);
+    await page.waitForTimeout(c.settle);
+    // the green one tapped with the Pencil, Select in hand: its frame round it alone, the blue one outside it
+    await pick(page, 'Select');
+    const green = await colourIn(page, GREEN),
+      blue = await colourIn(page, BLUE);
+    await (await hands(page)).pen.tap([green.x, green.y]);
+    const frame = await page.locator('#book .bk-sel').boundingBox(),
+      inFrame = p => p.x > frame.x && p.x < frame.x + frame.width && p.y > frame.y && p.y < frame.y + frame.height;
+    assert.ok(inFrame(green) && !inFrame(blue), `the tapped picture alone picked: ${JSON.stringify(frame)}`);
+    await c.shot('book-paste-one-picked', page);
+    // dragged down, it moves alone: the blue one stays where it was
+    await page.mouse.move(green.x, green.y);
+    await page.mouse.down();
+    await page.mouse.move(green.x, green.y + 90, { steps: 8 });
+    await page.mouse.up();
+    const [g, b] = was.scraps.map(s => s.file),
+      of = (p, file) => p.scraps.find(s => s.file === file);
+    const moved = await savedWhere(c, free.id, p => of(p, g)?.y > of(was, g).y + 20);
+    assert.deepEqual([of(moved, b).x, of(moved, b).y], [of(was, b).x, of(was, b).y], 'the other one stays');
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -70,6 +119,8 @@ async function words(browser, c) {
   const { page, errors, done } = await onDesk(browser, c);
   try {
     const asked = await playFetch(page, {});
+    // (in a scrap made by a click on the blank page)
+    await inScrap(page, c, free);
     // plain text from a long email, with its paragraphs: one box at a readable width, in view
     const sentence = 'The handle should feel warmer, a little rounder where the thumb rests. ';
     const plain = [1, 2, 3].map(n => `${n}. ${sentence.repeat(5).trim()}`).join('\r\n\r\n');
@@ -99,7 +150,7 @@ async function words(browser, c) {
     for (const n of [2, 1, 0]) {
       await undo(page);
       await savedWhere(c, free.id, p => p.texts.length === n);
-      assert.equal(await page.locator('#book .bk-typed').count(), n, `${n} boxes on the paper`);
+      assert.equal(await page.locator(TYPED).count(), n, `${n} boxes on the paper`);
     }
     c.noErrorsIn(errors);
   } finally {
@@ -113,15 +164,32 @@ async function words(browser, c) {
 async function refusedSaid(page) {
   await paste(page, { 'text/plain': DOWN });
   await page.getByText('That picture didn’t come: the site answered 503 for that picture').first().waitFor();
-  assert.equal(await page.locator('#book .bk-typed').count(), 3, 'no box for a picture that didn’t come');
+  assert.equal(await page.locator(TYPED).count(), 3, 'no box for a picture that didn’t come');
   await paste(page, { 'text/plain': HEIC });
   await page.getByText('That picture didn’t come: not a picture HQ can show').first().waitFor();
-  assert.equal(await page.locator('#book .bk-typed').count(), 3, 'no box for a picture HQ can’t draw');
+  assert.equal(await page.locator(TYPED).count(), 3, 'no box for a picture HQ can’t draw');
   await paste(page, {}, { name: 'quote.pdf', type: 'application/pdf' });
   await page.getByText('Only pictures and words land on a page').first().waitFor({ timeout: 5000 });
 }
 
 // ---- helpers
+
+// The green picture shown on the grid's one card: a scrap of its own
+async function onItsCard(page) {
+  const green = await colourIn(page, GREEN),
+    cards = await page.locator('#book .bk-page:not([hidden]) .bk-unit').evaluateAll(us =>
+      us.map(u => {
+        const r = u.getBoundingClientRect();
+        return { x: r.left, y: r.top, right: r.right, bottom: r.bottom };
+      }),
+    );
+  assert.ok(green.n > 2000, `the dragged picture shows on the paper (${green.n} px)`);
+  assert.equal(cards.length, 1, 'a scrap of its own on the grid');
+  assert.ok(
+    green.x > cards[0].x && green.x < cards[0].right && green.y > cards[0].y && green.y < cards[0].bottom,
+    'on its card',
+  );
+}
 
 // The coordinator's fetch of a picture on another site, played: the pictures it has by address, a site that's down
 // (DOWN), a picture HQ can't draw (HEIC), else "a page, not a picture", as bookfetch.ts says of each. Returns the
@@ -186,8 +254,8 @@ const undo = page => page.keyboard.press('Control+z');
 // The boxes of words on the paper as the board sees them: n of them, within the paper's width, the last landed in
 // view, no line of words wider than its box, and none over another
 async function looksWhole(page, n, c) {
-  const boxes = page.locator('#book .bk-typed');
-  await page.waitForFunction(n => document.querySelectorAll('#book .bk-typed').length === n, n);
+  const boxes = page.locator(TYPED);
+  await page.waitForFunction(([n, typed]) => document.querySelectorAll(typed).length === n, [n, TYPED]);
   await page.waitForTimeout(c.settle); // (the table slides to show what landed)
   const paper = await paperBox(page);
   const seen = await boxes.evaluateAll(els =>

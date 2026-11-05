@@ -3,10 +3,8 @@
 // was said as items and hands them out (the call ledger, ledger.ts). Every call is logged for HQ's computer.
 // (its messages say deliverable, the board's word for a thread)
 import { ONE_DEADLINE } from '../../worker/hq/levels.ts';
-import { readFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { db } from './db.ts';
-import { REPO_DIR } from './config.ts';
 import * as chat from './chat.ts';
 import * as intercom from './intercom.ts';
 import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob } from './jobs.ts';
@@ -20,7 +18,9 @@ import * as walks from './walkthroughs.ts';
 import * as goingon from './goingon.ts';
 import * as forecast from './forecast.ts';
 import * as goals from './goals.ts';
-import { pad } from './pad.ts';
+import { padBriefing } from './pad.ts';
+import { guestPrompt } from './callguestbrief.ts';
+import { read, section, profileOf, spokenAloud, replies, recognised } from './callspoken.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { DEFAULT_ESTIMATE_SCALE, ONE_TIME } from '../../worker/hq/estimating.ts';
@@ -56,15 +56,20 @@ const line = () => ({ seat: callSeat(), timeZone: timeZone(), respell: respellin
 // speaks and hears in: one it doesn't know is English.
 const spoken = (lang: string): BoardLanguage => Object.hasOwn(LANGUAGES, lang) ? lang as BoardLanguage : 'en';
 // walk: HQ rang from a card's Walk me through it (walkthroughs.ts)
-export function context(agent: string, lang: string, request = 0, again = '', phone = false, walk = false) {
+// guest: the name of the board's guest carrying the call it left, on a restart: their own briefing (callguestbrief.ts),
+// with nothing of the company's state, and the open items it numbers stay as they were.
+export function context(agent: string, lang: string, request = 0, again = '', phone = false, walk = false, guest = '') {
   const who = findAgent(agent);
   if (!who || who.temp || boardId(agent)) return 404;
+  if (guest && !again) return 400;  // (a guest only goes on with a call the board started)
   const live = again ? db.prepare(`select c.id, c.request, c.resumes, t.listed from call_tokens t join calls c on c.id = t.call and c.agent = t.agent
     where t.hash = ? and t.agent = ? and t.expires > ? and c.status = 'live'`).get(sha256(again), agent, Date.now()) as { id: number; request: number | null; resumes: string | null; listed: string } | undefined : undefined;
   // A restart whose call has ended (handed over, expired or swept) is refused, never a new call: the voice line restarts
   // an agent whose reply the hang-up cut off, and a new call there would have a token nothing ever hands back.
   if (again && !live) return 409;
   const req = about(agent, live ? live.request ?? 0 : request);
+  if (live && guest)
+    return { prompt: fit(guestPrompt(spoken(lang), agent, live.id, guest)), token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, ...callModel(), ...line() };
   if (live) {  // a restart
     const p = heard(prompt(spoken(lang), agent, req, live.id, phone, JSON.parse(live.resumes ?? '[]'))), listed = [...new Set([...JSON.parse(live.listed) as number[], ...p.listed])];
     db.prepare('update call_tokens set listed = ? where hash = ?').run(JSON.stringify(listed), sha256(again));
@@ -243,9 +248,10 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   // The token stops working here but is kept its day (context() clears it), so a repeat finds its call. The voice line
   // sends an end again when HQ's reply was lost.
   if (token) db.prepare('update call_tokens set expires = min(expires, ?) where hash = ?').run(Date.now(), sha256(token));
-  const was = bound ? db.prepare('select id, status, lines from calls where id = ? and agent = ?').get(bound, agent) as { id: number; status: string; lines: string } | undefined : undefined;
-  // (a repeat of an end HQ took, the call ended or failed since: no second row, no second follow-up.
-  if (was && was.status !== 'live' && was.lines !== '[]') return { ok: true };
+  const was = bound ? db.prepare('select id, status, lines, lines_at from calls where id = ? and agent = ?').get(bound, agent) as { id: number; status: string; lines: string; lines_at: string | null } | undefined : undefined;
+  // (a repeat of an end HQ took: no second row, no second follow-up. lines_at: an end or a late transcript came in,
+  // never kept()'s lines nor the sweep.)
+  if (was && was.status !== 'live' && (was.lines_at || was.lines === JSON.stringify(lines))) return { ok: true };
   // A late transcript (the sweep ended the call) goes to that call (ledger.late); one whose call isn't found (its token
   // unknown, or swept a day after it expired) gets a new row.
   const req = about(agent, request);
@@ -305,7 +311,7 @@ function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, ph
   const head = `${instructions(lang, agent, phone)}
 This call is #${call}.
 ## You
-${profile(read(`company/people/${agent.replace(/[^a-z0-9-]/g, '')}.md`))}
+${profile(profileOf(agent))}
 
 ${recentWork(agent, call)}${req ? `## What this call is about
 Your own desk phone request to the board, #${req.id}: ${req.title}
@@ -333,10 +339,10 @@ ${ledger.items(restarted).map(i => `- #${i.id}: ${i.what} (${i.kind} for ${i.own
 function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   const who = findAgent(agent)!, name = String(who.name ?? agent), role = titleOf(who);
   const pron = who.pronouns ? ` (${who.pronouns})` : '';
-  // "Answer directly without deliberating": a call's model always thinks when it judges it useful (Opus 5.5 can't turn
-  // thinking off; effort is low) and the board waits through it; Anthropic's advice for a fast first token is this line
-  // (and the pictures sentence: the voice line shows the agent what the board shares on HQ's call screen. A phone call
-  // has no screen.)
+  // The rules of talking on the line are the ones a guest's briefing has too (callspoken.ts: the Dutch marks, the
+  // spoken replies, answering directly, speech recognition).
+  // The pictures sentence: the voice line shows the agent what the board shares on HQ's call screen. A phone call has
+  // no screen.
   // a time told on the call is written down with what's to be done, which its job carries, or the work under way it
   // names (askwindow.ts). One kind of note, written down with one tool.
   // Follow-ups inherit the deadline of the deliverable they serve. Missing times show once for that deliverable.
@@ -346,6 +352,7 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // finish misses (worker/hq deadlines.ts lateLines). Judgment, never a refusal.
   // Where planned work stands: the eta tool (voice hq_tools.py, outlooks.ts findOutlooks).
   // What's going on now: the eta tool with no query (hq now, goingon.ts).
+  // What a job is doing this minute: the activity tool (hq activity, activity.ts).
   // hang_up: the agent ends the call once the board has clearly said goodbye (the voice line's Call.leave), with a
   // goodbye in its own words.
   // add: what the board adds to a job the call queued goes into it (addToJob).
@@ -358,44 +365,43 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // WebSearch is enabled by guard.TOOLS. Its reply ends in a Sources list a call would read aloud (voice server.py
   // spoken() drops only the links), so the prompt says never.
   // report, git and WebFetch: the agent reads what a job reads, but no shell (voice reads.py, guard.TOOLS).
-  // One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME, board, call 256).
+  // One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME).
   // Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when
   // missed, once.
   // Shifted work: the job and when tools give each agreed deadline's facts (deadlines.ts); the board hears of shifts
   // only when a time it set itself will be missed or it asks; whether one is safe or tight and where new work goes is the
   // agent's judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
-  // Talk between the board and someone in the room with it is let be, never "I didn't catch that", with say_nothing.
   // The call's language is the line's, one value for its voice, its ears and these words, and it holds against any
-  // other language in the briefing (talk of a meeting in Dutch on an English call). Only the line's Dutch voice is
-  // Piper's (voice server.py DUTCH), which says a word marked ‹live› in English sounds (MARKED); its German and English
-  // are Pocket TTS's, which reads the word as written, so only a Dutch call is asked to mark. An answer is what we'll
-  // do, the rest when asked.
+  // other language in the briefing (talk of a meeting in Dutch on an English call). An answer is what we'll do, the
+  // rest when asked.
+  // The call's notes read later without the call: per idea a sketch and full sentences of what was said; the page about
+  // the call's subject, a fault in our tools on the list alone (write_down's page).
+  // The board's ink in the call's notes is its agent's alone, and on the agent's own scraps it points and goes once the
+  // turn on it is done (ink/callpointers.ts).
   const spokenIn = LANGUAGES[lang].name;
   return `You are ${name}${pron}, ${role} at ${names().name}, an AI-run company. You're on a live voice call with the board (the human owner).
 The call's language is ${spokenIn}: HQ's language setting, in which the line voices your words and hears the board.
 Speak ${spokenIn} from your first word to your last, whatever language the briefing, the intercom, earlier calls or
 the work are in: talk of a meeting in another language is about that meeting, not this call. To have a call in another
 language, the board changes HQ's language and calls again.
-${lang !== 'nl' ? '' : `Its ${spokenIn} voice says every word the ${spokenIn} way ("live" as "lieve"): put a word you'd say the
-English way between ‹ and ›, as in "Het staat ‹live›." The marks are never shown or heard.
-`}Your words are spoken aloud: reply in one to three short spoken sentences, in plain words, the answer first. No
-lists, markdown, emoji or links. Be warm and direct, and ask one question when you need to. When the board raises a
+${spokenAloud(lang)} When the board raises a
 problem or asks for something, say what we'll do about it, and stop there: not who it goes to, what you don't know
 yet, your guesses at the cause or how the work will go, unless the board asks. Every extra sentence is one it waits through.
-When you give a time, say it plainly in one short natural sentence, never a bare time: "Ada's fix should be live by about
+When you give a time, say it plainly in one short natural sentence, never a bare time: "Ada's fix will be live at
 twenty-five past two." Then only what the board must know about it (a real risk, a choice it has), never the working
 behind it (how many rounds, what the plan counts, how far along someone is). Say it in the board's own time: ${boardClock()}
 Never say a number for work aloud (a job, card, pull request, call, item or pin), not even once: the board can't see
 them on a call, and hearing them makes the call run long. Say what the work is. The numbers in this
 briefing and in your tools' answers are for your tools, and your written follow-up carries them.
-Answer directly without deliberating: the board hears every second before your first word, and the careful work is
+${replies('the board')}, and the careful work is
 your follow-up's, after the call.
 You can look things up during the call: the search tool finds the Handbook, playbooks, notes, the shared craft library,
 the board's earlier calls with everyone, the intercom and your own past work by meaning and by words, history lists your own recent work, call reads an earlier call
 (yours or a colleague's) and its summary by its number, intercom reads the board's intercom chat (a day in full, or lines by words),
 eta reads where planned work stands now (each deliverable's ETA, its window and slack, what it waits on, the board's
 cards by name) and, with no query, what's going on right now: who's at work on what, why each runs while a hold is on, and
-what each open card holds up, fresh each time (the briefing's list is from the call's start), and
+what each open card holds up, fresh each time (the briefing's list is from the call's start), activity reads what a job
+or a colleague is doing this minute (its recent steps, statuses and messages, as the board sees them on its card in HQ), and
 report reads the server's status report as your jobs do (jobs, pull requests and their findings, deploys, seats, errors and
 each service's logs: its sections first, then one by words of its heading, or the lines with a job's number), git reads
 the company's code on every branch, a job's unmerged work too (log, show, diff, grep), the company's files (main) are your
@@ -462,9 +468,7 @@ you haven't checked. A wrong detail on the phone means a correction afterwards.
 Fixes to how the company itself works (calls and this phone line, hand-offs, orchestration, knowledge search, HQ and
 the coordinator) are the Process team's to build, through the normal review: they go to ${findAgent(roles().process)?.name ?? roles().process} as a job. Never offer to
 write a brief for the board's own Claude Code; that's for quick fixes the board chooses to make itself.
-The board's words reach you through speech recognition, which can turn background noise or other people talking
-into words: if what you hear seems garbled or unrelated, say you didn't catch that. Words someone in the room says to
-the board, or the board to them, aren't for you: let them be (say_nothing), never "I didn't catch that".
+${recognised('the board')}
 ${phone ? '' : `The board can also show you pictures on screen during the call: they come with its words, or on their own with a short note.
 You see its screen only while it shows it to you. When the board talks about something on its screen that you can't see,
 ask to see it with ask_to_see then and there: that one step asks, and the board answers yes or no. Never tell it which
@@ -478,10 +482,18 @@ change about the notes themselves or when there's nothing to show; mark_notes ci
 mean; draw_picture puts a diagram or chart of yours in them as a picture, when the board wants to see something drawn;
 change_note fixes a note of yours, moves or deletes what's there (read_notes first for anything you didn't just write). When the board asks to see a few versions of a change, write it down and start a try on it: its owner builds
 them, and they appear under it.
+The notes are about the call's subject, for someone who reads them later without the call: what's talked over (an
+idea, a point, someone's view of how it should be) goes in as a small sketch of it beside full sentences of what was
+said, by whom and why (draw_picture), not keywords. When you organise them again, the new notes take the old ones'
+place (change_note deletes them), never a second list beside them. Something to be done outside the subject (a fault
+in our own tools on a call about a product) goes on the call's list alone: write_down with page false.
 The board scribbles on its screen to show you things ("move this here"): each scribble comes with its turn as a note of
 its own, its picture the page around the ink. It's for you: nothing of it goes in the call's notes by itself. From what
 the board says, write down what's worth keeping (from: 'note 3', the board's own note by the number the line gave it)
 and let the rest be: not everything has to be written down. Its ink goes from the board's screen once your turn is done, so it can circle afresh.
+What the board draws in the call's notes comes to you alone, once it stops drawing: nobody else answers it there. On your
+own scraps and versions it points the same way (a choice on a card of yours circled, something crossed out), and goes
+from the page once your turn on it is done: keep what it settles in your notes.
 `}${agent === ceo() && unstaffed() ? `The company has no team yet besides you. Hand out no work on this call: after it, your follow-up hires the
 team first and gives the work to the new people (company/playbooks/founding.md). Tell the board that's what happens next.
 ` : ''}
@@ -527,7 +539,8 @@ function clockChange(zone: string, now: number) {
 
 // Their own recent work, so a call about something they did finds it: jobs finished, the rest of the last day by title,
 // and their latest desk phone requests. A report or card marked before as a customer's stays with the job working on it
-// (jobs.ts holdsCustomerData): the call has no job.
+// (jobs.ts holdsCustomerData): the call has no job. Both reads go by jobs_finished_work (db.ts), the last finished first,
+// never every work job's row.
 function recentWork(agent: string, call: number) {
   const caller = { id: 0, agent, callId: call };
   const report = (j: Record<string, any>) => {
@@ -535,13 +548,13 @@ function recentWork(agent: string, call: number) {
     return cut(j.result, 500) || 'no report';
   };
   const done = (db.prepare(`select j.id, j.title, j.step, j.round, j.status, j.result, j.customers, (select number from prs
-    where branch = coalesce(j.branch, 'job/' || j.id) order by number desc limit 1) pr from jobs j
+    where branch = coalesce(j.branch, 'job/' || j.id) order by number desc limit 1) pr from jobs j indexed by jobs_finished_work
     where j.agent = ? and j.kind = 'work' and j.status in ('done', 'failed') order by coalesce(j.finished, j.created) desc, j.id desc limit 8`).all(agent) as Record<string, any>[])
     .map(j => `- Job #${j.id}, ${nameOf(j as { title: string })} (${j.status}${j.pr ? `, PR #${j.pr}` : ''}): ${report(j)}`).join('\n') || '- none';
   // The rest of the last day, titles only, up to 40 lines. History and search have the reports.
   const day = new Date(Date.now() - 24 * 3600_000).toISOString();
   const today = db.prepare(`select j.id, j.title, j.step, j.round, j.status, (select number || ' ' || status from prs where branch = coalesce(j.branch, 'job/' || j.id)
-    order by number desc limit 1) pr from jobs j where j.agent = ? and j.kind = 'work' and j.status in ('done', 'failed') and coalesce(j.finished, j.created) >= ?
+    order by number desc limit 1) pr from jobs j indexed by jobs_finished_work where j.agent = ? and j.kind = 'work' and j.status in ('done', 'failed') and coalesce(j.finished, j.created) >= ?
     order by coalesce(j.finished, j.created) desc, j.id desc limit 41 offset 8`).all(agent, day) as Record<string, any>[];
   const earlier = today.slice(0, 40).map(j => `- Job #${j.id}, ${nameOf(j as { title: string })} (${j.status}${j.pr ? `, PR #${j.pr}` : ''})`).join('\n')
     + (today.length > 40 ? '\n- …and more: history lists them all' : '');
@@ -603,16 +616,14 @@ ${talk || '(nothing yet)'}
 ${decisions(read('company/DECISIONS.md'))}`;
 }
 
-// A call with the CEO has its heartbeat at hand: its page (pad.ts) and the goals as the hourly check reads them (goals.ts).
+// A call with the CEO has its heartbeat at hand: its page (pad.ts), its memory across its work, and the goals as the
+// hourly check reads them (goals.ts). The call writes on the page with its page tool as the board settles things, and
+// its follow-up adds what the call missed (ledger.ts brief).
 function heartbeatPart() {
-  const page = pad(),
-    goalLines = goals.lines(forecast.current());
-  const pageText = page ? `Your page (hq pad), the plan you run the company by, as you last wrote it:\n${page.text}\n` : 'Your page (hq pad): none yet.\n';
+  const goalLines = goals.lines(forecast.current());
+  const pageText = `${padBriefing("put it on the page with the page tool the moment it's settled, so it holds before this call's follow-up, which adds what the call missed")}\n`;
   return `${pageText}Our goals:\n${goalLines.map(l => `- ${l}`).join('\n') || '- none marked yet (hq project goal)'}\n`;
 }
-
-// A file of the company's repo (main), or nothing when it isn't there
-const read = (f: string) => { try { return readFileSync(`${REPO_DIR}/${f}`, 'utf8'); } catch { return ''; } };
 
 const cut = (t: string | null, n: number) => { const s = (t ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n).trimEnd()}… (cut here)` : s; };
 
@@ -620,11 +631,10 @@ const cut = (t: string | null, n: number) => { const s = (t ?? '').replace(/\s+/
 // of their working memory, and is told what's left out (the first 40 lines were the oldest entries).
 function profile(text: string, recent = 8, memory = 30) {
   if (!text.trim()) return '(no profile yet)';
-  const part = (h: string) => text.split(/^## /m).find(p => p.startsWith(h))?.slice(h.length).trim() ?? '';
   const head = text.split(/^## /m)[0].trim(), items = (t: string) => t.split(/\n(?=- )/).filter(Boolean);
-  const track = items(part('Track record')), mem = part('Working memory').split('\n');
+  const track = items(section(text, 'Track record')), mem = section(text, 'Working memory').split('\n');
   const more = (n: number, what: string) => n > 0 ? `\n(${n} ${what} left out here: search or read your profile for them.)` : '';
-  return `${head}\n\n### Personality\n${part('Personality')}\n\n### Track record, newest\n${track.slice(-recent).join('\n')}${more(track.length - recent, 'older entries')}`
+  return `${head}\n\n### Personality\n${section(text, 'Personality')}\n\n### Track record, newest\n${track.slice(-recent).join('\n')}${more(track.length - recent, 'older entries')}`
     + `\n\n### Working memory\n${mem.slice(0, memory).join('\n')}${more(mem.length - memory, 'more lines')}`;
 }
 

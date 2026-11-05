@@ -122,6 +122,26 @@ async function barWhole(page, viewport) {
     for (const b of parts)
       if (a !== b && a.left < b.right - 1 && b.left < a.right - 1) assert.fail(`on the bar, ${a.name} over ${b.name}`);
 }
+// The notebook's layout picked by its picture under More options, the menu closing on the pick.
+async function layoutPicked(page, book) {
+  await page.click('#viewer .bar .more');
+  await page.click(`#viewer .options [data-book=${book}]`);
+  assert.ok(await page.$eval('#viewer .options', menu => menu.hidden), 'More options closes on a pick');
+}
+// The pictures under More options: each one's name, whether it's picked, and what it draws (its frames, and the tabs
+// over one where two take turns)
+async function picturesOf(page) {
+  await page.click('#viewer .bar .more');
+  return page.$$eval('#viewer .options [data-book]', all =>
+    all.map(b => ({
+      name: b.getAttribute('aria-label'),
+      on: b.getAttribute('aria-checked') === 'true',
+      frames: b.querySelectorAll('.frame').length,
+      tabs: b.querySelectorAll('.tab').length,
+      words: b.textContent.trim(),
+    })),
+  );
+}
 // What's beside staging: the head's choice, what the head shows for the left side (the choice's label, or its tab's or
 // column's name), and the frame's address
 const besideNow = page =>
@@ -200,6 +220,16 @@ await story('a laptop: live beside staging, linked scroll, four device sizes, th
     await linkedScroll(page);
     await barWhole(page, LAPTOP);
     await shot(page, 'laptop-this-device');
+    // (this device's page on a laptop: three columns beside the notebook, live and staging the first two)
+    assert.deepEqual(
+      (await picturesOf(page)).map(p => [p.frames, p.tabs]),
+      [
+        [2, 0],
+        [2, 0],
+      ],
+    );
+    await shot(page, 'laptop-more-options-here');
+    await page.keyboard.press('Escape');
     await page.click('#viewer [data-device=phone]');
     await page.waitForTimeout(300);
     const phone = await box(page, '#viewer .pane.after .sized');
@@ -212,7 +242,18 @@ await story('a laptop: live beside staging, linked scroll, four device sizes, th
     assert.ok(scale < 1, 'a desktop page drawn smaller in its column');
     await shot(page, 'laptop-desktop');
     // the notebook over: HQ's page keeps its whole width under the open book
-    await page.click('#viewer [data-book=over]');
+    // (under More options, the layouts drawn as a desktop's page lays out on a laptop: side by side under the notebook
+    // over, taking turns as tabs beside it)
+    assert.deepEqual(await picturesOf(page), [
+      { name: 'Notebook over the page', on: false, frames: 2, tabs: 0, words: '' },
+      { name: 'Notebook beside the page', on: true, frames: 1, tabs: 2, words: '' },
+    ]);
+    assert.ok(await page.isVisible('#viewer .options .share'), 'Share under More options');
+    await shot(page, 'laptop-more-options');
+    await page.keyboard.press('Escape');
+    assert.ok(await page.$eval('#viewer .options', menu => menu.hidden), 'Escape closes More options');
+    assert.ok(await page.$eval('#viewer .bar .more', key => key === document.activeElement), 'its key focused again');
+    await layoutPicked(page, 'over');
     await bookAtRest(page, 'folded');
     assert.equal(await page.evaluate(() => Math.round(document.body.getBoundingClientRect().width)), LAPTOP.width);
     // (the book shut from beside it: HQ's page dissolved into its whole width, wholly back first)
@@ -262,6 +303,7 @@ await story('a laptop: live beside staging, linked scroll, four device sizes, th
       (await import('/shell/ink/book.js')).foldBook();
       await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
       const swinging = !!document.querySelector('#book.bk-swinging');
+      document.querySelector('#viewer .bar .more').click();
       document.querySelector('#viewer [data-book=beside]').click();
       return swinging;
     });
@@ -325,7 +367,19 @@ await story(
       await barWhole(page, MINI);
       await shot(page, 'mini-over-phone');
       await page.click('#viewer [data-device=here]');
-      await page.click('#viewer [data-book=beside]');
+      // (on an iPad on its side: side by side under the notebook over, beside it the two taking turns as tabs)
+      assert.deepEqual(await picturesOf(page), [
+        { name: 'Notebook over the page', on: true, frames: 2, tabs: 0, words: '' },
+        { name: 'Notebook beside the page', on: false, frames: 1, tabs: 2, words: '' },
+      ]);
+      await shot(page, 'mini-more-options');
+      // (a tap outside closes it: on the page in its frame, which takes the focus, and on the bar)
+      await page.mouse.click(300, 400);
+      await page.waitForFunction(() => document.querySelector('#viewer .options').hidden, null, { timeout: 2000 });
+      await page.click('#viewer .bar .more');
+      await page.mouse.click(300, 20);
+      assert.ok(await page.$eval('#viewer .options', menu => menu.hidden), 'a tap outside closes More options');
+      await layoutPicked(page, 'beside');
       await bookAtRest(page, 'open');
       assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'tabs');
       assert.ok(await visible(page, 'after'));
@@ -349,11 +403,11 @@ await story('a phone on its side beside the open book: Over and Beside, the bar 
   const { context, page, errors } = await opened(browser, { width: 844, height: 390 }, { touch: true });
   try {
     await until(page, '#viewer .pane.before iframe');
-    await page.click('#viewer [data-book=beside]');
+    await layoutPicked(page, 'beside');
     await page.waitForTimeout(1200);
     await barWhole(page, { width: await page.evaluate(() => document.body.getBoundingClientRect().width) });
     await shot(page, 'phone-sideways-beside');
-    await page.click('#viewer [data-book=over]');
+    await layoutPicked(page, 'over');
     await bookAtRest(page, 'folded'); // (Over puts the book away)
     assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'columns', 'live and staging side by side');
     await shot(page, 'phone-sideways-over');
@@ -373,7 +427,12 @@ for (const [name, viewport] of [
       await until(page, '#viewer .pane.before iframe');
       await page.waitForTimeout(600);
       assert.equal(await page.$('#viewer .bar [data-device]'), null);
-      assert.equal(await page.$('#viewer .bar [data-book]'), null);
+      // (More options holds Share alone: no layout to pick)
+      await page.click('#viewer .bar .more');
+      assert.equal(await page.$('#viewer .options [data-book]'), null);
+      assert.ok(await page.isVisible('#viewer .options .share'));
+      await shot(page, `${name.replace(/\W+/g, '-')}-more-options`);
+      await page.keyboard.press('Escape');
       assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'tabs');
       await linkedScroll(page);
       await barWhole(page, viewport);
@@ -490,7 +549,7 @@ for (const [name, viewport] of [
     try {
       await until(page, '#viewer .stage .head .beside');
       const labels = await labelsOf(page);
-      if (viewport === MINI) await page.click('#viewer [data-book=beside]');
+      if (viewport === MINI) await layoutPicked(page, 'beside');
       await page.selectOption('#viewer .stage .head .beside', 'earlier-1');
       await page.waitForTimeout(1200);
       assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'tabs');

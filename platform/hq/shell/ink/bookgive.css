@@ -1,0 +1,50 @@
+/* Give a copy… (bookgive.js): a menu card of everyone invited, then Someone new's name and address and Give. */
+.bk-give {
+  width: 280px;
+}
+.bk-give-head {
+  margin: 4px 10px 0;
+  font-weight: 700;
+}
+.bk-give-note,
+.bk-give-said {
+  margin: 0 10px 4px;
+  white-space: normal;
+  opacity: 0.75;
+}
+.bk-give-said:empty {
+  display: none;
+}
+.bk-give hr {
+  width: 100%;
+  border: 0;
+  border-top: var(--bk-ui-border);
+}
+.bk-give form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bk-give input {
+  box-sizing: border-box;
+  margin: 0 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: var(--bk-ui-border);
+  border-radius: var(--r, 8px);
+  background: transparent;
+  color: var(--bk-ui-ink);
+  font: 15px/1.3 var(--bk-ui-font);
+}
+.bk-give form > button {
+  align-self: flex-end;
+  margin: 0 6px 4px;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--r, 8px);
+  background: var(--bk-ui-ink);
+  color: var(--bk-ui-bg);
+  font: 600 14px/1 var(--bk-ui-font);
+  cursor: pointer;
+}

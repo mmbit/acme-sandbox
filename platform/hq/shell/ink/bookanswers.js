@@ -12,6 +12,7 @@ import { faceHtml, faced } from './bookfaces.js';
 import { word } from './bookscope.js';
 import { wireReply } from './bookanswerreply.js';
 import { loadGroups, sendReply } from './bookanswersdata.js';
+import { ownGroups } from './booksave.js';
 import { versionsEl } from './bookversions.js';
 
 for (const name of ['bookanswers', 'bookanswerform', 'bookversions']) stylesheet(`shell/ink/${name}.css`);
@@ -49,7 +50,8 @@ async function read(layer) {
     return console.error('[hq] A page’s answers can’t be read:', e);
   }
   if (n !== layer.reading || !groups) return;
-  draw(layer, groups.groups);
+  // (an opened scrap draws only its own versions, never another note's over it.)
+  draw(layer, ownGroups(page, groups.groups));
 }
 
 // Every group's versions, kept as drawn while they're the same, drawn again when they changed. Versions the board's pen

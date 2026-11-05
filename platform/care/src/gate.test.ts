@@ -108,13 +108,19 @@ test("an app on a shelf is asked under its own path", async () => {
 });
 
 test('wrong email, wrong number and a real order give the same answer after the same minimum time', async () => {
-  // four of each: a fifth failure on one order number would slow it down (the next test)
-  const run = (order: string, email: string, shop = 'shop') => Promise.all(Array.from({ length: 4 }, () =>
-    timed(() => gate.matchOrder(session.create(shop).session, ip(), order, email))));
-  const [wrongEmail, wrongNumber, real, broken] = await Promise.all([
-    run('ORD-7', 'someone@example.com'), run('ORD-999', 'ada@example.com'), run('ORD-3', 'ada@example.com'),
-    run('ORD-3', 'ada@example.com', 'broken'),
-  ]);
+  // four of each: a fifth failure on one order number would slow it down (the next test). In four rounds of one of each,
+  // each kind once in every place: sixteen at once queue their synchronous starts (the database's writes) behind one
+  // another on a busy machine, and the kind started first answers last.
+  const kinds = [['ORD-7', 'someone@example.com'], ['ORD-999', 'ada@example.com'], ['ORD-3', 'ada@example.com'], ['ORD-3', 'ada@example.com', 'broken']];
+  const [wrongEmail, wrongNumber, real, broken] = kinds.map(() => [] as { r: Awaited<ReturnType<typeof gate.matchOrder>>; ms: number }[]);
+  for (let round = 0; round < 4; round++) {
+    const order = kinds.map((_, k) => (k + round) % kinds.length);
+    const tries = await Promise.all(order.map(k => {
+      const [number, email, shop = 'shop'] = kinds[k], s = session.create(shop).session;
+      return timed(() => gate.matchOrder(s, ip(), number, email));
+    }));
+    order.forEach((k, i) => [wrongEmail, wrongNumber, real, broken][k].push(tries[i]));
+  }
   for (const x of [...wrongEmail, ...wrongNumber, ...broken]) assert.equal(JSON.stringify(x.r), '{"ok":false,"why":"no-match"}');
   for (const x of real) assert.equal(x.r.ok, true);
   const times = [...wrongEmail, ...wrongNumber, ...real, ...broken].map(x => x.ms);

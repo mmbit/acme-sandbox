@@ -51,7 +51,7 @@ test("the board's decision binds until a later call replaces or drops it, howeve
   assert.equal(checks().length, 1);
 });
 
-// (a live call's lines so far are the CEO's to read since job #24358, as hq call shows them: its words show)
+// (a live call's lines so far are the CEO's to read, as hq call shows them: its words show.)
 test("the board's words show only from a call hq call shows the check: not one marked before as a customer call's", async () => {
   reset();
   const fixture = await h.start({ agent: ceo(), title: 'A customer call follow-up' });

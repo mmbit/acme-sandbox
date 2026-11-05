@@ -6,7 +6,7 @@ import { costLines, type FeatureCost } from './costs.ts';
 import { when } from './when.ts';
 import * as api from './api.ts';
 import { lateLines, missWords } from './deadlines.ts';
-import { at, duration, waitWords, type Wait } from './estimate.ts';
+import { at, duration, safeWords, waitWords, type Wait } from './estimate.ts';
 import { print, stop, text } from './output.ts';
 import { liftWords, type Lift } from './pauses.ts';
 // A job's code after its number, none for one without
@@ -133,18 +133,8 @@ function outlookWords(o: Outlook | null, thread: string, said = threadWait) {
   const waits = o.waits.filter(w => w.on !== 'horizon' && w.on !== 'stalled');
   const on = waits.length ? `; waits on ${waits.map(w => said(w, thread)).join(', ')}` : '';
   const window = windowWords(o);
-  const safe = safeWords(o);
+  const safe = safeWords(o.eta, o.safe);
   return `${eta}, ${duration(o.left_ms / 60_000)} of agent time left${on}${safe}${window ? `; ${window}` : ''}`;
-}
-
-// The time to tell the board: live four times in five (forecast.ts safe), never the planned finish, which is as likely
-// late as early; none while the slow play doesn't finish it within the horizon. The one time, never an "at the latest"
-// beside the ETA (board, call 256).
-function safeWords(o: Outlook) {
-  if (o.eta === null) return '';
-  return o.safe === null
-    ? "; no time to tell the board: nothing finishes it four times in five within the forecast's horizon"
-    : `; the one time to tell the board: live ${at(o.safe)}, four times in five, never the ETA beside it`;
 }
 
 // Its planned finish against its window: by how much it misses the deadline, or what it gives of its aim and the slack

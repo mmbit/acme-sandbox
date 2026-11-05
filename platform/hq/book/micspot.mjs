@@ -79,14 +79,18 @@ async function spot(page, c, free, at, viewport) {
   await wordsHeard(page);
   const live = await words.evaluate(el => {
     const r = el.getBoundingClientRect(),
-      loader = el.querySelector('.bk-hearing');
+      bars = el.querySelector('.bk-bars'),
+      under = getComputedStyle(el, '::before');
     return {
       box: { x: r.x, y: r.y, w: r.width, h: r.height },
       font: getComputedStyle(el.querySelector('.bk-typed-words')).fontFamily,
-      loader: !!loader && loader.getBoundingClientRect().width > 0,
+      bars: !!bars && bars.getBoundingClientRect().width > 0,
+      // (a paper of its own under the words: painted, and round them)
+      slip: under.backgroundColor !== 'rgba(0, 0, 0, 0)' && parseFloat(under.width) > el.offsetWidth,
     };
   });
-  assert.ok(live.loader, `at ${size}, the loader after the words while they come`);
+  assert.ok(live.bars, `at ${size}, the voice's bars after the words while they come`);
+  assert.ok(live.slip, `at ${size}, the words on a slip of paper as they come`);
   assert.ok(
     at[0] >= live.box.x - 4 && at[0] <= live.box.x + 24 && at[1] >= live.box.y - 4 && at[1] <= live.box.y + live.box.h,
     `at ${size}, the words where the spot is held: ${JSON.stringify({ at, live })}`,

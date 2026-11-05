@@ -5,10 +5,8 @@ import { anchorOf, dataUrlPicture, inkOf, picturesOf, refuse, textsOf, wordsOf }
 import { emptyGroup, hasAny, picks, typedBoxes } from './notebookparts.js';
 import { boxOf, scrapSize } from './notebookstack.js';
 import { NOTE_TEXT, ROOM, bodyOf, heightFor, retypedNote, unitOf } from './scrapunit.js';
-import { isCanvas, isPlace, isPush, liftedOut, pushedDown } from './sketchcanvas.js';
-import { chapterOf } from './notebookchapters.js';
 import { answersOf, seenTick } from './notebookplayanswers.js';
-import { assignedOf } from './notebookplaypeople.js';
+import { assignedOf, ownAfter, questionOf } from './notebookplaypeople.js';
 
 export const BOARD = 'board';
 export const CHANGED = 'this group changed on another screen: read it again';
@@ -24,31 +22,23 @@ export const GROUP_ROUTES = {
   'POST /api/notebooks/groups/delete': deleteGroup,
   'POST /api/notebooks/groups/restore': restoreGroup,
   'POST /api/notebooks/groups/split': splitGroup,
-  'POST /api/notebooks/groups/place': placeGroups,
   'POST /api/voice/change': changeWords,
 };
-// A drawing on an open page, its parts in its own scrap px: a unit right after unit `after`, or at the page's end, kept
-// in its `column` when given (on a sketch page at its `place`, when given)
-function createGroup(s, b) {
-  const p = openPage(s, b?.page),
-    parts = elementsOf(s, b, emptyGroup),
-    place = onCanvas(s, p) && b.place != null ? placeOf(b.place) : null;
-  if (!hasAny(parts)) refuse(400, 'a group holds something: ink, words or a picture');
-  const [pos, column] = b.after == null ? [endOf(s, p), b.column ?? null] : [posAfter(s, p, Number(b.after)), null];
-  return shown(s, insertGroup(s, p, 'drawing', BOARD, parts, { pos, column, place, h: heightFor(parts, 0) }));
-}
-// A sketch page's units placed where they have none yet ([{ id, x, y }]): the first place stands. → { groups }
-function placeGroups(s, b) {
-  const p = openPage(s, b?.page);
-  if (!onCanvas(s, p)) refuse(400, 'only a sketch page places its units');
-  if (!Array.isArray(b.places) || !b.places.every(isPlace)) refuse(400, 'places: [{ id, x, y }]');
-  const units = b.places.map(at => ({ at: { x: at.x, y: at.y }, g: s.group(Number(at.id)) }));
-  if (!units.every(u => u.g?.page === p.id && u.g.parent === null && u.g.deleted === null))
-    refuse(400, 'each id is a unit on this page');
-  const placed = units.filter(u => !u.g.place);
-  for (const u of placed) Object.assign(u.g, { place: u.at, updated: s.stamp() });
-  if (placed.length) s.changed(p.notebook, p.id);
-  return { groups: units.map(u => shown(s, u.g)) };
+// A drawing on an open page, its parts in its own scrap px: a unit right after unit `after` (its first for 'start'), or
+// at the page's end, kept in its `column` when given. empty: a new scrap with nothing on it yet, the pen's tap in a gap
+// (start, empty)
+function createGroup(s, given) {
+  const p = openPage(s, given?.page),
+    b = { ...given, after: ownAfter(s, p, given.after) },
+    parts = elementsOf(s, b, emptyGroup);
+  if (!hasAny(parts) && b.empty !== true) refuse(400, 'a group holds something: ink, words or a picture');
+  const [pos, column] =
+    b.after == null
+      ? [endOf(s, p), b.column ?? null]
+      : b.after === 'start'
+        ? [startOf(s, p), null]
+        : [posAfter(s, p, Number(b.after)), null];
+  return shown(s, insertGroup(s, p, 'drawing', BOARD, parts, { pos, column, h: heightFor(parts, 0) }));
 }
 // An open group's elements changed. since: its updated as the screen last read it (one changed since: 409).
 function editGroup(s, b) {
@@ -70,32 +60,26 @@ function changeWords(s, b) {
   return { ok: `#${g.id} says it now.` };
 }
 // An open unit made h tall by hand (its room's foot, the post-it words aside: scrapunit.js heightFor). since: as edit's.
-// push ({ top, from, x0, x1, by }): on a sketch page, what's below its foot moved down as its room grew
-// (sketchcanvas.js pushedDown).
 function resizeGroup(s, b) {
   const g = openGroup(s, b?.id);
   if (g.parent !== null) refuse(400, "a reply isn't a unit: it has no height of its own");
   if (b.since !== g.updated) refuse(409, CHANGED);
   const h = Number(b.h);
   if (b.h === null || !Number.isFinite(h) || h <= 0) refuse(400, 'h is a positive number');
-  if (b.push != null && !(isPush(b.push) && onCanvas(s, s.page(g.page))))
-    refuse(400, 'push is { top, from, x0, x1, by } on a sketch page');
-  const others = s.groups.filter(x => x.page === g.page && x.parent === null && x.deleted === null && x.id !== g.id);
-  for (const { id, place } of pushedDown(others, b.push)) write(s, s.group(id), partsOf(s.group(id)), { place });
   write(s, g, partsOf(g), { h: Math.round(h) });
   return shown(s, g);
 }
 // An open unit onto an open page, as it was: its last, right after unit `after` there, or its first for after 'start'
-function moveGroup(s, b) {
-  const g = openGroup(s, b?.id),
-    to = openPage(s, b.page);
+function moveGroup(s, given) {
+  const g = openGroup(s, given?.id),
+    to = openPage(s, given.page),
+    b = { ...given, after: ownAfter(s, to, given.after) };
   if (b.after != null && b.after !== 'start' && Number(b.after) === g.id)
     refuse(400, "after is another unit on that page, or 'start'");
   const from = g.page,
     pos = b.after == null ? endOf(s, to) : b.after === 'start' ? startOf(s, to) : posAfter(s, to, Number(b.after));
   for (const x of s.groups) if (x.id === g.id || x.parent === g.id) x.page = to.id;
-  // (onto another page, it's laid there afresh)
-  write(s, g, partsOf(g), { pos, place: to.id === from ? g.place : null });
+  write(s, g, partsOf(g), { pos });
   s.changed(to.notebook, from);
   s.changed(to.notebook, to.id);
   return shown(s, g);
@@ -176,22 +160,12 @@ function splitGroup(s, b) {
       texts: out.texts.map(i => parts.texts[i]),
       pictures: out.pictures.map(i => parts.pictures[i]),
     },
-    // (on a sketch page left where they are, beside it: sketchcanvas.js)
-    unit = onCanvas(s, p) ? liftedOut(taken, g.place) : { ...unitOf(taken), place: null };
-  const lifted = insertGroup(s, p, 'drawing', g.by, unit.parts, {
-    ...{ pos: posAfter(s, p, g.id), h: unit.h, place: unit.place },
-  });
+    unit = unitOf(taken);
+  const lifted = insertGroup(s, p, 'drawing', g.by, unit.parts, { pos: posAfter(s, p, g.id), h: unit.h });
   return { group: shown(s, g), split: shown(s, lifted) };
 }
 
 // ---------------------------------------------------------------- shared
-// Whether a page is a canvas (sketchcanvas.js), and a place as one's unit keeps it ({ x, y }, the page's px)
-// (a design session's call page too, p.sketch)
-const onCanvas = (s, p) => isCanvas({ chapter: chapterOf(p.kind, s.notebook(p.notebook)?.kind), sketch: p.sketch });
-function placeOf(v) {
-  if (!isPlace(v)) refuse(400, 'a place is { x, y }');
-  return { x: v.x, y: v.y };
-}
 // The elements a request gives, each checked, the rest as they were
 const elementsOf = (s, b, was) => ({
   ink: b.ink === undefined ? was.ink : inkOf(b.ink),
@@ -215,7 +189,7 @@ export function insertGroup(s, p, kind, by, parts, more = {}) {
   const now = s.stamp();
   const g = {
     ...{ id: s.next('group'), page: p.id, parent: null, answers: null, kind, by, ...parts, anchor: null, words: '' },
-    ...{ pos: null, h: null, column: null, place: null },
+    ...{ pos: null, h: null, column: null },
     ...{ said: null, owner: null, status: 'open', note: null, created: now, updated: now, deleted: null, ...more },
   };
   s.groups.push(g);
@@ -226,7 +200,7 @@ function write(s, g, parts, more) {
   Object.assign(g, parts, {
     words: more.words ?? g.words,
     said: more.said === undefined ? g.said : more.said,
-    ...{ pos: more.pos ?? g.pos, h: more.h ?? g.h, place: more.place === undefined ? g.place : more.place },
+    ...{ pos: more.pos ?? g.pos, h: more.h ?? g.h },
     updated: s.stamp(),
   });
   s.changed(s.page(g.page).notebook, g.page);
@@ -283,15 +257,16 @@ export function groupOf(s, g, replies) {
         seen: seenTick(s, r, answers),
       })),
     ].sort((a, b) => a.created.localeCompare(b.created)),
-    // (who it was handed to, for its tags: bookassign.ts.)
+    // (who it was handed to, for its tags: bookassign.ts; whether it's a question, and answered)
     assigned: assignedOf(s, g),
+    question: g.parent === null ? questionOf(s, g) : null,
   };
 }
 const element = g => ({
   ...{ id: g.id, page: g.page, kind: g.kind, by: g.by, ink: g.ink, texts: g.texts },
   pictures: g.pictures.map(c => ({ ...c, url: pictureUrl(c.file) })),
   ...{ words: g.words, said: g.said, status: g.status, note: g.note, box: boxOf(partsOf(g)) },
-  ...{ pos: g.pos, h: g.h, column: g.column, place: g.place },
+  ...{ pos: g.pos, h: g.h, column: g.column },
   ...{ created: g.created, updated: g.updated },
 });
 // A picture kept for a page's group: its file's name (the coordinator's own pattern, `<page>-g-<8 hex>`)

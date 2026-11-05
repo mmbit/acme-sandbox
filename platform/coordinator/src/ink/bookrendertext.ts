@@ -1,6 +1,7 @@
 // Words and paper as a page's picture sets them, shared by what it draws (bookrender.ts, bookrenderasks.ts,
 // bookrenderversions.ts): Pango's words at the book's line height, paper with its soft shadow, a picture's file fitted.
 import sharp, { type OverlayOptions } from 'sharp';
+import { POSTIT as POSTIT_PAPER } from '../../../hq/shell/ink/scrapunit.js';
 
 // Typed words as the book sets them (booktools.js TEXT): the size and the line's height in page px. The book's own face
 // is HQ's; here it's the first of these the machine has (DejaVu Sans comes with fontconfig on Debian).
@@ -14,6 +15,28 @@ export const HAND_FONT = 'Caveat, Comic Neue, DejaVu Sans Condensed, sans-serif'
 // (Pango's own line in these faces is about 1.17 of the size: the rest of the book's line is spacing between lines)
 export const FACE_LINE = 1.17;
 
+// The grid's paper's dots (shared/review/paper.js --bk-dot, 22 px apart: bookdesk.css), and a unit's post-it and its
+// shadow (scrapunit.js POSTIT).
+const DOTS = { gap: 22, r: 1.25, ink: 'rgba(42,35,82,0.16)' },
+  POSTIT = { paper: POSTIT_PAPER, shadow: 'rgba(80,60,10,0.3)' };
+// The grid's paper as HQ shows it, an SVG of the picture's size: its dots every DOTS.gap, and each unit's post-it with
+// its shadow (bookgroups.css .bk-unit-paper).
+export const gridSvg = (
+  page: { cards?: Box[]; dotted?: boolean },
+  at: { x: number; y: number },
+  W: number,
+  H: number,
+  k: number,
+) => {
+  const cards = (page.cards ?? [])
+    .map(c => `<rect x="${c.x - at.x}" y="${c.y - at.y}" width="${c.w}" height="${c.h}" rx="2"/>`)
+    .join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W / k} ${H / k}"><defs><pattern id="d" width="${DOTS.gap}" height="${DOTS.gap}" patternUnits="userSpaceOnUse"><circle cx="${DOTS.gap / 2}" cy="${DOTS.gap / 2}" r="${DOTS.r}" fill="${DOTS.ink}"/></pattern><filter id="s" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="3"/></filter></defs>${
+    page.dotted ? `<rect width="100%" height="100%" fill="url(#d)"/>` : ''
+  }<g fill="${POSTIT.shadow}" transform="translate(0 4)" filter="url(#s)">${cards}</g><g fill="${POSTIT.paper}">${cards}</g></svg>`;
+};
+// A box on the page, page px
+export type Box = { x: number; y: number; w: number; h: number };
 // A picture of words at its place on the page's picture, in picture px
 export type Layer = { input: Buffer; left: number; top: number; width: number; height: number };
 
@@ -106,4 +129,17 @@ export async function layered(on: OverlayOptions[], W: number, H: number) {
     blank = { width: Math.max(1, W), height, channels: 4 as const, background: { r: 0, g: 0, b: 0, alpha: 0 } };
   const input = await sharp({ create: blank }).composite(on).png().toBuffer();
   return { input, height, tall: height };
+}
+// (moved here from bookrender.ts)
+// Only the part of a layer inside the W × H picture (a box may start left of the page's top-left), none when none is
+export async function inside(l: Layer, W: number, H: number): Promise<OverlayOptions[]> {
+  const x0 = Math.max(0, l.left),
+    y0 = Math.max(0, l.top),
+    width = Math.min(l.left + l.width, W) - x0,
+    height = Math.min(l.top + l.height, H) - y0;
+  if (width <= 0 || height <= 0) return [];
+  if (width === l.width && height === l.height) return [{ input: l.input, left: l.left, top: l.top }];
+  const cut = { left: x0 - l.left, top: y0 - l.top, width, height },
+    input = await sharp(l.input).extract(cut).png().toBuffer();
+  return [{ input, left: x0, top: y0 }];
 }

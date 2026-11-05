@@ -3,14 +3,13 @@
 // the Pencil on an iPad mini, ink erased at two sizes (cut where the eraser passed, the rest kept), an ellipse and a
 // rectangle filled and outlined and an arrow, some ink and a picture selected, moved, cut, pasted and deleted, and Undo
 // taking every step back and Redo making them again. Each asserts what the board sees (pixels on the book's paper) and
-// what the store keeps (the page saved).
+// what the store keeps (the page saved). Each draws in a new scrap opened by a click (a tap) on the blank page.
 import assert from 'node:assert/strict';
 import { colourIn, freePage, line, onDesk, paperBox, pasteGreen, pick, savedWhere, GREEN } from './mouse.mjs';
-import { MINI, pressAlong, shotPixels } from './kit.mjs';
+import { MINI, openScrap, pressAlong, shotPixels } from './kit.mjs';
 import { WIDTHS } from '../shell/ink/bookinkmath.js';
 
-const NIGHT = [42, 35, 82],
-  PAPER = [255, 250, 240];
+const NIGHT = [42, 35, 82];
 
 // c: book-check.mjs's played store and helpers (mouse.mjs's)
 export function drawStories(c) {
@@ -29,10 +28,9 @@ async function erasesAndShapes(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await onDesk(browser, c);
   try {
-    // (right of the tool strip down the paper's left)
-    const box = await paperBox(page),
+    const box = await sheetOn(page, mouse(page)),
       at = [box.x + 100, box.y + 200];
-    await erases(page, c, free, at);
+    await erases(page, c, free, at, box);
     const drawn = await shapes(page, c, free, at);
     // Undo takes every step back, the page empty again; Redo makes them all again
     await page.mouse.move(at[0] + 200, at[1] + 400);
@@ -47,7 +45,7 @@ async function erasesAndShapes(browser, c) {
   }
 }
 // Two lines, each cut by one pass of the eraser: a fine one, then a wide one
-async function erases(page, c, free, [x, y]) {
+async function erases(page, c, free, [x, y], box) {
   await pick(page, 'Pen');
   await drag(page, [x, y], [x + 360, y]);
   await drag(page, [x, y + 110], [x + 360, y + 110]);
@@ -64,8 +62,8 @@ async function erases(page, c, free, [x, y]) {
   await page.keyboard.press('Escape');
   await pass(page, x + 120, y + 70, 80);
   const erased = await savedWhere(c, free.id, p => p.ink.length === 4);
-  const fine = await gapIn(page, y),
-    wide = await gapIn(page, y + 110);
+  const fine = await gapIn(page, box, y),
+    wide = await gapIn(page, box, y + 110);
   assert.ok(fine > 6 && fine < 30, `the fine eraser's gap: ${fine} px`);
   assert.ok(wide > fine + 20, `the wide eraser's gap (${wide} px) wider than the fine one's (${fine} px)`);
   assert.ok(
@@ -77,6 +75,8 @@ async function erases(page, c, free, [x, y]) {
 // An ellipse filled, a rectangle outlined, an arrow, under the lines: each in the pen's own ink, the Pencil picked
 // in the pen's card before
 async function shapes(page, c, free, [x, y]) {
+  // (the scrap's own paper, bare where the rectangle's middle comes)
+  const paper = await pixel(page, x + 195, y + 225);
   await pick(page, 'Pen');
   await card(page, 'Pencil');
   await page.keyboard.press('Escape');
@@ -106,7 +106,7 @@ async function shapes(page, c, free, [x, y]) {
   );
   await page.waitForTimeout(300);
   assert.deepEqual(await pixel(page, x + 55, y + 225), NIGHT, "the filled ellipse's middle is ink");
-  assert.deepEqual(await pixel(page, x + 195, y + 225), PAPER, "the outlined rectangle's middle is paper");
+  assert.deepEqual(await pixel(page, x + 195, y + 225), paper, "the outlined rectangle's middle is paper");
   assert.deepEqual(await pixel(page, x + 140, y + 225), NIGHT, 'its side is ink');
   await c.shot('book-draw-shapes', page);
   return drawn;
@@ -116,7 +116,7 @@ async function selects(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await onDesk(browser, c);
   try {
-    const box = await paperBox(page),
+    const box = await sheetOn(page, mouse(page)),
       x = box.x + 80,
       y = box.y + 160;
     await pick(page, 'Pen');
@@ -153,12 +153,18 @@ async function selectsAndMoves(page, c, free, placed, [x, y]) {
   await c.shot('book-draw-selected', page);
   await drag(page, [green.x, green.y], [green.x + 60, green.y + 40]);
   const moved = await savedWhere(c, free.id, p => p.scraps[0]?.x !== placed.scraps[0].x);
-  assert.ok(Math.abs(moved.scraps[0].x - placed.scraps[0].x - 60) < 2, 'the picture moved with the selection');
-  assert.ok(Math.abs(moved.ink[0].points[0][0] - placed.ink[0].points[0][0] - 60) < 2, 'and the line with it');
+  // (the store keeps the opened scrap's own px, the sheet showing them zoomed k times)
+  const k = await page.evaluate(() => {
+    const shown = document.querySelector('#book .bk-page[data-focus]');
+    return shown.getBoundingClientRect().width / shown.offsetWidth;
+  });
+  const dx = moved.scraps[0].x - placed.scraps[0].x;
+  assert.ok(Math.abs(dx * k - 60) < 2, `the picture moved with the selection: ${dx * k} px`);
+  assert.ok(Math.abs(moved.ink[0].points[0][0] - placed.ink[0].points[0][0] - dx) < 1, 'and the line with it');
   await c.shot('book-draw-moved', page);
 }
-// The bar beside what's picked: Duplicate, Move to page… and Delete, one line of icons, each named (no Cut, Copy or
-// Paste)
+// The bar beside what's picked: Assign, Duplicate, Move to page… and Delete, one line of icons, each named (no Cut,
+// Copy or Paste)
 async function threeOnOneLine(page, c) {
   const buttons = await page
     .locator('#book .bk-sel-bar button:visible')
@@ -167,8 +173,8 @@ async function threeOnOneLine(page, c) {
     );
   assert.deepEqual(
     buttons.map(b => b.name),
-    ['Duplicate', 'Move to page…', 'Delete'],
-    'the bar has Duplicate, Move to page… and Delete',
+    ['Assign', 'Duplicate', 'Move to page…', 'Delete'],
+    'the bar has Assign, Duplicate, Move to page… and Delete',
   );
   assert.equal(new Set(buttons.map(b => b.top)).size, 1, 'on one line');
   await c.shot('book-draw-bar', page);
@@ -197,9 +203,9 @@ async function pencil(browser, c) {
     deviceScaleFactor: 2,
   });
   try {
-    // (right of the tool strip down the paper's left)
-    const box = await paperBox(page),
-      at = [box.x + 140, box.y + 180];
+    // (the sheet's left, clear of the tools island at its right)
+    const box = await sheetOn(page, { tap: at => pressAlong(page, [at]) }),
+      at = [box.x + 50, box.y + 180];
     const shaped = await pencilInks(page, c, free, at);
     await pencilSelects(page, c, free, shaped, at);
     assert.deepEqual(
@@ -215,7 +221,7 @@ async function pencilInks(page, c, free, [x, y]) {
   await tap(page, 'Pen');
   await pressAlong(
     page,
-    Array.from({ length: 30 }, (_, i) => [x + i * 10, y]),
+    Array.from({ length: 25 }, (_, i) => [x + i * 10, y]),
   );
   await savedWhere(c, free.id, p => p.ink.length === 1);
   await tap(page, 'Eraser');
@@ -243,7 +249,7 @@ async function pencilSelects(page, c, free, shaped, [x, y]) {
   await tap(page, 'Select');
   await pressAlong(
     page,
-    Array.from({ length: 14 }, (_, i) => [x - 30 + i * 26, y - 40 + i * 18]),
+    Array.from({ length: 14 }, (_, i) => [x - 30 + i * 23, y - 40 + i * 18]),
   );
   await page.waitForTimeout(250);
   assert.equal(await page.locator('#book .bk-sel-bar').isVisible(), true, 'the selection shows its bar');
@@ -252,17 +258,30 @@ async function pencilSelects(page, c, free, shaped, [x, y]) {
     page,
     Array.from({ length: 11 }, (_, i) => [x + 100, y + i * 5]),
   );
-  // (the page goes to the store group by group, its order theirs: waited for till nothing is where it was.)
+  // (the page goes to the store group by group, its order theirs: waited for till nothing is where it was. The store
+  // keeps the opened scrap's own px, the sheet showing them zoomed: each moved down as far as the others.)
   const was = starts(shaped);
-  const moved = await savedWhere(c, free.id, p => starts(p).every(s => !was.includes(s)));
-  assert.deepEqual(starts(moved, 50), was, 'all of it moved down');
-  await tap(page, 'Undo');
+  const moved = await savedWhere(c, free.id, p => starts(p).every(s => !was.includes(s))),
+    dy = moved.ink[0].points[0][1] - shaped.ink[0].points[0][1];
+  assert.ok(dy > 20, `all of it moved down: ${dy} px`);
+  assert.deepEqual(starts(moved, dy), was, 'all of it moved down as one');
+  // (the opened scrap's Undo, on the tools' island)
+  await page.locator('#book .bk-scrap-history').getByRole('button', { name: 'Undo' }).tap();
   await savedWhere(c, free.id, p => starts(p).join() === was.join());
 }
 // Where a page's strokes start (dy down from there), sorted, to tell them apart whatever their order on the page
 const starts = (p, dy = 0) => p.ink.map(s => `${Math.round(s.points[0][0])},${Math.round(s.points[0][1] - dy)}`).sort();
 
 // ---- helpers
+
+// A new scrap opened by a tap (pen: what taps) on the blank page: its sheet's box on the screen
+async function sheetOn(page, pen) {
+  const desk = await paperBox(page),
+    { gid, sheet } = await openScrap(page, pen, undefined, [desk.x + 120, desk.y + 200]);
+  assert.ok(gid, 'a new scrap opened');
+  return sheet;
+}
+const mouse = page => ({ tap: ([x, y]) => page.mouse.click(x, y) });
 
 // A choice on the tool's card: the card opened by pressing the tool in use again if it isn't open (keep: it's open)
 async function card(page, name, { keep = false } = {}) {
@@ -284,10 +303,9 @@ async function drag(page, [x0, y0], [x1, y1]) {
   for (let i = 1; i <= 12; i++) await page.mouse.move(x0 + ((x1 - x0) * i) / 12, y0 + ((y1 - y0) * i) / 12);
   await page.mouse.up();
 }
-// The widest run of paper between ink along a row of the paper (a cut line's gap), in screen px
-async function gapIn(page, y) {
-  const box = await paperBox(page),
-    { data, w } = await shotPixels(page, { x: box.x, y: y - 1, width: box.width, height: 3 });
+// The widest run of paper between ink along a row of the sheet (box: a cut line's gap), in screen px
+async function gapIn(page, box, y) {
+  const { data, w } = await shotPixels(page, { x: box.x, y: y - 1, width: box.width, height: 3 });
   // (the middle of the three rows)
   const inked = [];
   for (let i = 0; i < w; i++) if (data[(w + i) * 4] < 140) inked.push(i);

@@ -2,10 +2,10 @@
 // pictures and typed words in it; a click picks the one on top, Shift adds or takes away, a click on bare paper lets
 // go. A press on anything in a group (bookgroups.js) picks the whole group, which moves as one. What's picked shows in a
 // frame with a handle at each corner: pressed inside and dragged, it moves; a handle scales it about the opposite
-// corner. Select is the only way things move on a page. Cut, copy, paste,
-// duplicate and delete are bookselectclip.js's (the keys, the clipboard and the bar beside the frame); the live move
-// and resize bookselectlift.js's; on an Asks page, Assign in the bar and a Pencil's loop out of one scrap, bookassign.js's. Post-its
-// keep their own order on their sheet and are never picked (booktools.js sends their presses elsewhere).
+// corner. Select is the only way things move on a page. Cut, copy, paste, duplicate and delete are bookselectclip.js's
+// (the keys, the clipboard and the bar beside the frame); the live move and resize bookselectlift.js's; Assign in the
+// bar while one whole scrap is picked, bookassign.js's.
+// Post-its keep their own order on their sheet and are never picked (booktools.js sends their presses elsewhere).
 //
 // booktools.js mounts it and calls press(e) for a press on the page in select mode, and settle() before Undo or Redo
 // and when the tool changes. Every change is one step through hooks.begin(view) (bookedit.js).
@@ -47,7 +47,7 @@ export function mountSelect(book, hooks) {
   // (away: a loop gone off the screen's edge, waiting for the Pencil to come back: comingBack)
   const sel = { book, hooks, view: null, ink: [], scraps: [], texts: [], frame: null, last: null, away: null };
   sel.clip = mountClip(sel);
-  sel.assign = mountAssign(sel); // (an Asks page's scrap circled with the Pencil and a line out of it: to a guest)
+  sel.assign = mountAssign(sel);
   hovering(sel);
   comingBack(sel);
   return {
@@ -92,9 +92,10 @@ function press(sel, e) {
   }
   if (hit && !sel[hit.kind].includes(hit.item)) choose(sel, at.view, things);
   if (hit || onFrame(sel, p)) return drag(sel, e, { corner: -1 });
-  // (a press on a scrap's bare paper, its room or round its words, picks the scrap whole: it's one thing.)
+  // (a press on a scrap's bare paper, its room or round its words, picks the scrap whole: it's one thing. On the scrap
+  // opened, its bare paper is the page's: a loop, as its pictures are picked alone (groupOf).)
   const unit = unitAt(page, ...p);
-  if (unit === undefined || !page.groups?.has(unit)) return lasso(sel, e, at);
+  if (unit === undefined || unit === page.focus || !page.groups?.has(unit)) return lasso(sel, e, at);
   choose(sel, at.view, membersOf(page, unit));
   return true;
 }
@@ -139,11 +140,10 @@ function follow(sel, loop, e, lifted = () => {}) {
     loop.far = true;
     // (once it strays it's a lasso, however it ends; a box back from the screen's edge stays a box, its corner following)
     if (loop.kind === 'box' && !loop.back) loop.kind = gestureOf(path, SLOP_PX / book.scale).kind;
-    if (!sel.assign.drew(loop, m)) drawLoop(loop);
+    drawLoop(loop);
   };
   const up = u => {
     lifted();
-    if (sel.assign.lifted(loop, u)) return;
     const away = loop.far && u.pointerType === 'pen' && atEdge(u);
     if (!away) svg.remove();
     if (u.type === 'pointercancel' && !away) return;

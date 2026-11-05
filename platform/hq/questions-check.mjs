@@ -3,8 +3,9 @@
 // with yes-or-nos, a number in mm, a choice and a photo field shows each question as its own field, in order, before the
 // photo and the answer box. Send marks the first question still open, then a number that isn't one; the answers given
 // stay through a reload; a missing photo still holds it; with the photo in, it sends with no typed text and the agent's
-// answer lists each question with its answer. At a phone's size (touch) and a desktop's. And a card that asks for one
-// file only: Send holds without it, and goes with it and no typed text (the same rule as for questions).
+// answer lists each question with its answer. At a phone's size (touch), an iPad's (touch) and a desktop's. A question
+// several of whose answers are true shows tick boxes, none ticked, and the answer lists each one ticked. And a card that
+// asks for one file only: Send holds without it, and goes with it and no typed text (the same rule as for questions).
 // And a card with an optional question: Send holds for the required one only, an optional chip taps off again, and the
 // answer says "(left blank)".
 // And a card's note takes pictures as the intercom does: one pasted, one picked,
@@ -69,6 +70,8 @@ const QUESTIONS = [
   { title: 'Which wall would you hang it on?', options: ['Living room', 'Hallway', 'Neither'] },
   // a pick-many: all on, the board takes off what it doesn't want
   { title: 'Which fixes shall we make?', options: ['1. The rail', '2. The edges', '3. The colours'], many: true },
+  // several true together: tick boxes, none ticked, the board ticks every one that applies
+  { title: 'Where did you see it?', options: ['Phone', 'Tablet', 'Desktop'], many: true, picked: [] },
 ];
 // A 4×4 PNG, the photo the board picks
 const PNG = Buffer.from(
@@ -103,6 +106,7 @@ async function phone(viewport, touch) {
 }
 for (const [name, viewport, touch] of [
   ['phone', { width: 390, height: 844 }, true],
+  ['ipad', { width: 820, height: 1180 }, true],
   ['desktop', { width: 1280, height: 800 }, false],
 ]) {
   const job = jobs.createJob({ agent: 'dex', title: `The test poster (${name})`, prompt: '.' }).id;
@@ -151,6 +155,12 @@ for (const [name, viewport, touch] of [
   await tap(`${li(2)} .chip[data-answer="no"]`); // changed its mind: one chip on
   assert.equal(await page.locator(`${li(4)} .chip.on`).count(), 3, 'a pick-many starts with every option on');
   await tap(`${li(4)} .chip[data-answer="2. The edges"]`); // one off, the others stay on
+  // where it saw it: tick boxes, none ticked; two ticked stay ticked together. The choice above stays one pick, no box
+  assert.equal(await page.locator(`${li(5)} .chip.on`).count(), 0, 'a question of fact starts with none ticked');
+  assert.equal(await page.locator(`${li(5)} .chip.tick`).count(), 3, 'a question of fact shows tick boxes');
+  assert.equal(await page.locator(`${li(3)} .chip.tick`).count(), 0, 'a one-pick choice has no box');
+  await tap(`${li(5)} .chip[data-answer="Phone"]`);
+  await tap(`${li(5)} .chip[data-answer="Desktop"]`);
   assert.deepEqual(
     await page.$$eval(`${li(2)} .chip`, l => l.map(e => [e.classList.contains('on'), e.getAttribute('aria-pressed')])),
     [
@@ -172,6 +182,8 @@ for (const [name, viewport, touch] of [
     'Hallway',
     '1. The rail',
     '3. The colours',
+    'Phone',
+    'Desktop',
   ]);
 
   // 4. The photo still holds it; with the photo in, it sends without typed text
@@ -194,6 +206,7 @@ for (const [name, viewport, touch] of [
       '3. Colours: anything clearly off from the phone? → No',
       '4. Which wall would you hang it on? → Hallway',
       '5. Which fixes shall we make? → 1. The rail; 3. The colours',
+      '6. Where did you see it? → Phone; Desktop',
       '',
       `Photos: 1 of 1 saved. Fetch them with \`hq photos ${id}\`.`,
     ].join('\n'),

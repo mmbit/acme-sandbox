@@ -49,6 +49,8 @@ import { askAgain } from '/ask.js';   // a button that asks once more (shared/as
 import { prose, fencedLines, linked, bare, BOLD, covered, jobNameLink, jobsIn, withJobLinks } from './prose.js';   // (job links, covered)
 import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in its steps)
 import { icon } from './icons.js';
+import { SIGNS, alertHtml, tell } from './alert.js';   // (and share)
+import { share } from './share.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
 import { openAt, coversViewer, foldBook } from './ink/book.js';   // (review mode's Open the book: bookAt; a prototype opened whole: openViewer.)
@@ -196,7 +198,8 @@ const PIN = icon('pin');
 // A deck's "try the preview" button opens its preview here as well, with a way back to the deck.
 // Chrome shows no PDF in a sandboxed frame, so the preview hosts answer a PDF the frame loads as a download, which the
 // frame allows (infra/products.py, PDF_IN_FRAME): it saves, and the page stays.
-// Share makes a link for an outside person to leave notes on this preview, or only see it: shareBox.
+// Share, under the bar's More options (viewermore.js), makes a link for an outside person to leave notes on this
+// preview, or only see it: shareBox.
 // The bar is one slim row, the page's room before all: Back and Close as quiet glyphs, the address as the link that
 // opens it in the browser, and what review mode does filled: Note. Review mode's notes go into the board's book.
 let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, link: the outside link } (heard)
@@ -210,7 +213,6 @@ async function openViewer(url, back = null) {
   v.innerHTML = `<div class="bar">${back ? '<button class="glyph" data-back aria-label="Back">‹</button>' : ''}
     <a class="where" target="_blank" rel="noopener" data-external="1" title="Open in the browser">${where(url)}</a>
     <button class="pin" hidden aria-label="Pin a note on this page">${PIN}<span>Note</span></button>
-    <button class="share" aria-label="Share with an outside person">${SHARE}<span>Share</span></button>
     <button class="glyph" data-close aria-label="Close">×</button></div>
     <div class="sharebox" hidden></div>
     <div class="stage"><div class="head"></div><div class="frames"><div class="pane after" data-side="after"><div class="sized">
@@ -218,7 +220,7 @@ async function openViewer(url, back = null) {
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe></div></div></div></div>`;
   if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true, 'viewer'); coverPin(true); }   // (cover)
   // (the stage: live beside it, device sizes, the notebook over or beside, the QR.)
-  staged?.close(); staged = mountStage(v, url);
+  staged?.close(); staged = mountStage(v, url, () => shareBox(me));   // (Share under the bar's More options.)
   if (previews.prototype.test(new URL(url).origin) && coversViewer()) foldBook();   // (a call's prototype opens whole: a book lying over the frames put away, the call's page a pull tab away.)
   const frame = stagingFrame(), out = v.querySelector('.bar .where');
   v.querySelector('[data-close]').onclick = () => { staged?.close(); staged = null; stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; delete v.dataset.ground; hush(false); cover(false, 'viewer'); coverPin(false); };
@@ -231,7 +233,6 @@ async function openViewer(url, back = null) {
     delete v.dataset.ground; // (the page before's colour: groundOf)
     askReview(me, frame);
   });
-  v.querySelector('.bar .share').onclick = () => shareBox(me);
   paintPin();
   // The outside link signs in once, within two minutes: a used or older one is replaced as it's tapped (the new tab
   // opens at once, so the browser doesn't take it for a popup, and gets its address when the new link is there).
@@ -359,7 +360,7 @@ async function shareBox(me) {
 // focus, so this page loses it). Share itself toggles it.
 function closeOutside(box) {
   const off = () => { removeEventListener('pointerdown', tap, true); removeEventListener('blur', away); };
-  const tap = e => { if (box.hidden) return off(); if (!box.contains(e.target) && !e.target.closest('#viewer .share')) { box.hidden = true; off(); } };
+  const tap = e => { if (box.hidden) return off(); if (!box.contains(e.target) && !e.target.closest('#viewer .options .share')) { box.hidden = true; off(); } };
   const away = () => setTimeout(() => { if (document.activeElement?.tagName === 'IFRAME' && !box.hidden) { box.hidden = true; off(); } });
   addEventListener('pointerdown', tap, true);
   addEventListener('blur', away);
@@ -544,16 +545,8 @@ const FIELDS = 'input:not([type=checkbox]):not([type=radio]):not([type=hidden]):
 const typing = () => !!voice || !!dictation || photoBusy() || !!root().querySelector('.call-link') || [...root().querySelectorAll(FIELDS)].some(t => t.value !== t.defaultValue || document.activeElement === t);
 let stale = false; // the phone skipped a re-render for that; it catches up once the field is empty and left
 const refusedKeys = new Map(); // request id → { key: why the server refused it }, shown under the field until the next Save
-// An error or a done on a tool's own line (the intercom's, a card's, a call's) as the design system's alert part: its
-// sign, then what happened. Each look draws it its own way (style.css, controls.css, a look's kit). A line's plain words
-// (Sending…) replace it, and an empty line has none.
-const SIGNS = { problem: icon('alert'), done: icon('tick') };
-const alertHtml = (html, kind = 'problem') => `<span class="alert ${kind}" role="${kind === 'problem' ? 'alert' : 'status'}"><span class="sign">${SIGNS[kind]}</span><span class="words">${html}</span></span>`;
 // (and an empty or problem state's sign, which a look shows if it draws one: style.css hides it)
 const stateSign = name => `<span class="sign">${icon(name)}</span>`;
-export function tell(line, words, kind = 'problem') {
-  if (line) line.innerHTML = words ? alertHtml(esc(words), kind) : '';
-}
 // ---------------------------------------------------------------- open requests: one source of truth
 // The HUD badge, the ringing desk phone, the board's panel and the phone overlay all read this list.
 // Responses that arrive out of order (a slow poll after a newer one, or after an answer) are dropped,
@@ -1428,18 +1421,6 @@ function wireCard(el, r, c, keys) {
 const wireCopies = el => el.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
   try { await navigator.clipboard.writeText(b.dataset.copy); b.classList.add('copied'); sfx.blip(); setTimeout(() => b.classList.remove('copied'), 1200); } catch { /* no clipboard */ }
 });
-// Everything HQ shares: a link ({ url }: Send link, a card's Share part that is only a link) or a card's Share part written
-// as a message ({ text }; the server's, by its author for an outsider; never a card about keys). The phone's own share
-// sheet, or the clipboard where there's none. A link goes as its URL alone, no text or title: with text, Windows' sheet
-// offers no Copy and Teams receives nothing. share() runs straight from the tap, as iOS wants.
-async function share(shareData, msg) {
-  if (navigator.share) {
-    try { await navigator.share(shareData); return; }
-    catch (e) { if (e.name === 'AbortError') return; } // closed the sheet; anything else falls back to copying
-  }
-  try { await navigator.clipboard.writeText(shareData.url ?? shareData.text); msg.textContent = 'Copied: paste it into a message'; sfx.blip(); }
-  catch { tell(msg, 'Couldn’t share or copy on this device'); }
-}
 
 // ---------------------------------------------------------------- questions on the desk phone
 // A card's questions (hq ask --questions: a yes or no, a number, a short text, a choice) are fields, each its own input in
@@ -1959,7 +1940,6 @@ function clipsHtml(body) {
 // field for review: nothing goes to the CEO until the board taps Send.
 const HOLD_MS = 350, TITLE_MAX = 140;
 const PHONE = icon('phone');
-const DESIGN = icon('design'); // (a pencil with a spark)
 const SEND = icon('send');
 const DOWNLOAD = icon('download');
 const TICK = icon('tick');
@@ -2001,7 +1981,7 @@ export function openIntercom() {
         <button class="mic attach" id="dir-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button>
         <input type="file" id="dir-file" accept="image/*" multiple hidden>
         <button class="send" id="dir-send">Send</button>
-        ${window.AudioWorkletNode && window.isSecureContext ? `<button class="mic call-btn" id="call" title="Call ${ceo}: talk hands-free" aria-label="Call ${ceo}">${PHONE}</button><button class="mic call-btn" id="design-call" title="Start a design session with ${ceo}" aria-label="Start a design session with ${ceo}">${DESIGN}</button>` : ''}<!-- (a design session: a call on a sketch page, call.js.) -->
+        ${window.AudioWorkletNode && window.isSecureContext ? `<button class="mic call-btn" id="call" title="Call ${ceo}: talk hands-free" aria-label="Call ${ceo}">${PHONE}</button>` : ''}<!-- (one key: a call turns into a design session and back as the board asks the agent, the voice line's design_session.) -->
       </div>
       <p class="msg" id="dir-msg" aria-live="polite"></p>
     </div>`)) return;
@@ -2058,7 +2038,6 @@ export function openIntercom() {
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
   // (the call closes the intercom)
   $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName()));
-  $('#design-call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), { design: true }));
   // (a first load that fails says so under the input while the loader stays, and the next poll tries again; a later one
   // keeps what's shown)
   let failed = false;

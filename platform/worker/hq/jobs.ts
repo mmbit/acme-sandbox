@@ -447,7 +447,8 @@ export const stopJob = {
                                                      since it started, or the next one queued there for them, does its
                                                      work again and takes its place, and its later tasks wait for it.
                                                      --for <job>: which one, of several queued (same agent, same
-                                                     deliverable, not started); also on a job stopped or failed already`,
+                                                     deliverable; or under way or done, queued since it started);
+                                                     also on a job stopped or failed already`,
 
   // --for, and a deliverable's task's answer
   async run(given: string[]) {

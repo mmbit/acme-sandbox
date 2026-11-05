@@ -1,10 +1,10 @@
 // book-check.mjs's stories of the pen over words in the book (shell/ink/booktexts.js, bookwrite.js): on a desktop with a
 // mouse and on an iPad mini with the Pencil, a line over a box of words, or over a scrap's post-it words, is ink on the
 // page, the words as they were (handwriting stays ink: nothing reads it or strikes words out), and a
-// Pencil's tap in a box puts the caret where it tapped, deleting nothing.
+// Pencil's tap in a box puts the caret where it tapped, deleting nothing. The pen writes in the scrap opened by its card.
 import assert from 'node:assert/strict';
-import { freePage, onDesk, savedWhere } from './mouse.mjs';
-import { MINI, pressAlong, until } from './kit.mjs';
+import { freePage, inScrap, onDesk, savedWhere } from './mouse.mjs';
+import { MINI, closeScrap, openScrap, pressAlong, until } from './kit.mjs';
 import { watchedPage } from './start.mjs';
 
 const WORDS = 'Order the teal mugs today';
@@ -18,7 +18,7 @@ export function editStories(c) {
     "with the Pencil: a line over a box's words is ink, and a tap in it puts the caret there, deleting nothing":
       browser => withPencil(browser, c),
     "with the Pencil: a line over a scrap's words is ink, the words as they were": browser => scrapInked(browser, c),
-    "with a mouse: a scrap's words typed with a space at their end, saved, another screen's words after them kept":
+    "with a mouse: a scrap's words typed with a space at their end in it opened, saved, another screen's words after them kept":
       browser => scrapTyped(browser, c),
   };
 }
@@ -29,6 +29,7 @@ async function withMouse(browser, c) {
   const free = wordsPage(c);
   const { page, errors, done } = await onDesk(browser, c, { permissions: [] });
   try {
+    await inScrap(page, c, free);
     // a drag along the middle of "teal", from inside the box: the line once struck the word out
     await drag(page, along(await wordBox(page, 'teal')));
     const inked = await savedWhere(c, free.id, p => p.ink.length === 1);
@@ -50,6 +51,7 @@ async function withPencil(browser, c) {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
+    await inScrap(page, c, free, at => pressAlong(page, [at]));
     await pressAlong(page, along(await wordBox(page, 'teal')));
     await savedWhere(c, free.id, p => p.ink.length === 1);
     const [teal, mugs] = [await wordBox(page, 'teal'), await wordBox(page, 'mugs')];
@@ -89,8 +91,10 @@ async function scrapInked(browser, c) {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
+    const { gid } = await openScrap(page, { tap: at => pressAlong(page, [at]) }, scrap.id);
+    assert.equal(gid, scrap.id, 'the scrap opened');
     // (a scrap's words in its body: .bk-words.)
-    const field = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+    const field = page.locator(`#book .bk-page[data-focus] .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
     await field.waitFor();
     assert.equal(await field.getAttribute('data-pen'), '', 'the field kept from Scribble for the pen');
     const edits = [];
@@ -111,9 +115,9 @@ async function scrapInked(browser, c) {
   }
 }
 
-// A scrap's words typed on a desktop, ending in a space: saved trimmed, the space still under the caret when the page
-// is drawn again (another screen's line on it), and let go once saved, so words another screen gives the scrap later
-// are shown and kept, never edited back.
+// A scrap's words typed on a desktop in the scrap opened by a click on its card, ending in a space: saved trimmed, the
+// space still under the caret once saved, and let go once saved, so words another screen gives the scrap later are
+// shown on its card and when it's opened again, and kept, never edited back.
 async function scrapTyped(browser, c) {
   const free = freePage(c);
   const scrap = c.notebook.route(
@@ -124,34 +128,33 @@ async function scrapTyped(browser, c) {
   const kept = () =>
     c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.find(g => g.id === scrap.id);
   const { page, errors, done } = await onDesk(browser, c);
+  const mouse = { tap: ([x, y]) => page.mouse.click(x, y) },
+    // (a scrap's words in its body: .bk-words; the opened scrap's, or its card's on the grid)
+    words = on => page.locator(`#book .bk-page${on} .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
   try {
-    // (a scrap's words in its body: .bk-words.)
-    const field = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
-    await field.focus();
+    const { gid } = await openScrap(page, mouse, scrap.id);
+    assert.equal(gid, scrap.id, 'the scrap opened');
+    const field = words('[data-focus]');
+    await field.click();
     await page.keyboard.press('Control+End');
     await page.keyboard.type(' soon ');
     await until(() => kept().words === `${WORDS} soon`, "the scrap's words saved, trimmed");
-    const line = {
-      points: [
-        [620, 200, 0.5, 0],
-        [700, 240, 0.5, 40],
-      ],
-      size: 3,
-      color: '#2f6bdc',
-    };
-    // (two lines, one group: its unit shows it's drawn)
-    const under = { ...line, points: line.points.map(([x, y, ...more]) => [x, y + 40, ...more]) },
-      units = page.locator('#book .bk-page:not([hidden]) .bk-unit'),
-      before = await units.count();
-    c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [line, under] });
-    await until(async () => (await units.count()) === before + 1, "the other screen's lines drawn");
+    // (past a save's wait: the space still there)
+    await page.waitForTimeout(1500);
     assert.equal(await field.inputValue(), `${WORDS} soon `, 'the space typed still under the caret');
+    await closeScrap(page, mouse);
     c.notebook.route(
       '/api/notebooks/groups/edit',
       {},
       { id: scrap.id, since: kept().updated, words: 'Order the mugs', said: 'typed' },
     );
-    await until(async () => (await field.inputValue()) === 'Order the mugs', "the other screen's words shown");
+    // (the grid read again as the scrap's put back, and as the store tells of a change)
+    await until(
+      async () => (await words(':not([hidden])').first().inputValue()) === 'Order the mugs',
+      "the other screen's words shown on its card",
+    );
+    await openScrap(page, mouse, scrap.id);
+    assert.equal(await words('[data-focus]').inputValue(), 'Order the mugs', 'and on it opened again');
     // (past a save's wait: nothing edits them back)
     await page.waitForTimeout(1500);
     assert.equal(kept().words, 'Order the mugs', "the other screen's words kept");
@@ -170,12 +173,15 @@ function wordsPage(c) {
   free.texts.push({ x: 160, y: 180, w: 420, text: WORDS, color: '#2a2352' });
   return free;
 }
-// A word's box on screen, in the box of words. (once the page is read: the book is open before its page's words are
-// drawn, bookpages.js read)
+// A word's box on screen, in the box of words on the opened scrap. (once the page is read: the book is open before its
+// page's words are drawn, bookpages.js read)
 async function wordBox(page, word) {
-  await page.waitForFunction(w => document.querySelector('#book .bk-typed-words')?.textContent.includes(w), word);
+  await page.waitForFunction(
+    w => document.querySelector('#book .bk-page[data-focus] .bk-typed-words')?.textContent.includes(w),
+    word,
+  );
   return page.evaluate(word => {
-    const words = document.querySelector('#book .bk-typed-words'),
+    const words = document.querySelector('#book .bk-page[data-focus] .bk-typed-words'),
       text = words.firstChild,
       at = text.data.indexOf(word),
       range = document.createRange();
@@ -188,7 +194,7 @@ async function wordBox(page, word) {
 // A word's box on screen, in a scrap's words (a field: its words laid out in a copy over it, measured, gone again)
 const scrapWordBox = (page, word) =>
   page.evaluate(word => {
-    const field = document.querySelector('#book textarea.bk-scrap-words'),
+    const field = document.querySelector('#book .bk-page[data-focus] textarea.bk-scrap-words'),
       style = getComputedStyle(field),
       copy = document.createElement('div');
     for (const p of [
@@ -228,7 +234,8 @@ const scrapWordBox = (page, word) =>
     copy.remove();
     return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
   }, word);
-const shownWords = page => page.evaluate(() => document.querySelector('#book .bk-typed-words').textContent);
+const shownWords = page =>
+  page.evaluate(() => document.querySelector('#book .bk-page[data-focus] .bk-typed-words').textContent);
 // A hand's line along a word's middle, from a little before it to a little past it
 const along = w => {
   const y = (w.top + w.bottom) / 2;

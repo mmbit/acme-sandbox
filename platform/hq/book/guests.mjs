@@ -213,7 +213,7 @@ async function answerDuringRound(state, visitor, page, screen) {
 async function invitedStory(state, board) {
   const book = await createNotebook(state, 'Design notebook', 'Cora');
   assert.equal(book.ends, null);
-  const guest = await openVisitor(state, { width: 390, height: 844 }, '', state.browser, true);
+  const guest = await openVisitor(state, { width: 390, height: 844 }, '', state.browser, { video: true });
   state.recording = guest.page.video();
   await passkeyStory(state, guest, book);
   await addNote(guest.page, 'Could the menu be easier to find');

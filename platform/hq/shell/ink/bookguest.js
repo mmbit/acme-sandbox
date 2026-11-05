@@ -3,10 +3,12 @@
 // opens with the book beside it at their page on it (bookguestwork.js), and their journal opens alone. In a review
 // round their page's send marks it done, Undo under it taking that back while the round is open. (the shelf, books
 // and work)
-import { coverPage, initBook } from './book.js';
+import { initBook } from './book.js';
+import { coverPage } from './bookcover.js';
 import { showBook, showShelf } from './bookguestshelf.js';
 import { showPrototype, showWork } from './bookguestwork.js';
 import { prototypeCard } from './bookprototype.js';
+import { callBar } from './bookguestcall.js';
 import { prototypeLink } from '../previews.js';
 import { local } from '../data.js';
 import { button, island } from './bookui.js';
@@ -99,6 +101,9 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
   // over the page.
   const shownPrototypes = new Set((notebook.prototypes ?? []).map(p => p.id));
   const openPrototype = link => showPrototype(link, text);
+  // (the call's bar: once the board has left the call to its guests, this device can carry it.)
+  const bar = notebook.kind === 'call' ? callBar(document.documentElement.lang) : null;
+  bar?.(notebook);
   const newPrototypes = book => {
     for (const p of [...(book.prototypes ?? [])].reverse()) {
       if (shownPrototypes.has(p.id)) continue;
@@ -120,11 +125,13 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
       const book = listed.notebooks?.[0];
       if (!current.ok || !book) {
         stopped = true;
+        bar?.(null);
         ended(refusal(document.documentElement.lang, listed.reason) ?? text.invitationEnded);
         return;
       }
       const page = book.pages[0];
       newPrototypes(book);
+      bar?.(book);
       undo.hidden = !page?.canUndo;
       marked.hidden = !(page?.canUndo || page?.sent || page?.sending);
       status.textContent = book.kind === 'round' ? text.round[book.state] : '';

@@ -9,6 +9,7 @@ import sharp, { type OverlayOptions } from 'sharp';
 import { svgInk } from '../../../../shared/review/ink.js';
 import { layered } from '../../../../shared/review/inkshape.js';
 import { pathsOf } from '../../../hq/shell/ink/bookanswerart.js';
+import { VOICE_SLIP, shadowColor } from '../../../hq/shell/ink/bookvoiceslip.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
 import type { Scrap } from '../pagescraps.ts';
 import {
@@ -22,8 +23,10 @@ import {
   TEXT,
   WORDS,
   FACE_LINE,
+  gridSvg,
+  inside,
 } from './bookrendertext.ts';
-import type { Face, Layer } from './bookrendertext.ts';
+import type { Box, Face, Layer } from './bookrendertext.ts';
 import { asked, formed, type Asked, type Form } from './bookrenderasks.ts';
 import { versioned, type Tried } from './bookrenderversions.ts';
 
@@ -56,11 +59,15 @@ const HAND = {
 
 // x, y: the page's top-left (0,0 where it hasn't grown up or left), w × h its size from there. under: what's under its
 // groups, answers: its answers at their spots. (x, y)
+// cards: the post-its a notebook page's units lie on, page px, and dotted: its paper's dots (HQ's grid: bookgroups.css
+// .bk-unit-paper, bookdesk.css).
 export type Drawn = {
   x?: number;
   y?: number;
   w: number;
   h: number;
+  cards?: Box[];
+  dotted?: boolean;
   ink: Inked[];
   scraps: Scrap[];
   texts?: Typed[];
@@ -72,7 +79,9 @@ export type Inked = Stroke & { unit?: number };
 // What's under a group (bookgroups.js .bk-under), from x, y, w wide: a scrap's words on a post-it (text, '': none), then
 // its answers and replies slipped under it in the order they came, the agents' cards clipped under it (asks), and a
 // try's versions. A reply is the board's (name null); picture: a file in the page's dir. (asks, tried)
-export type Under = { x: number; y: number; w: number; text: string; slips?: Said[]; asks?: Asked[]; tried?: Tried };
+// onCard: its words written on its unit's card, no post-it of their own
+export type Under = Spot & { text: string; slips?: Said[]; asks?: Asked[]; tried?: Tried; onCard?: boolean };
+type Spot = { x: number; y: number; w: number };
 // form: an answer's clipped form
 export type Said = { name: string | null; text: string; picture?: string; form?: Form };
 // An agent's answer at its spot, from x, y, w wide, in its ink (color): its drawing's strokes from its top-left
@@ -97,6 +106,8 @@ async function drawn(page: Drawn, dir: string, k: number, again: boolean): Promi
     return drawn(page, dir, k * Math.sqrt(PICTURE.pixels / (W * H)) * PICTURE.again, false);
   }
   const layers: OverlayOptions[] = [];
+  if (page.dotted || page.cards?.length)
+    layers.push({ input: Buffer.from(gridSvg(page, corner, W, H, k)), left: 0, top: 0 });
   for (const s of page.scraps) {
     // (drawn PICTURE.side on its long side at most, then brought to its size there: a scrap three times the page's
     // size is the page's picture's size at most until only the part on the page is kept)
@@ -131,21 +142,57 @@ const inkSvg = (
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${at.x} ${at.y} ${w} ${h}">${paths.join('')}</svg>`;
 };
 
-// A box of typed words at its place on the picture (k picture px a page px), wrapped at its width, in its colour
+// A box of typed words at its place on the picture (k picture px a page px), wrapped at its width, in its colour; a
+// voice note's on its slip
 async function typed(t: Typed, k: number): Promise<Layer> {
-  const set = await setText(t, k);
-  return {
-    input: set.data,
-    left: Math.round(t.x * k),
-    top: Math.round((t.y + ((TEXT.line - FACE_LINE) * TEXT.size) / 2) * k),
-    ...{ width: set.info.width, height: set.info.height },
-  };
+  const set = await setText(t, k),
+    words = {
+      input: set.data,
+      left: Math.round(t.x * k),
+      top: Math.round((t.y + ((TEXT.line - FACE_LINE) * TEXT.size) / 2) * k),
+      ...{ width: set.info.width, height: set.info.height },
+    };
+  return t.voice ? onSlip(t, words, linesOf(set.info.height / k), k) : words;
+}
+// A voice note's words (a layer) on their slip of paper, its shadows and tape (bookvoiceslip.js): as tall as their
+// lines, as wide as they wrap, with room round it for the shadows and the tape.
+async function onSlip(t: Typed, words: Layer, lines: number, k: number): Promise<Layer> {
+  const { x, y, paper, radius, shadow, tape } = VOICE_SLIP,
+    m = 16,
+    w = t.w + 2 * x,
+    h = lines * TEXT.line * TEXT.size + 2 * y,
+    left = Math.round((t.x - x - m) * k),
+    top = Math.round((t.y - y - m) * k),
+    width = Math.round((w + 2 * m) * k),
+    height = Math.round((h + 2 * m) * k);
+  // (each shadow as CSS draws it: the slip grown by its spread, moved down, blurred by half its blur, its filter over
+  // the whole picture so the blur fades out unclipped)
+  const shadows = shadow.layers.map(
+    (l, i) =>
+      `<filter id="s${i}" filterUnits="userSpaceOnUse" x="${-m}" y="${-m}" width="${w + 2 * m}" height="${h + 2 * m}"><feGaussianBlur stdDeviation="${l.blur / 2}"/></filter><rect x="${-l.spread}" y="${l.y - l.spread}" width="${w + 2 * l.spread}" height="${h + 2 * l.spread}" rx="${radius}" fill="${shadowColor(l)}" filter="url(#s${i})"/>`,
+  );
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${-m} ${-m} ${w + 2 * m} ${h + 2 * m}">${shadows.join('')}<rect width="${w}" height="${h}" rx="${radius}" fill="${paper}"/><rect x="${(w - tape.w) / 2}" y="${-tape.h / 2}" width="${tape.w}" height="${tape.h}" fill="${tape.color}" transform="rotate(${tape.tilt} ${w / 2} 0)"/></svg>`;
+  const input = await sharp(Buffer.from(svg))
+    .composite([{ input: words.input, left: words.left - left, top: words.top - top }])
+    .png()
+    .toBuffer();
+  return { input, left, top, width, height };
 }
 // A scrap's words on their post-it at its place on the picture (k picture px a page px).
 async function posted(p: Under, k: number) {
   const { pad } = WORDS,
     words = await block(`<span foreground="${WORDS.ink}">${escaped(p.text)}</span>`, p.w - 2 * pad.x, k, WORDS);
   const on = [{ input: words.input, left: Math.round(pad.x * k), top: Math.round(pad.y * k) + words.lead }];
+  // (on its unit's card: written on its paper.)
+  if (p.onCard)
+    return {
+      ...{ input: words.input, left: Math.round(p.x * k) + on[0].left, top: Math.round(p.y * k) + on[0].top },
+      ...{
+        width: words.width,
+        height: words.height,
+        foot: Math.round(p.y * k) + words.tall + Math.round(2 * pad.y * k),
+      },
+    };
   return paper(
     Math.round(p.x * k),
     Math.round(p.y * k),
@@ -283,19 +330,6 @@ async function answered(a: Answer, k: number, dir: string): Promise<Layer> {
     .toBuffer();
   return { input, left: px(a.x), top: px(a.y), width: px(a.w), height: h };
 }
-// Only the part of a layer inside the W × H picture (a box may start left of the page's top-left), none when none is
-async function inside(l: Layer, W: number, H: number): Promise<OverlayOptions[]> {
-  const x0 = Math.max(0, l.left),
-    y0 = Math.max(0, l.top),
-    width = Math.min(l.left + l.width, W) - x0,
-    height = Math.min(l.top + l.height, H) - y0;
-  if (width <= 0 || height <= 0) return [];
-  if (width === l.width && height === l.height) return [{ input: l.input, left: l.left, top: l.top }];
-  const cut = { left: x0 - l.left, top: y0 - l.top, width, height },
-    input = await sharp(l.input).extract(cut).png().toBuffer();
-  return [{ input, left: x0, top: y0 }];
-}
-
 // A box's words set at k picture px a page px, in the typed words' face or another's (from typed and typedHeight)
 const setText = (t: Omit<Typed, 'x' | 'y'>, k: number, face: Face = TEXT) =>
   setMarkup(`<span foreground="${t.color}">${escaped(t.text)}</span>`, t.w, k, face);
@@ -303,9 +337,11 @@ const setText = (t: Omit<Typed, 'x' | 'y'>, k: number, face: Face = TEXT) =>
 // (an answer typed under a question: bookslips.ts.)
 export async function typedHeight(t: Typed) {
   const { info } = await setText(t, 1);
-  const lines = Math.max(1, Math.round((info.height + (TEXT.line - FACE_LINE) * TEXT.size) / (TEXT.line * TEXT.size)));
-  return lines * TEXT.line * TEXT.size;
+  return linesOf(info.height) * TEXT.line * TEXT.size;
 }
+// How many lines words set h page px tall take
+const linesOf = (h: number) =>
+  Math.max(1, Math.round((h + (TEXT.line - FACE_LINE) * TEXT.size) / (TEXT.line * TEXT.size)));
 
 // A scrap as the book tapes it (HQ's drawScrap) at k picture px a page px: its picture in a white border, the tape
 // across its top edge (an agent's drawing neither: its lines straight on the page.), turned by its tilt about its middle

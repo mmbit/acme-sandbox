@@ -408,17 +408,31 @@ test('expedited work merges on its checks: no round before it goes live unless i
   cancelOpenWork();
   // Merged on its checks, its pull request stays open for the review that follows: live already.
   const merged = h.ended({ agent: 'bolt', engine: 'claude', expedite: true });
-  h.storedPr(993, merged, 'open', [], { round: 1 });
-  h.db.prepare('update prs set expedited = 1 where number = 993').run();
+  h.storedPr(993, merged, 'open', [], { round: 1, expedited: true });
   h.queue({ agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 993, round: 1, stage: 'triage' });
   const live = forecast(993);
   assert.ok(live.seen.get(merged)!.merged! <= live.input.now, 'merged already');
   cancelOpenWork();
-  // Its push didn't merge on them (its checks failed): its round stands before its merge, as any other's.
+  // A finished one whose push is in review, not merged: its round stands before its merge, as any other's.
   const reviewed = h.ended({ agent: 'bolt', engine: 'claude', expedite: true });
   h.storedPr(994, reviewed, 'open', [], { round: 1 });
   h.queue({ agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 994, round: 1, stage: 'ruling' });
   const held = forecast(994);
   assert.equal(held.seen.get(reviewed)!.merged, held.input.now + MINUTE, 'after its ruling');
+  cancelOpenWork();
+  // A running one whose pull request changes its own gates and tests waits for its round too (review.ts heldForReview;
+  // what HQ shows the board, its other hold, is screens.test's).
+  const ownChecks = h.queue({ agent: 'bolt', engine: 'claude', expedite: true });
+  const running = await h.claimJob(ownChecks);
+  h.storedPr(995, ownChecks, 'open', ['package.json'], { round: 1, sha: 'e'.repeat(40) });
+  const ruling = h.queue({ agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 995, round: 1, stage: 'ruling' });
+  const { input, sizes } = forecast(995, [ownChecks]);
+  sizes.set(ruling, { agent_ms: 2 * MINUTE });
+  assert.equal(
+    play(input, sizes).get(ownChecks)!.merged,
+    input.now + 2 * MINUTE,
+    'after its ruling, not on its checks',
+  );
+  await h.finish(running);
   cancelOpenWork();
 });

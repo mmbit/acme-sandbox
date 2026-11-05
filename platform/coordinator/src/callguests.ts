@@ -18,6 +18,11 @@
 //   - Each mark on the call's page, theirs or the board's from any screen, reaches the call's agent as it rests, with who
 //     drew it (markForVoice, through HQ's calldraw.js and the voice line).
 //   - The call ended, their session and the page close to them: the page goes in with the call, as every call's does.
+//   - The board can leave the call to them (HQ's Leave, the voice line's 'leave'): the line holds it, and their room shows
+//     a call bar (bookguestcall.js) that says again that the agent is an AI and the call is written down, and carries
+//     the call on their own device, its microphone and speaker, with a one-time ticket for their session (voiceTicket,
+//     the line's /voice/guest). While the board is away (callaway.ts), the call's own token reaches no HQ route: a guest
+//     is never the board. The board calling the agent again comes back into the call, and its hang-up ends it.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { db } from './db.ts';
@@ -30,17 +35,20 @@ import { serverKey } from './secrets.ts';
 import * as people from './ink/sketchpeople.ts';
 import { findAgent } from './jobs.ts';
 import { boardLanguage } from './language.ts';
+import { brand } from './company.ts';
 import { BOARD } from './ink/book.ts';
 import { liveCall, pageFor } from './ink/callnotes.ts';
-import { changed, pageOf, pageRow, shut } from './notebook.ts'; // (changed)
+import { pageOf, pageRow, shut } from './notebook.ts';
 import { partsOf, row } from './notebookgroups.ts';
 import { heightFor, UNIT_W } from '../../hq/shell/ink/scrapunit.js';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { render } from './ink/bookrender.ts';
 import { DIR } from './pagescraps.ts';
-import { heard } from './ink/bookheard.ts';
+import { pointerOf } from './ink/callpointers.ts';
+import { replySnip, versionSlip } from './ink/bookpick.ts';
 import type { Refused } from './pagechecks.ts';
 import * as prototypes from './callprototypes.ts';
+import { boardAway, ticketFor } from './callaway.ts';
 
 type CallGuest = { id: number; call: number; guest: string; link: string; added: string };
 
@@ -150,6 +158,15 @@ const scanByName = (name: string) => {
   return id ? (db.prepare('select * from call_scans where id = ?').get(Number(id)) as Scan | undefined) : undefined;
 };
 
+// POST /guest/scan/voice: a ticket for the line's /voice/guest, for the scan's session while the board is away from its
+// call (callaway.ts). 409: not now (the board is on it, or the call is over).
+function voiceTicket(req: IncomingMessage, res: ServerResponse) {
+  const s = scanOf(req),
+    ticket = s && boardAway(s.call) ? ticketFor(s) : null;
+  res.writeHead(ticket ? 200 : 409, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.end(JSON.stringify(ticket ? { ticket } : { error: 'not now' }));
+}
+
 // GET /guest/scan/<lang>/<token>: the join page (a device whose session is on this call goes straight to its page);
 // POST: the name, and a new identity for this call. GET /guest/scan/join.js: the page's script. Any other address, or a
 // call that isn't live, opens nothing. (server.ts refuses a POST from any other origin, as for all of /guest/.)
@@ -159,6 +176,7 @@ export async function joinPage(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-cache' });
     return res.end(JOIN_JS);
   }
+  if (path === '/guest/scan/voice' && req.method === 'POST') return voiceTicket(req, res);
   const m = /^\/guest\/scan\/([a-z]{2})\/([A-Za-z0-9_-]{43})$/.exec(path);
   const c = m ? callOf(m[1], m[2]) : undefined;
   if (!m || !c || (req.method !== 'GET' && req.method !== 'POST')) return guests.gone(res);
@@ -307,11 +325,12 @@ export function onCallPage(page: number, name: string) {
 export function notebookFor(name: string, notebook: number) {
   const on = callsOf(name).find(c => c.page!.notebook === notebook);
   if (!on) return undefined;
-  const agent = agentName(on.g.call);
+  const agent = agentName(on.g.call),
+    lang = scanByName(name)?.lang ?? 'en';
   const page = { ...pageOf(pageRow(on.page!.id, BOARD)!), canSend: false, canUndo: false, readonly: false };
   return {
     id: notebook,
-    name: WORDS[scanByName(name)?.lang ?? 'en'].title(agent),
+    name: WORDS[lang].title(agent),
     kind: 'call',
     archived: false,
     state: 'open',
@@ -319,38 +338,47 @@ export function notebookFor(name: string, notebook: number) {
     pages: [page],
     // (the call's prototypes, newest first: the room's card for each new one.)
     prototypes: prototypes.listFor(on.g.call),
+    // (the call's agent, whether the board has left it to its guests, and the privacy page the partner join page links
+    // (brand.yaml callsOut.privacy): the room's call bar, bookguestcall.js.)
+    call: { agent, away: boardAway(on.g.call), privacy: brand().callsOut?.privacy?.[lang] ?? null },
   };
 }
 
 // GET /api/voice/drawn?id=&call=: a mark on the live call's notes page, for its agent as it rests: who drew it (the
-// board, or its guest by name), its words, and its picture (the mark's unit, as the page has it). 404: not a mark of
-// the board's or its guest's on that call's page. The agent has heard it as it is: its seen tick shows
-// (ink/bookheard.ts).
+// board, or its guest by name), its words, and its picture (the mark's unit, as the page has it). A pointer on the
+// agent's own (ink/callpointers.ts: ink on its scrap, a reply on its version) says so (pointer: the unit it's on, and
+// the version), its picture that scrap or version with the ink over it. 404: not a mark of the board's or its guest's on
+// that call's page. (pointer)
 export async function markForVoice(id: number, call: number) {
   const c = liveCall(call),
     p = c && pageFor(call),
-    g = row(id);
-  if (!c || !p || !g || g.page !== p.id || g.deleted !== null || g.parent !== null || g.by === c.agent) return 404;
-  const guest = g.by === BOARD ? null : people.guestOf(g.by);
-  if (g.by !== BOARD && !guest) return 404;
+    g = row(id),
+    pointer = g && pointerOf(g.id);
+  if (!c || !p || !g || g.page !== p.id || g.deleted !== null) return 404;
+  if (!pointer && (g.parent !== null || g.by === c.agent)) return 404;
+  const by = pointer?.by ?? g.by,
+    guest = by === BOARD ? null : people.guestOf(by);
+  if (by !== BOARD && !guest) return 404;
   const parts = partsOf(g),
     box = boxOf(parts),
     typed = (parts.texts as { text: string }[]).map(t => t.text).join(' ');
+  const version = versionSlip(g.answers);
+  const snip = version && (await replySnip(version.id, g.frame && JSON.parse(g.frame), parts.ink as never));
   const drawn = {
     w: box ? Math.max(UNIT_W, box.x + box.w) : UNIT_W,
-    h: heightFor(parts, g.h!),
+    h: heightFor(parts, g.h ?? 0),
     ink: parts.ink,
     scraps: parts.pictures,
     texts: parts.texts,
   };
-  const png = await render(drawn as Parameters<typeof render>[0], DIR);
-  heard(g, c.agent);
-  changed(p.notebook, p.id);
+  const png = snip ? snip.clean : await render(drawn as Parameters<typeof render>[0], DIR);
   return {
     n: g.id,
     who: guest ? guest.name : 'Board',
-    words: g.words || typed,
+    // (on the agent's own scrap, its words are the agent's: the board's mark has none)
+    words: pointer && !pointer.whole ? '' : g.words || typed,
     updated: g.updated,
+    ...(pointer && { pointer: { on: g.parent ?? g.id, version: version?.version ?? null } }),
     picture: { type: 'image/png', data: png.toString('base64') },
   };
 }

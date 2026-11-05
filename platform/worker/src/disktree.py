@@ -31,6 +31,18 @@ class DiskTree:
             raise
 
     def measure(self):
+        # One transaction a measure: a commit for each write took a push's first scan 12 to 15 s on a busy server, 5 to 7
+        # in one. A measure that fails ends its tree (diskprobe.py), so nothing reads what it rolls back.
+        self.index.connection.execute("begin")
+        try:
+            self.measure_index()
+        except BaseException:
+            self.index.connection.rollback()
+            raise
+        self.index.connection.execute("commit")
+        return self.index.bytes
+
+    def measure_index(self):
         self.watch.drain(self.index)
         # Bounds cover every root. Release stale charges everywhere before any directory can add entries.
         for root in self.roots:
@@ -38,7 +50,6 @@ class DiskTree:
         for root in self.roots:
             self.measure_root(root)
         self.watch.drain(self.index)
-        return self.index.bytes
 
     def measure_root(self, root, reconcile=False):
         anchored = anchor(root)

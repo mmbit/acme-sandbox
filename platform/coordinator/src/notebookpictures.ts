@@ -1,7 +1,7 @@
 // A notebook group's pictures (notebookgroups.ts): uploaded to an open page for a group there to place, kept in the
 // book's files as `<page>-g-<random>`, served only to the person whose page it was uploaded to.
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as pictures from './pictures.ts';
 import { keepFile, refuse, reply } from './uploads.ts';
@@ -46,6 +46,12 @@ export const keepPicture = (page: number, p: { type: string; clean: Buffer }) =>
   const file = `${page}-g-${randomBytes(4).toString('hex')}.${p.type === 'image/png' ? 'png' : 'jpg'}`;
   keepFile(`${DIR}/${file}`, p.clean);
   return file;
+};
+// A copy of a picture as one of the page's own (ours): a scrap handed or a page given to someone else, whose page it is
+export const copyPicture = (page: number, file: string) => {
+  const to = `${page}-g-${randomBytes(4).toString('hex')}.${file.endsWith('.png') ? 'png' : 'jpg'}`;
+  copyFileSync(`${DIR}/${file}`, `${DIR}/${to}`);
+  return to;
 };
 // A group picture's file is one of the person's: uploaded to a page of their book
 export const ours = (file: unknown, who: string | null) => {

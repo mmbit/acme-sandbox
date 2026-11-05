@@ -37,6 +37,7 @@ import { opensAt } from './bookunits.js';
 import { isCanvas } from './sketchcanvas.js';
 import { remember, remembered, shownPage } from './bookplace.js';
 import { wetHooks } from './bookwet.js';
+import { mountScrapOpen } from './bookscrapopen.js';
 
 const HTML = `<div class="bk-pages">
   <div class="bk-desk"><div class="bk-world"></div><canvas class="bk-wet"></canvas><canvas class="bk-wet bk-wet-over"></canvas><p class="bk-lost" hidden></p></div>
@@ -58,13 +59,14 @@ export function mountPages(paper, { dev, calls = null, shelf = null }) {
     far: () => book.zoom.level() !== 'page',
     zoomed: () => book.controls?.update(),
     undo: () => stepped(book, undo),
+    redo: () => stepped(book, redo),
   });
   const table = (book.table = panning(book.desk, book, { drawing: () => book.ink.drawing }));
   book.ink = pen(book.desk, paper.querySelector('.bk-wet'), {
     ...wetHooks(book, e => drawable(book, e, table)), // (laid in the page under the pen: bookwet.js)
     // (the wet line as thick on screen as it dries at this zoom)
     ink: () => ({ ...book.inking, size: book.inking.size * book.scale }),
-    end: stroke => dried(book, stroke, { lay: () => lay(book), inView: (i, box) => inView(book, i, box) }),
+    end: stroke => dried(book, stroke, { lay: () => lay(book) }),
     // (its dry ink is the page's canvases, which a call's watch-along records)
     pictured: true,
   });
@@ -77,6 +79,8 @@ export function mountPages(paper, { dev, calls = null, shelf = null }) {
   book.zoom = mountFar(book, paper, { goTo, openNotebook, pagesAgain }); // (the overview.)
   book.head = mountHead(book); // (the title on the view.)
   book.controls = mountControls(book, controlsOf(book));
+  // (a scrap picked up off the grid to draw on.)
+  book.scrap = mountScrapOpen(book, { viewFor: page => viewFor(book, page), lay: () => lay(book) });
   // (the mouse's tools, once they're there: booktools.js)
   import('./booktools.js').then(m => (book.tools = m.mountTools(book, paper, toolHooks(book))));
   // (the store changed a page: read again where it shows, the notebook's pages again when it's one not here)
@@ -94,7 +98,7 @@ export function mountPages(paper, { dev, calls = null, shelf = null }) {
 // What the book asks of its pages (book.js, booknewest.js)
 const asked = book => ({
   undo: book.undo,
-  redo: () => stepped(book, redo),
+  redo: book.redo,
   page: () => shownPage(book),
   show: id => show(book, id),
   find: at => find(book, at),
@@ -223,8 +227,8 @@ export const newestOf = pages => landingPage(pages, shut)?.id ?? pages.at(-1)?.i
 // A page as the book keeps it while it shows: its summary, and its groups' ink, pictures and typed words once read
 function viewFor(book, page) {
   const v = pageView(page, book.away);
-  // (relay: a unit's room dragged; pinned: a sketch page's units placed, bookunits.js)
-  Object.assign(v, { dev: book.dev, relay: () => lay(book), pinned: () => changed(book, page) });
+  // (relay: a unit's room dragged.)
+  Object.assign(v, { dev: book.dev, relay: () => lay(book) });
   v.el.hidden = true;
   book.world.append(v.el);
   v.place(contentOf(book).w); // (laid at the paper's width once it has one: resized)

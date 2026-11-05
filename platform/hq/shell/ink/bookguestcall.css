@@ -1,0 +1,62 @@
+/* The guest room's call bar (bookguestcall.js): a card in the top layer at the screen's top left, once the board has
+   left the call to its guests, and while a guest's device carries it. */
+.bk-guest-call {
+  position: fixed;
+  inset: calc(16px + var(--sat, 0px)) auto auto calc(16px + var(--sal, 0px));
+  margin: 0;
+  box-sizing: border-box;
+  width: min(92vw, 340px);
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgb(0 0 0 / 0.12);
+  background: #fffdf8;
+  color: #23202b;
+  font:
+    15px/1.4 system-ui,
+    sans-serif;
+  box-shadow: 0 6px 24px rgb(20 28 45 / 0.18);
+}
+.bk-guest-call p {
+  margin: 0 0 8px;
+}
+.bk-guest-call .bk-gc-notice,
+.bk-guest-call .bk-gc-mic {
+  font-size: 13px;
+  opacity: 0.8;
+}
+.bk-guest-call .bk-gc-said {
+  font-weight: 600;
+}
+.bk-guest-call button {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  text-align: center;
+  font-weight: 600;
+  cursor: pointer;
+  background: #23202b;
+  color: #fffdf8;
+}
+.bk-guest-call button:focus-visible {
+  outline: 2px solid #3a6ff7;
+  outline-offset: 2px;
+}
+.bk-guest-call .bk-gc-hangup {
+  background: #d23c3c;
+}
+.bk-guest-call .bk-gc-state span:last-child {
+  opacity: 0.7;
+}
+.bk-guest-call .bk-gc-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #2fa85a;
+  vertical-align: 1px;
+}

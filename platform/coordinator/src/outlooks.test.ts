@@ -700,3 +700,33 @@ test("an expedited task's deliverable finishes with its work and deploy, past a 
   assert.equal(played.merged, played.done, 'it merges on its checks, which its run ends with');
   assert.equal(o.finish, played.done! + f.snapshot.deployLagMs);
 });
+
+test("a continuation under way put in a stopped task's place plays to its real finish", async () => {
+  const session = thread('continued');
+  const stopped = queued(session),
+    redo = queued(session);
+  db.prepare("update jobs set status = 'stopped', started = ?, finished = ? where id = ?").run(
+    new Date(T).toISOString(),
+    new Date(T + MINUTE).toISOString(),
+    stopped,
+  );
+  // (queued as it was being stopped, and started at once: urgent)
+  db.prepare("update jobs set status = 'running', started = ?, created = ? where id = ?").run(
+    new Date(T + MINUTE / 2).toISOString(),
+    new Date(T + MINUTE / 4).toISOString(),
+    redo,
+  );
+  assert.equal(forecast.refresh(Date.now()).threads.get(session)!.eta, null, 'held by the stopped task');
+  const takeover = await import('./takeover.ts');
+  assert.deepEqual(takeover.stopFor(stopped, redo, 'wren', 'it goes on with the work'), {
+    ok: true,
+    running: false,
+    replacement: redo,
+    ended: true,
+  });
+  const f = forecast.refresh(Date.now());
+  const o = f.threads.get(session)!;
+  assert.notEqual(o.eta, null, JSON.stringify(o.chain));
+  assert.equal(o.eta, f.usual.get(redo)!.merged);
+  assert.deepEqual(o.jobs, [redo]);
+});

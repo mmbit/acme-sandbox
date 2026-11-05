@@ -1,5 +1,6 @@
-// node --test src/ink/bookassign.test.ts   (a scrap on the board's Asks page handed to a guest from the short list: the
-// guest's copy on their Asks page kept in step both ways; never to an agent, nor from a sketch page.)
+// node --test src/ink/bookassign.test.ts   (a scrap of the board's, on any page, handed to a guest invited to its book
+// or its project: the guest's copy on their Asks page kept in step both ways, answered only by their Answer; never to
+// an agent.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from '../harness.ts';
@@ -89,7 +90,11 @@ test('a scrap handed to a guest lands on their Asks page, and what either side w
   const people = (await h.board('/api/notebooks/people')).body;
   const femke = people.everyone.find((p: any) => p.name === GUEST);
   const book = ((await h.board('/api/book/people')).body as any[]).find(p => p.name === GUEST);
-  assert.deepEqual(femke, { to: book.who, name: GUEST, kind: 'guest' }, 'the guest as their own book knows them');
+  assert.deepEqual(
+    femke,
+    { to: book.who, name: GUEST, kind: 'guest', initial: 'F', colour: book.colour },
+    'the guest as their own book knows them',
+  );
   assert.ok(
     people.everyone.every((p: any) => p.kind === 'guest'),
     'guests only, never an agent',
@@ -110,13 +115,23 @@ test('a scrap handed to a guest lands on their Asks page, and what either side w
   assert.equal(textOf(copy), 'Tagline OK?');
   assert.ok((await groupsOn(original.page)).some((g: any) => g.id === original.id));
 
-  // their answer, written on the copy, shows on the board's scrap, with a tick on their tag
-  const answered = await guest(`${api}/groups/edit`, { id: copy.id, since: copy.updated, ink: [stroke] });
+  assert.deepEqual(copy.question, { answered: false }, 'a question on their side');
+  assert.equal((await groupsOn(original.page)).find((g: any) => g.id === original.id).question, null);
+
+  // what they write on the copy shows on the board's scrap, still out with them until they press Answer
+  const written = await guest(`${api}/groups/edit`, { id: copy.id, since: copy.updated, ink: [stroke] });
+  assert.equal(written.status, 200, JSON.stringify(written.body));
+  const out = (await groupsOn(original.page)).find((g: any) => g.id === original.id);
+  assert.equal(out.ink.length, 1);
+  assert.equal(out.ink[0].color, stroke.color);
+  assert.deepEqual(out.assigned, [{ ...femke, answered: false }], 'writing answers nothing');
+  const answered = await guest(`${api}/groups/answer`, { id: copy.id });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  assert.deepEqual(answered.body.group.question, { answered: true });
   const mirrored = (await groupsOn(original.page)).find((g: any) => g.id === original.id);
-  assert.equal(mirrored.ink.length, 1);
-  assert.equal(mirrored.ink[0].color, stroke.color);
   assert.deepEqual(mirrored.assigned, [{ ...femke, answered: true }]);
+  // (only a copy handed to them is answered)
+  assert.equal((await h.board('/api/notebooks/groups/answer', { id: original.id })).status, 409);
 
   // and the board's words, written again, show on theirs
   const edited = await h.board('/api/notebooks/groups/edit', {
@@ -158,6 +173,8 @@ test('two guests handed one scrap, writing one after the other, both keep their 
     ink: [...fresh.ink, blue],
   });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  assert.equal((await a.guest(`${api}/groups/answer`, { id: copyA.id })).status, 200);
+  assert.equal((await b.guest(`${api}/groups/answer`, { id: copyB.id })).status, 200);
 
   const board = (await groupsOn(original.page)).find((g: any) => g.id === original.id);
   for (const side of [board, await copyFor(a.guest, a.notebook), await copyFor(b.guest, b.notebook)])
@@ -220,7 +237,7 @@ test("a picture added, moved, replaced or removed on a guest's copy is on the bo
   assert.deepEqual((await boardSide()).pictures, []);
 });
 
-test('a scrap goes to no agent, and from no sketch page', async () => {
+test('a scrap goes to no agent, and from any page, a sketch page too', async () => {
   await invited(GUEST);
   const original = await boardNote('Which colour for the button?');
   const agent = await h.board('/api/notebooks/groups/assign', { id: original.id, to: 'agent:lark' });
@@ -228,8 +245,94 @@ test('a scrap goes to no agent, and from no sketch page', async () => {
   assert.equal(db.prepare('select owner from notebook_groups where id = ?').get(original.id)!.owner, null);
   const sketch = await boardNote('Hi Lyra', currentPage(mine().id));
   const fromSketch = await h.board('/api/notebooks/groups/assign', { id: sketch.id, to: await toOf(GUEST) });
-  assert.equal(fromSketch.status, 409, JSON.stringify(fromSketch.body));
-  assert.deepEqual((await groupsOn(sketch.page)).find((g: any) => g.id === sketch.id).assigned, []);
+  assert.equal(fromSketch.status, 200, JSON.stringify(fromSketch.body));
+  assert.deepEqual(
+    (await groupsOn(sketch.page)).find((g: any) => g.id === sketch.id).assigned.map((p: any) => [p.name, p.answered]),
+    [[GUEST, false]],
+  );
+});
+
+test("a page's people are the guests invited to its book; the board's own book offers every guest", async () => {
+  const a = await invited('Dirk Meijer'),
+    b = await invited('Esther Pool');
+  const page = asksPage(a.notebook).id;
+  const own = (await h.board(`/api/notebooks/people?page=${page}`)).body;
+  assert.deepEqual(
+    own.everyone.map((p: any) => p.name),
+    ['Dirk Meijer'],
+  );
+  const mine_ = (await h.board(`/api/notebooks/people?page=${asksPage(mine().id).id}`)).body.everyone;
+  for (const name of ['Dirk Meijer', 'Esther Pool'])
+    assert.ok(
+      mine_.some((p: any) => p.name === name),
+      name,
+    );
+  assert.ok(
+    mine_.every((p: any) => p.kind === 'guest'),
+    'never an agent',
+  );
+  void b;
+});
+
+test("a guest's own book's Asks page gathers the open questions handed to them in their other books, each where it is", async () => {
+  const own = await invited('Gina Smit');
+  const other = await h.board('/api/notebooks/guests', {
+    kind: 'invited',
+    name: 'Gina, second book',
+    people: [{ name: 'Gina Smit', email: 'gina@example.org' }],
+  });
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  const book = other.body.notebook.id as number;
+  const original = await boardNote('Which photo?', asksPage(book).id);
+  assert.equal(
+    (await h.board('/api/notebooks/groups/assign', { id: original.id, to: await toOf('Gina Smit') })).status,
+    200,
+  );
+  const copy = await copyFor(own.guest, book);
+  const pages = (await own.guest(`${api}/pages?notebook=${own.notebook}`)).body.pages;
+  const asks = pages.find((p: any) => p.kind === 'asks');
+  assert.ok(asks, 'an Asks page in their own book, made with it');
+  const read = async () => (await own.guest(`${api}/pages/groups?page=${asks.id}`)).body.groups;
+  const [gathered] = await read();
+  assert.equal(gathered.id, copy.id, 'the copy itself, not another');
+  assert.deepEqual(gathered.elsewhere, { page: copy.page, label: 'Asks' });
+  assert.equal(gathered.page, copy.page, 'it stays on its own page');
+
+  // past the other book's ends (not swept yet: not revoked), its copy is no longer gathered
+  db.prepare("update notebook_guests set ends = '2000-01-01T00:00:00.000Z' where notebook = ?").run(book);
+  assert.deepEqual(await read(), [], 'the guest room refuses that book, and so does the gather');
+  db.prepare('update notebook_guests set ends = null where notebook = ?').run(book);
+
+  // a new scrap after it is at the Asks page's own end; answered, it's gathered no more
+  const made = await own.guest(`${api}/groups/create`, { page: asks.id, after: copy.id, empty: true });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  assert.equal(made.body.page, asks.id);
+  assert.equal((await own.guest(`${api}/groups/answer`, { id: copy.id })).status, 200);
+  assert.deepEqual(
+    (await read()).map((g: any) => g.id),
+    [made.body.id],
+  );
+});
+
+test('a new empty scrap goes in a gap between two, or first, on any page', async () => {
+  const page = asksPage(mine().id).id;
+  const one = await boardNote('one', page),
+    two = await boardNote('two', page);
+  const refused = await h.board('/api/notebooks/groups/create', { page, after: one.id });
+  assert.equal(refused.status, 400, 'empty only when asked for');
+  const between = await h.board('/api/notebooks/groups/create', { page, after: one.id, empty: true });
+  assert.equal(between.status, 200, JSON.stringify(between.body));
+  const first = await h.board('/api/notebooks/groups/create', { page, after: 'start', empty: true });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const order = (await groupsOn(page)).map((g: any) => g.id);
+  assert.deepEqual(
+    order.filter((id: number) => [one.id, two.id, between.body.id, first.body.id].includes(id)),
+    [first.body.id, one.id, between.body.id, two.id],
+  );
+  const sketch = currentPage(mine().id);
+  const onSketch = await h.board('/api/notebooks/groups/create', { page: sketch, empty: true });
+  assert.equal(onSketch.status, 200, JSON.stringify(onSketch.body));
+  assert.deepEqual([onSketch.body.ink, onSketch.body.texts, onSketch.body.pictures], [[], [], []]);
 });
 
 test('a scrap goes only to someone on the list, from an open page', async () => {

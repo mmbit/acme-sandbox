@@ -1,0 +1,94 @@
+/* The opened scrap's own keys beside Klaar (bookscrapkeys.js): Beantwoord in the brand's lit colour, the one key that
+   sends; ⋯ a small round key, its three dots in the keys' ink. Each a Pencil's width (44 px at least). Its menu is a
+   list card (bookcard.css), Scrap weggooien last under a rule, in a warning's red; an agent's scrap asks there once
+   more. */
+.bk-scrap-key {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 22px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    scale 0.12s ease,
+    background 0.12s ease;
+}
+.bk-scrap-key:active {
+  scale: 0.94;
+}
+.bk-scrap-key:focus-visible {
+  outline: 2px solid var(--bk-ui-ink);
+  outline-offset: 2px;
+}
+.bk-scrap-answer {
+  padding: 0 18px;
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: var(--shadow-sm, var(--bk-lift));
+}
+.bk-scrap-answer:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.bk-scrap-more {
+  gap: 4px;
+  border: var(--bk-ui-border);
+  background: var(--bk-ui-bg);
+  color: var(--bk-ui-ink);
+}
+.bk-scrap-more i {
+  width: 4.5px;
+  height: 4.5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* the menu: rows of words only */
+#book > .bk-scrap-menu {
+  min-width: 220px;
+}
+.bk-list.bk-scrap-menu .bk-row {
+  grid-template-columns: 1fr;
+  min-height: 52px;
+  padding: 6px 14px;
+}
+.bk-list.bk-scrap-menu .bk-row .bk-name {
+  font-size: 17px;
+}
+.bk-scrap-menu .bk-row[data-act='drop'] {
+  color: var(--bk-ui-danger, #b3261e);
+}
+.bk-scrap-menu > .bk-row[data-act='drop']:not(:first-child) {
+  margin-top: 6px;
+  position: relative;
+}
+.bk-scrap-menu > .bk-row[data-act='drop']:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: -5px;
+  border-top: 1.5px solid var(--bk-ui-line);
+}
+.bk-scrap-ask {
+  max-width: 260px;
+  margin: 10px 14px 8px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.bk-scrap-choose {
+  display: flex;
+  gap: 6px;
+}
+.bk-scrap-choose > .bk-row {
+  flex: 1;
+  justify-items: center;
+}

@@ -15,13 +15,38 @@ export function stepLines(lines, { open = new Set(), time, text = l => esc(l.tex
     )
     .join('');
 }
+// Redraw what scroller holds (redraw(read)) with the line read where it stood on screen: the first keyed line (data-k)
+// in view, its foot below the scroller's top, in a list that starts at or above that top. Above a list's start, what's
+// read is what's above it, which a line coming in below doesn't move: nothing is kept. read: that line before the
+// redraw, if there was one.
+export function keepRead(scroller, redraw) {
+  const box = scroller.getBoundingClientRect(),
+    read = [...scroller.querySelectorAll('li[data-k]')].find(li => {
+      const r = li.getBoundingClientRect();
+      return r.bottom > box.top && r.top < box.bottom && li.parentElement.getBoundingClientRect().top <= box.top;
+    }),
+    at = read?.getBoundingClientRect().top;
+  redraw(read);
+  const again = read && [...scroller.querySelectorAll('li[data-k]')].find(li => li.dataset.k === read.dataset.k);
+  if (again) scroller.scrollTop += again.getBoundingClientRect().top - at;
+}
 // Fill ol with lines, unless it holds them already: opened lines stay open, and it stays at its bottom (the newest) as
-// lines come in, unless it was scrolled up to read. first: it's filled for the first time, so it goes to its bottom.
-export function fillSteps(ol, lines, { time, text, empty, first = false }) {
+// lines come in, unless it was scrolled up to read: then the line read stays where it is, and none drops off above it.
+// first: it's filled for the first time, so it goes to its bottom. last: at most that many of the newest, at its
+// bottom.
+export function fillSteps(ol, lines, { time, text, empty, first = false, last = Infinity }) {
+  const shown = [...ol.children],
+    bottom = first || ol.scrollHeight - ol.scrollTop - ol.clientHeight < 24,
+    from = bottom ? -1 : lines.findIndex(l => stepKey(l) === shown[0]?.dataset.k);
+  lines = lines.slice(from < 0 ? Math.max(0, lines.length - last) : from);
   const keys = lines.map(stepKey);
-  if ([...ol.children].map(li => li.dataset.k).join('\n') === keys.join('\n')) return;
-  const bottom = first || ol.scrollHeight - ol.scrollTop - ol.clientHeight < 24,
-    open = new Set([...ol.querySelectorAll('li.open')].map(li => li.dataset.k));
-  ol.innerHTML = lines.length ? stepLines(lines, { open, time, text }) : `<li class="aside">${esc(empty)}</li>`;
-  if (bottom) ol.scrollTop = ol.scrollHeight;
+  if (shown.map(li => li.dataset.k).join('\n') === keys.join('\n')) return;
+  const draw = read => {
+    const open = new Set([...ol.querySelectorAll('li.open')].map(li => li.dataset.k));
+    if (read && read === shown.at(-1)) open.add(read.dataset.k); // (the newest, in full, read: it stays in full)
+    ol.innerHTML = lines.length ? stepLines(lines, { open, time, text }) : `<li class="aside">${esc(empty)}</li>`;
+  };
+  if (!bottom) return keepRead(ol, draw);
+  draw();
+  ol.scrollTop = ol.scrollHeight;
 }

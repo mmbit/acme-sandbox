@@ -14,12 +14,18 @@ HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (prototype: a throwaway page of the agent's own, kept with the call, callnotes.py.)
 # (design_session, raise_hand: a design session and the agent's raised hand, design.py.)
 # (say_nothing: the agent passes its turn, design.py.)
-CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_note', 'design_session', 'draw', 'draw_picture', 'drive', 'estimate',
+# (note: the agent's own words for its follow-up, never spoken.)
+# (activity: a job's or an agent's recent activity, hq_tools.py.)
+# (page: the CEO's page, hq pad add.)
+CALL_TOOLS = ['activity', 'add', 'ask_to_see', 'call', 'change_note', 'design_session', 'draw', 'draw_picture', 'drive', 'estimate',
               'eta', 'expedite', 'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_notes',
-              'name_voice', 'open_work', 'prototype', 'raise_hand', 'reach', 'read_notes', 'replace', 'report',
-              'save_voice', 'say_nothing', 'screen',
+              'name_voice', 'note', 'open_work', 'page', 'prototype', 'raise_hand', 'reach', 'read_notes', 'replace',
+              'report', 'save_voice', 'say_nothing', 'screen',
               'search', 'sketch', 'title_notes', 'try', 'waiting', 'when', 'write_down']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
+# (a guest carrying the call the board left: hq_tools.py GUEST_TOOLS.)
+GUEST_TOOLS = ['change_note', 'draw_picture', 'hang_up', 'mark_notes', 'note', 'prototype', 'read_notes', 'say_nothing',
+               'title_notes', 'try']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')
 
@@ -60,6 +66,11 @@ TOOLS = cli_tools(CALL_TOOLS, 'Read,Grep,Glob,WebSearch,WebFetch')
 # A call out to a partner: no built-in tool and nothing of the company's looked up, so an outsider's words can't steer
 # a look-up (house rule 9). Its screen tool shows only the partner's own screen.
 PARTNER = cli_tools(PARTNER_TOOLS, '', 'partner')
+# A guest carrying the board's call once it has left (server.py Call.carried): the same, with the call's own work on its
+# page, so no tool takes the guest's words to the company's files, work or people (house rule 9, charter rule 7). Its
+# briefing is the guest's own, with nothing of the company's state (server.py Agent.start, the coordinator's
+# callguestbrief.ts guestPrompt).
+GUEST = cli_tools(GUEST_TOOLS, '', 'guest')
 
 
 def take_token(environ):
@@ -76,7 +87,7 @@ def hq_tools_work():
     """Whether hq_tools.py starts here and offers the call's tools (the voice line's start-up check: the log says if
     not)."""
     try:
-        return listed() == CALL_TOOLS and listed('partner') == PARTNER_TOOLS
+        return listed() == CALL_TOOLS and listed('partner') == PARTNER_TOOLS and listed('guest') == GUEST_TOOLS
     except Exception:
         return False
 
