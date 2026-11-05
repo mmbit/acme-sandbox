@@ -13,6 +13,8 @@ import { readsCustomerData, type Reader } from '../jobs.ts';
 import { callAccess, customerCall, keysCall } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import { ownerOf } from './sketchpeople.ts';
+import { listFor } from '../callprototypes.ts';
+import { hasGroups } from '../notebookorder.ts';
 import { cutsOf, piecesFor } from '../../../hq/shell/ink/booksharefiles.js';
 
 // ---------------------------------------------------------------- agents: hq sketches, hq sketch <id>
@@ -35,7 +37,17 @@ export async function getForAgent(id: number, reader: Reader) {
   if (!file) return 404; // (deleted while it was drawn)
   await latency.exclude(scrubbed()); // (its call's summary read after a save's scrub: db.ts scrubSaved)
   const data = readFileSync(`${DIR}/${file}`).toString('base64');
-  return { ...shownTo(p, reader), from: ownerOf(p.who), picture: { type: 'image/png', data } };
+  // (a call's prototypes by name: their clips on the page show their versions alone, callprototypes.ts clipOn.)
+  const prototypes =
+    p.kind === 'call' && p.call != null
+      ? listFor(p.call).map(v => ({ name: v.name, version: v.version, link: v.link }))
+      : undefined;
+  return {
+    ...shownTo(p, reader),
+    from: ownerOf(p.who),
+    ...(prototypes && { prototypes }),
+    picture: { type: 'image/png', data },
+  };
 }
 // An invited person's own page carries their notes, name and what their screenshots caught (on a tester's checkout,
 // what they typed in), like an outside reviewer's note (feedback.ts readsOutside): read only by roles.customerData and
@@ -120,12 +132,9 @@ async function piecesOf(png: Buffer) {
     ),
   );
 }
-// Whether a page has anything on it: an old book's page its ink and scraps, a Notebook page its units (notebook_groups,
-// where its strokes and scraps columns stay empty: call #262's agent read the practice session's full page as empty).
-const drawnOn = (p: Page) =>
-  !!p.strokes ||
-  JSON.parse(p.scraps).length > 0 ||
-  !!db.prepare('select 1 from notebook_groups where page = ? and parent is null and deleted is null limit 1').get(p.id);
+// Whether a page has anything on it: an old book's page its ink and scraps, a Notebook page its units (its strokes and
+// scraps columns stay empty).
+const drawnOn = (p: Page) => !!p.strokes || JSON.parse(p.scraps).length > 0 || hasGroups(p.id);
 const minute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 const listed = (who: string) =>
   db.prepare(`select ${COLUMNS} from book_pages where who = ? order by updated desc, id desc`).all(who) as Page[];

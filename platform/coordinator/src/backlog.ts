@@ -1,7 +1,7 @@
 // The play's live input: jobs, waits, seats, capacity and measured sizes, review runs and delays.
 // The play itself reads only this snapshot, never the database or the clock.
-import { db, prepared } from './db.ts';
-import { branchUrgent, threadUrgent } from './urgency.ts';
+import { prepared } from './db.ts';
+import { urgentBranches, threadUrgent } from './urgency.ts';
 import { whole, type Parts } from './latency.ts';
 import * as jobs from './jobs.ts';
 import * as pauses from './pauses.ts';
@@ -16,6 +16,7 @@ import { unloop } from './plancycles.ts';
 import { plannerCapacity } from './room.ts';
 import { answerTimes } from './answertime.ts';
 import { holdMerges } from './mergeholds.ts';
+import { mergeWaits } from './mergewait.ts';
 import { deployLag } from './deploytime.ts';
 import { heldWindows } from './inbox.ts';
 import { observedSeats } from './seatobservations.ts';
@@ -137,7 +138,7 @@ export function* orderingInParts(
     rows,
   );
   const itemBranches = itemBranchesOf(rows, placement.place);
-  const { waits, inOrder, branchTask } = placement;
+  const { waits, inOrder } = placement;
   yield 'placing';
   const answers = answerTimes(now),
     lag = deployLag(now);
@@ -152,13 +153,13 @@ export function* orderingInParts(
   const byPr = Map.groupBy(rows, row => row.pr);
   const holdingOf = pauses.holdings(); // (one read for every thread)
   const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, holdingOf(thread)]));
+  const { mergeWait, branchOf, urgency } = rowReads(rows, placement, open, prospective?.id);
   const queued: QueuedJob[] = [];
   for (const [index, row] of rows.entries()) {
-    const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder, branchTask });
+    const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder, mergeWait });
     if (row.id < 0) job.orderId = lastId + index + 1;
-    const at = placedAt(row, placement.place);
-    job.itemWork = itemBranches.has(at.branch);
-    Object.assign(job, urgencyOf(row, at, prospective?.id, placement.place, open));
+    job.itemWork = itemBranches.has(branchOf(index));
+    Object.assign(job, urgency(index));
     job.reviewPlan = rounds(row);
     job.opensReview = job.reviewPlan !== undefined;
     job.placeholder = planned.find(p => p.id === row.id)?.placeholder;
@@ -178,18 +179,38 @@ function placedAt(row: Row, place: Place) {
   return { branch: placed?.branch ?? jobs.workBranchOf(row), follows: placed?.follows };
 }
 
-// A review or fix carries the urgency of work on its branch: work there already (branchUrgent), and open work before it
-// in its thread on the same branch, which joins the branch before the review runs
+// What the rows' play reads once for all of them, rather than a statement a row: each row's place in its thread, the
+// branches with urgent work, and the merge edges of what the rows wait for.
+function rowReads(
+  rows: Row[],
+  placement: ReturnType<typeof threadorder.placing>,
+  open: Map<number, Row>,
+  prospectiveId?: number,
+) {
+  const places = rows.map(row => placedAt(row, placement.place));
+  const urgentOn = urgentBranches(places.map(at => at.branch));
+  const priors = rows.flatMap(row => [
+    ...(row.after ? [row.after] : []),
+    ...(placement.waits.get(row.id) ?? []).map(prior => prior.id),
+  ]);
+  return {
+    mergeWait: mergeWaits(priors, open, placement.branchTask),
+    branchOf: (index: number) => places[index].branch,
+    urgency: (index: number) =>
+      urgencyOf(rows[index], places[index], { prospectiveId, place: placement.place, open, urgentOn }),
+  };
+}
+
+// A review or fix carries the urgency of work on its branch: work there already (urgentOn, urgency.ts urgentBranches),
+// and open work before it in its thread on the same branch, which joins the branch before the review runs
 function urgencyOf(
   row: Row,
   at: ReturnType<typeof placedAt>,
-  prospectiveId: number | undefined,
-  place: Place,
-  open: Map<number, Row>,
+  c: { prospectiveId: number | undefined; place: Place; open: Map<number, Row>; urgentOn: Set<string> },
 ) {
   const { branch, follows } = at;
-  const sourceUrgent = branchUrgent(branch) || urgentBefore(follows, branch, place, open);
-  const urgent = !!row.urgent || (row.id === prospectiveId && sourceUrgent);
+  const sourceUrgent = c.urgentOn.has(branch) || urgentBefore(follows, branch, c.place, c.open);
+  const urgent = !!row.urgent || (row.id === c.prospectiveId && sourceUrgent);
   return { urgent, reviewUrgent: urgent || sourceUrgent };
 }
 
@@ -240,14 +261,13 @@ function queueRows(now: number) {
   const inReview = `select w.id from prs p indexed by prs_plan cross join jobs w on w.branch = p.branch
     where p.status in ${jobs.OPEN_PRS} union select cast(substr(p.branch, 5) as integer) from prs p indexed by prs_plan
     where p.status in ${jobs.OPEN_PRS} and p.branch like 'job/%'`;
-  const rows = db
-    .prepare(
-      `select ${columns} from jobs j indexed by jobs_play where j.kind != 'chat' and j.status in ${jobs.OPEN_JOBS}
+  // (kept prepared: compiling it anew for every claim's plan is too slow.)
+  const rows = prepared(
+    `select ${columns} from jobs j indexed by jobs_play where j.kind != 'chat' and j.status in ${jobs.OPEN_JOBS}
       union all select ${columns} from jobs j indexed by jobs_play where j.id in (${inReview}) and j.kind = 'work'
         and j.status = 'done'
         and (select status from prs where branch = ${jobs.workBranch('j')} order by number desc limit 1) in ${jobs.OPEN_PRS}`,
-    )
-    .all({ now: iso(now) }) as Row[];
+  ).all({ now: iso(now) }) as Row[];
   // (sorted here: sorted in the query, it reads the table in order instead)
   rows.sort((a, b) => a.id - b.id);
   return rows;

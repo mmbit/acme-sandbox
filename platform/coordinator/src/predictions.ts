@@ -216,9 +216,9 @@ export function* preparedInParts(
   return { snapshot: queue, sizes, sizedBy };
 }
 
-// The time a promise holds to, as the summary's late line gives it (windows.ts) and hq estimate shows it: the slow play's
-// merge, never sooner than the usual one's, on the next five minutes. None while either play doesn't merge it: the usual
-// play's merge is as likely late as early, so it never stands in for the slow one's.
+// The time a promise holds to, as the summary's late line gives it (windows.ts): the slow play's merge, never sooner than
+// the usual one's, on the next five minutes. None while either play doesn't merge it: the usual play's merge is as likely
+// late as early, so it never stands in for the slow one's. safeOf adds the deploy lag, and hq estimate shows that.
 const ROUND_TO_MS = 5 * 60_000;
 export function heldTo(usual: Outlook, slow: Outlook) {
   if (usual.merged === null || slow.merged === null) return null;

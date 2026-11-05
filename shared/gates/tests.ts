@@ -2,8 +2,8 @@
 // goes back to its author before any review, and what ran goes to the reviewers, who read the code instead of running
 // it again. npm run tests [-- --base <ref>]   (CODE_STYLE.md, "Tests"). --all: every area's, as the nightly run on main
 // takes them (shared/routines/tests.md). --helper: on a lent machine instead (onHelper, lent.ts), as the worker sends a
-// push's tests to a helper of the `tests` kind. They never come back here, where they'd take the worker's memory and a
-// worker short of it stops them. Here every suite runs to its end: they're our own code, so a slow one is fixed where
+// push's tests to a helper of the `tests` kind. One with no verdict there the worker runs on itself, bounded (worker.ts
+// TESTS_HERE_CONCURRENCY). Here every suite runs to its end: they're our own code, so a slow one is fixed where
 // it is, and its time is on its line of the report (describeRun). On the helper they stop just before its limit, and
 // fail as too slow for it (reportStopped).
 //

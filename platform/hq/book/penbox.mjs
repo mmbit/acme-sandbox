@@ -4,13 +4,13 @@
 // (its colour, its width, the pencil's and the marker's see-through), drawn on the book's paper in its colour and in
 // the agent's picture of the page (the coordinator's bookrender.ts) in the very same one. Each ink's card is shot with
 // its colours and widths. Only the pen's own line is a gesture: the pencil's hatching stays ink. (the agent's picture
-// and the cards' shots)
+// and the cards' shots) Each drawn in a scrap opened on the page (the grid takes no ink).
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { freePage, onDesk, paperBox, savedWhere } from './mouse.mjs';
+import { freePage, inScrap, onDesk, savedWhere } from './mouse.mjs';
 import { DESKTOP, MINI, middleOf, pressAlong } from './kit.mjs';
 import { mini } from './start.mjs';
 import { PENS } from '../../../shared/review/ink.js';
@@ -30,7 +30,9 @@ const INKS = [
 const LEFT = 40,
   ACROSS = 33,
   DOWN = 40,
-  LONG = 14;
+  LONG = 14,
+  // (the room round the lines in the agent's picture: the paper above a line, half a row up, in it)
+  ROOM = DOWN;
 
 // What a story draws: [row, ink, its colours]. With a mouse every ink in every colour; on the iPad (a lighter run, for
 // its memory) the pen's colours shared out among its nibs, every one drawn by one of them, and the marker in its six.
@@ -49,7 +51,7 @@ export function penBoxStories(c) {
       everyInk(browser, c, false),
     "pen box: every nib and colour draws, saves and shows the same in the agent's picture, with the Pencil on the iPad mini":
       browser => everyInk(browser, c, true),
-    "pen box: the pencil's scribble stays ink, where the pen's scratches out": browser => scribbles(browser, c),
+    "pen box: a scribble over a line stays ink, the pencil's and the pen's": browser => scribbles(browser, c),
   };
 }
 
@@ -60,7 +62,7 @@ async function everyInk(browser, c, onIpad) {
   const { page, errors, done } = opened;
   const tap = async locator => (onIpad ? opened.pen.tap(middleOf(await locator.boundingBox())) : locator.click());
   try {
-    const paper = await paperBox(page),
+    const paper = await inScrap(page, c, free, onIpad ? opened.pen.tap : undefined),
       top = Math.max(await clearBelow(page), paper.y + 160) + DOWN,
       drawn = [];
     for (const [row, ink, colours] of plan(onIpad))
@@ -113,14 +115,14 @@ async function sameInPicture(page, saved, drawn) {
   }
 }
 
-// A line with the pen, and the pencil scribbled back and forth over it, as a pen's scratch-out would be: both kept as
-// ink (the pen's scratch-out deleting a line: notebook.mjs)
+// A line with the pen, then the pencil and the pen each scribbled back and forth over it: all three kept as ink, as no
+// line deletes anything (the board, call #262)
 async function scribbles(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await onDesk(browser, c, { viewport: DESKTOP });
   const tap = locator => locator.click();
   try {
-    const paper = await paperBox(page),
+    const paper = await inScrap(page, c, free),
       x = paper.x + 40,
       y = paper.y + 640;
     await card(page, tap);
@@ -143,11 +145,20 @@ async function scribbles(browser, c) {
       Array.from({ length: 15 }, (_, i) => [x + (i % 2 ? 120 : 0), y + i * 2]),
       { type: 'mouse' },
     );
-    const kept = await savedWhere(c, free.id, p => p.ink.length === 2);
+    await savedWhere(c, free.id, p => p.ink.length === 2);
+    await card(page, tap);
+    await tap(item(page, 'Pen'));
+    await page.keyboard.press('Escape');
+    await pressAlong(
+      page,
+      Array.from({ length: 15 }, (_, i) => [x + (i % 2 ? 120 : 0), y + i * 2]),
+      { type: 'mouse' },
+    );
+    const kept = await savedWhere(c, free.id, p => p.ink.length === 3);
     assert.deepEqual(
       kept.ink.map(s => s.alpha),
-      [undefined, PENCIL_ALPHA],
-      "the pen's line and the pencil's scribble over it both kept as ink",
+      [undefined, PENCIL_ALPHA, undefined],
+      "the pen's line and the pencil's and the pen's scribbles over it all kept as ink",
     );
     assert.deepEqual(errors, []);
   } finally {
@@ -199,14 +210,18 @@ async function pickInk(page, tap, name) {
   assert.equal(await item(page, name).getAttribute('aria-pressed'), 'true', `${name}'s card open`);
 }
 
-// The agent's picture of the page: { img, x, y, k } (the page's top-left and the picture's px a page px)
+// The agent's picture of the scrap, as it's shown one (the coordinator's notebooksend.ts snipOf: what's on it, room
+// round it): { img, x, y, k } (its top-left and the picture's px a scrap px)
 async function agentSees(saved) {
-  const x = saved.x ?? 0,
-    y = saved.y ?? 0,
-    drawn = { x, y, w: saved.w, h: saved.h, ink: saved.ink, scraps: [] };
+  const points = saved.ink.flatMap(s => s.points),
+    x = Math.min(...points.map(p => p[0])) - ROOM,
+    y = Math.min(...points.map(p => p[1])) - ROOM,
+    w = Math.max(...points.map(p => p[0])) + ROOM - x,
+    h = Math.max(...points.map(p => p[1])) + ROOM - y,
+    drawn = { x, y, w, h, ink: saved.ink, scraps: [] };
   const png = await render(drawn, mkdtempSync(join(tmpdir(), 'penbox-'))),
     img = await pixels(png);
-  return { img, x, y, k: img.info.width / saved.w };
+  return { img, x, y, k: img.info.width / w };
 }
 const pixels = png => sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 const rgb = ({ data, info }, x, y) => {

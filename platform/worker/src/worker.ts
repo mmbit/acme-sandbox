@@ -11,7 +11,7 @@
 // uid of the slot running it, with an allowlisted environment, so it can't read our tokens or another job's files,
 // processes or HQ_TOKEN. Sign-ins and token checks run as uid 1500, the keeper of /seats, which runs no job.
 import { seatPlaces } from './places.ts';
-import { assertOwned, ownRun, ownershipSignal, requestSignal, sleepOwned, waitOwned } from './ownership.ts';
+import { assertOwned, ownedUntil, ownRun, ownershipSignal, requestSignal, sleepOwned, waitOwned } from './ownership.ts';
 import { readAs, returnSignIn } from './signin.ts';
 import { REFRESH_URL_VAR, codexRefreshes, exchangeWithOpenAI, serveRefreshes } from './refreshes.ts';
 import { measurement } from '../tooling/metrics.ts';
@@ -40,7 +40,7 @@ import { shortClaimRoom } from './shortclaim.ts';
 import { cgroup } from './memory.ts';
 import { CHAT_SLOT, KEEPER, SLOT_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep, type Ids } from './slots.ts';
 import { limitReset, observe, outcome, parkedRequest, preview, tail, verdict, whole } from './outcome.ts';   // (parkedRequest)
-import { detailOf, stepOf, memberReturned, memberOf, writtenTokens, type Step } from './steps.ts';
+import { commandKind, detailOf, stepOf, memberReturned, memberOf, writtenTokens, type Step } from './steps.ts';
 import { completionHooks } from './completion.ts';
 import { claudeEnv, cliOf, codexArgs, credentialFile, modelFor, type SeatProvider } from './providers.ts';
 import { CLIS, CLI_CONFIG, resumeOn, sessionTag, type Cli } from './clis.ts';
@@ -58,7 +58,7 @@ import { enforceShares } from './sharepass.ts';
 import { type MemoryVerdict } from './lowmemory.ts';
 import { overloadWatch, type Pressure } from './overload.ts';
 import { callsAsTheyCome } from './smallturns.ts';
-import { fewAtOnce } from './turns.ts';
+import { fewAtOnce, roomInTurn } from './turns.ts';
 import { handBack, noteHandBacks } from './handback.ts';
 import { hqReports, ResponseError } from './reports.ts';
 import { openPullRequest as openOn } from './pulls.ts';
@@ -227,7 +227,8 @@ async function watchShares() {
       for (const [uid, use] of uses) if (use.cores > JOB_CORES && !hotSince.has(uid)) hotSince.set(uid, t);
       const hot = new Set([...hotSince].filter(([, since]) => t - since >= JOB_HOT_MS).map(([uid]) => uid));
       for (const pid of diskShares.scanners()) cli.add(pid);
-      const limits = { mostMb: JOB_MOST_MB, shareMb: JOB_SHARE_MB, cores: JOB_CORES, processes: JOB_PROCESSES, starved, hot, workerSessionId: SESSION };
+      const first = new Set(jobs.filter(j => checksFirst.has(j.job.id)).map(j => j.uid));
+      const limits = { mostMb: JOB_MOST_MB, shareMb: JOB_SHARE_MB, cores: JOB_CORES, processes: JOB_PROCESSES, starved, first, hot, workerSessionId: SESSION };
       await enforceShares({
         jobs, procs, previous, intervalMs, uses, cli, limits, pending, hotSince,
         applyBlock: block => blockShare(block, jobs, procs),
@@ -1122,6 +1123,7 @@ type Job = { id: number; agent: string; title: string; prompt: string; engine: s
   token: string; sha?: string | null;   // the job's HQ_TOKEN; for reviews, the exact commit to review
   writes?: string | null;   // JSON: the files a ruling may touch up (review.ts).
   inFlight?: string;   // the other open jobs when this run was claimed, and what to do about them (jobs.ts inFlight)
+  page?: string;   // the CEO's page, its memory, in every run of the CEO's (pad.ts padBriefing).
   archiving?: number | null;   // the agent's open pull request that already moves lines to its archive (review.ts archiving)
   cut?: string;   // what a stop of the worker's container cut in its last run (jobs.ts finish).
   resumes?: Resumes;   // its author's last session on its branch (jobs.ts claim)
@@ -1172,7 +1174,7 @@ const DEFENSIVE = 'This is a defensive review of our own repository: describe a 
 const meetingBriefing = (job: Job) => {
   const a = job.agentInfo ?? { name: job.agent, role: 'agent', department: '' };
   return `You are ${a.name}, ${a.role} at ${company(job).name}, an AI-run company (department: ${a.department}).
-Before anything else read company/CHARTER.md and your profile company/people/${job.agent}.md.
+Before anything else read company/CHARTER.md and your profile company/people/${job.agent}.md.${pageLines(job)}
 
 Your job #${job.id}: ${job.title}
 
@@ -1200,7 +1202,7 @@ const tryBriefing = (job: Job) => {
   const a = job.agentInfo ?? { name: job.agent, role: 'agent', department: '' };
   return `You are ${a.name}, ${a.role} at ${company(job).name}, an AI-run company (department: ${a.department}).
 Before anything else read company/CHARTER.md and your profile company/people/${job.agent}.md. Before you shoot anything,
-read shared/craft/'s note on it (its README lists them). AGENTS.md has the few things every agent here knows.
+read shared/craft/'s note on it (its README lists them). AGENTS.md has the few things every agent here knows.${pageLines(job)}
 
 Your job #${job.id}: ${job.title}
 
@@ -1274,9 +1276,10 @@ const SWITCHED = 'This job ran before on another CLI, whose session can\'t go on
 // A job on a pull request's branch going on in its author's last session there (carry.ts), which is told where it is now
 const carriedNote = (job: Job, dir: string) => `This is job #${job.id}, on the branch you pushed, going on in your session from ` +
   `before. Its clone is a fresh one at ${dir}, with the branch as it is on GitHub: the folder you worked in before is gone, so work here.`;
-function carry(job: Job, from: Resumes, cli: string, seat: Seat, me: Me) {
+// (the seat's account is the coordinator's check: it sends resumes only while warm on this seat.)
+function carry(job: Job, from: Resumes, cli: string, me: Me) {
   try {
-    const session = carrySession(WORK, { id: job.id, engine: job.engine, resumes: from }, { id: seat.id, cli }, me);
+    const session = carrySession(WORK, { id: job.id, engine: job.engine, resumes: from }, cli, me);
     if (session) log(`job #${job.id}: going on in job #${from.job}'s session`);
     return session;
   } catch (err) {
@@ -1285,6 +1288,7 @@ function carry(job: Job, from: Resumes, cli: string, seat: Seat, me: Me) {
   }
 }
 // (the board's places in the company's names, c.phone and c.intercom, all through)
+// (anything stalled or the board slow with a deadline near: we switch ourselves)
 function briefing(job: Job, dir: string, conflicts: string[] = [], closingBriefing = '') {
   const a = job.agentInfo ?? { name: job.agent, role: 'agent', department: '', charter: '' }, c = company(job);
   const people = companyFile(dir, 'company/people/README.md'), charter = a.charter && existsSync(`${dir}/company/${a.charter}`);
@@ -1295,7 +1299,7 @@ Search the knowledge base before researching anything (\`hq search "..."\`: the 
 craft library and your own past work). Before you make anything people will see (a picture, a print file, a deck, a
 film or an ad, sound, copy, a product page), read the craft notes on it in shared/craft/ (its README lists them): what
 works, the checks and the tools. Where the company's own notes or brand say otherwise, they win. AGENTS.md has the few
-things every agent here knows.
+things every agent here knows.${pageLines(job)}
 
 Your job #${job.id}: ${job.title}${unnamed(job)}
 
@@ -1322,6 +1326,14 @@ How work happens here:
   batches, one at a time, never left running in the background. Commit a short summary of the results, never the raw
   output. A job past its share (memory, cores or processes) has that run blocked: the command ends Killed, after HQ's
   words on where to run it instead. Don't run it here again.
+- When anything stalls (a machine, the tests, a server, an outside service: whatever it is), or the board doesn't answer
+  straight away while work has a deadline, switch yourself, at once, within what you may already do: change how you
+  work (another machine, only the checks your change touches now and the full run once at the end, work ordered around
+  what's stuck, a heavy run stopped) or the deliverable itself (what's ready goes first, the rest after), so you do the
+  most you can without the board's word and make the deadline, or keep the overrun as small as you can. Go back once
+  it's well. A card to the board is only for what no agent can do (a machine restarted) and never replaces the switch:
+  the work goes on meanwhile. The review's gates and the hard limits (keys, customers' details, money, the law) still
+  hold: the switch is in how and where you check, never a check skipped for good.
 - Never push to or merge into main yourself, never put secrets in files or command arguments (other jobs can read
   those; pass keys through the environment or stdin), and never contact people outside the company. To ask a named
   outside colleague for documents, answers or tasks, write them a checklist (\`hq guest <name> "title" <file.json>\`,
@@ -1362,6 +1374,10 @@ ${TOKEN_ESTIMATE_GUIDANCE}${lighterLine(job)}
 ${closing(job)}`;
 }
 
+// The CEO's page, its memory across its work, which every run of the CEO's starts with, a resumed one too, as the
+// claim read it (the coordinator's pad.ts padBriefing).
+const pageLines = (job: Job) => (job.page ? `\n\n${job.page}` : '');
+
 // Quick replies read their own context, without the work job's housekeeping or shared CLI memory.
 // (no charter or profile read first: they cost a turn and thousands of tokens before each answer.)
 function quickBriefing(job: Job) {
@@ -1370,7 +1386,7 @@ function quickBriefing(job: Job) {
 This is one immediate reply to the board: the brief below says where it appears and how to give it.
 Use tools only when the answer needs them: read no charter or profile for it unless the answer is in one.
 Do not run gates or update your profile. If you cannot answer, say why. Answer now.
-Current time: ${new Date().toISOString()}.${boardLanguage(c)}${boardClock(c, true)}
+Current time: ${new Date().toISOString()}.${boardLanguage(c)}${boardClock(c, true)}${pageLines(job)}
 
 ${job.prompt}`;
 }
@@ -1420,6 +1436,11 @@ const drained = new Map<number, number>();
 // Jobs stopped with hq stop (the heartbeat's `stop`, or the claim's for a paused one), with who and why: ended at once,
 // and ended stopped, their work committed on their branch without opening a pull request.
 const stopAsked = new Map<number, string>();
+// A check job's (carryChecks: no CLI to stop), which hq stop aborts: its checks end at once.
+const checksStop = new Map<number, AbortController>();
+// The jobs whose checks go first here, as their last heartbeat said (the coordinator's urgency.ts checksFirst): the tests'
+// turn (testsHere), the room back after none (roomBack) and a starved worker's block (shares.ts) put them before the rest.
+const checksFirst = new Set<number>();
 // probe: the job was claimed to measure its seat's unknown window (slotLoop), so its first reading decides whether it
 // may go on (the coordinator holds that reading to the start threshold).
 // adopted: a run the last worker process handed over (takeOver), its CLI still running or ended since.
@@ -1454,7 +1475,7 @@ async function runJob(seat: Seat, job: Job, slot: string, probe = false, adopted
         if (!shuttingDown && !ownershipSignal()?.aborted) await settle(seat, job, me, body ? body.status as string | undefined : snagOf(thrown));
       } finally {
         if (ownershipSignal()?.aborted) { parkRun(seat, job, me); dropRun(RUNS, job.id, ...launches); }
-        active.delete(job.id); yielding.delete(job.id); drained.delete(job.id); stopAsked.delete(job.id); inSlot.delete(slot);
+        active.delete(job.id); yielding.delete(job.id); drained.delete(job.id); stopAsked.delete(job.id); checksFirst.delete(job.id); inSlot.delete(slot);
       }
     }
     if (shuttingDown) return;
@@ -1480,7 +1501,10 @@ function heartbeatAnswered(job: Job, slot: string, reply: any, first: boolean) {
   if (reply?.stop && !stopAsked.has(job.id)) {
     stopAsked.set(job.id, String(reply.stop));
     log(`job #${job.id}: hq stop heard`);
+    checksStop.get(job.id)?.abort();
   }
+  if (reply?.first) checksFirst.add(job.id);
+  else checksFirst.delete(job.id);
   const change = heard(yielding, job.id, reply, { first });
   if (reply?.immediate) running.get(slot)?.stop();
   if (change) log(`job #${job.id}: ${change} (downtime${change === 'yielding' ? `, ${reply.yield}` : ''})`);
@@ -1784,7 +1808,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     if (reviewing) for (const d of [...REVIEW_STRIP, ...CLI_CONFIG]) runAs(me, 'rm', ['-rf', '--', `${dir}/${d}`]);   // REVIEW_STRIP, safety.ts
     // A session of another CLI than this seat's can't go on here
     const { session: ownSession, switched } = resumeOn(cli, job.engine, job.session);
-    const carried = ownSession || reviewing || !job.resumes ? null : carry(job, job.resumes, cli, seat, me);
+    const carried = ownSession || reviewing || !job.resumes ? null : carry(job, job.resumes, cli, me);
     const session = ownSession ?? carried;
     const closingBriefing = session || reviewing || !job.closingReports ? ''
       : `\n\n${closingLines(job.closingReports, g.ag(dir, 'log', '--no-merges', '--format=%h %s', `origin/${BASE}..HEAD`))}`;
@@ -1963,7 +1987,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
       if (e.type === 'thread.started' && !asking && tagged(e.thread_id) !== run.session) { run.session = tagged(e.thread_id); if (!quiet) run.keep(); }
       if (e.type === 'item.completed' && e.item?.type === 'agent_message') { last = e.item.text; speak(e.item.text); }
       if (e.type === 'item.started' && e.item?.type === 'command_execution') {
-        const s = { text: 'Running a command', board: `$ ${e.item.command}` };
+        const s = { text: commandKind(e.item.command), board: `$ ${e.item.command}` };
         say(s);
         logged(s);
       }
@@ -2236,8 +2260,8 @@ type RunMode = ReturnType<typeof runModeOf>;
 function promptOf(job: Job, mode: RunMode, run: { dir: string; conflicts: string[]; ownSession?: string | null; carried?: string | null; switched: boolean; fresh: boolean; closing: string }) {
   const note = job.note ? `\n\n${job.note}` : '', cut = job.cut ? `\n\n${job.cut}` : '', inFlight = job.inFlight ? `\n\n${job.inFlight}` : '';
   if (mode.quickRun) return quickBriefing(job);
-  if (run.ownSession) return (job.note ?? 'Continue where you left off.') + cut + inFlight;
-  if (run.carried) return `${carriedNote(job, run.dir)}\n\n${inThreadLines(job, run.conflicts)}${job.prompt}${note}${inFlight}`;
+  if (run.ownSession) return (job.note ?? 'Continue where you left off.') + cut + inFlight + pageLines(job);
+  if (run.carried) return `${carriedNote(job, run.dir)}\n\n${inThreadLines(job, run.conflicts)}${job.prompt}${note}${inFlight}${pageLines(job)}`;
   const newSession = run.switched && !mode.reviewing && !run.fresh ? `\n\n${SWITCHED}${cut}` : '';
   // (a hand-up's run hears why it was handed up: lighter.ts handedUpLines)
   const handedUp = job.handedUp && !mode.reviewing ? `\n\n${handedUpLines(job.handedUp)}` : '';
@@ -2416,28 +2440,44 @@ const TESTS = 'shared/gates/tests.ts';
 const SCREENS = 'platform/hq/screens-compare.mjs';
 type CheckName = 'gates' | 'tests' | 'screens';   // (each one's field in the finish report)
 const CHECKS: Record<CheckName, string> = { gates: GATES, tests: TESTS, screens: SCREENS };
-// Two pushes' tests at a time here, the rest waiting their turn: a node --test run takes every core, so more at once
-// slow each other down. While a lent machine has a helper of the `tests` kind (the coordinator's runs.ts), they go
-// there instead, with no turn. tests.ts --helper sends them as a run of the job and waits for it while it's there. They
-// never run here: a helper that's gone leaves them incomplete. The gates go there too (gates.ts --helper), when their
-// type check runs.
-const testsTurn = fewAtOnce(2);
+// A push's tests go to a lent machine's helper of the `tests` kind while one is there (the coordinator's runs.ts):
+// tests.ts --helper sends them as a run of the job and waits for it while it's there, with no turn. Each launch asks
+// again where to go (pushchecks.ts CheckSpec.lent), a run again included, so a helper that's back takes it. With none
+// there, or none that gave a verdict, they run here, bounded so a missing helper costs speed, never the other jobs'
+// room: one push's tests at a time, each started only once the worker has room (roomBack), and at TESTS_HERE_CONCURRENCY
+// test files at once (shared/gates/suites.ts), which keeps a whole run inside a job's share (JOB_SHARE_MB): the
+// coordinator's 224 files took 2,440 MB at their peak (1,109 on average) at 8 at once, 1,813 at 4 and 1,477 at 2 (438 on
+// average, 2.5 times as long), one heavy file holding most of the peak. The
+// gates go to a helper too (gates.ts --helper), when their type check runs.
+const testsTurn = fewAtOnce(1);
+const TESTS_HERE_CONCURRENCY = 2;
 const TESTS_KIND = 'tests';
-// HQ's takeMinutes while a lent machine has a helper of the kind, else undefined
+// HQ's takeMinutes while a lent machine has a helper of the kind, else undefined. An ask that fails (HQ slow or
+// restarting) is made again, a few seconds apart, before it counts as none: "none" sends the tests here, the slow way.
+const HELPER_ASKS = 3, HELPER_ASK_MS = 10_000, HELPER_ASK_AGAIN_MS = 5_000;
 async function testsHelper(job: Job) {
-  try {
-    const res = await fetch(`${HQ}/api/agent/runs/helper`, { headers: { authorization: `Bearer ${job.token}` }, signal: requestSignal(AbortSignal.timeout(10_000)) });
-    const { kinds, takeMinutes } = await res.json() as { kinds?: { name: string; present: boolean }[]; takeMinutes: number };
-    return kinds?.some(kind => kind.name === TESTS_KIND && kind.present) ? takeMinutes : undefined;
-  } catch { return undefined; }
+  for (let ask = 1; ; ask++) {
+    try {
+      const res = await fetch(`${HQ}/api/agent/runs/helper`, { headers: { authorization: `Bearer ${job.token}` }, signal: requestSignal(AbortSignal.timeout(HELPER_ASK_MS)) });
+      if (!res.ok) throw new Error(`HQ answered ${res.status}`);
+      const { kinds, takeMinutes } = await res.json() as { kinds?: { name: string; present: boolean }[]; takeMinutes: number };
+      if (kinds?.some(kind => kind.name === TESTS_KIND && kind.present)) return takeMinutes;
+      log(`job #${job.id}: no lent machine has a ${TESTS_KIND} helper asking for work`);
+      return undefined;
+    } catch (err) {
+      assertOwned();
+      if (ask >= HELPER_ASKS) { log(`job #${job.id}: HQ's helpers not read (${(err as Error).message}), taken as none`); return undefined; }
+      await sleepOwned(HELPER_ASK_AGAIN_MS);
+    }
+  }
 }
 // The suites the change would run (shared/gates/suites.ts), asked first and with no turn: a change with none has its
 // report at once, so a job that changed only notes or profiles ends with its push, never behind other pushes' suites
-// (where it would also hold a reload's handover, which waits for it). Any other answer (suites to run, a branch from
-// before the script) waits its turn for the tests.
+// (where it would also hold a reload's handover, which waits for it) nor sent to a helper. Any other answer (suites to
+// run, a branch from before the script) runs the tests.
 const SUITES = 'shared/gates/suites.ts';
 const SUITES_MS = 60_000;
-async function testsTurnOf(job: Job, me: Me, at: TestsCheckout, run: () => Promise<TestsOutcome>): Promise<TestsOutcome> {
+async function testsToRun(job: Job, me: Me, at: TestsCheckout, run: () => Promise<TestsOutcome>): Promise<TestsOutcome> {
   const { cwd, env } = at.made();
   if (existsSync(`${cwd}/${SUITES}`)) {
     const none = await new Promise<string | undefined>(resolve => execFile('node', [SUITES, '--base', at.tested.base],
@@ -2448,8 +2488,17 @@ async function testsTurnOf(job: Job, me: Me, at: TestsCheckout, run: () => Promi
       return { passed: true, report: none, tests: 0 };
     }
   }
-  const heardWait = (ms: number) => log(`job #${job.id}: ${TESTS} waited ${Math.round(ms / 1000)} s for its turn`);
-  return waitOwned(testsTurn(() => { assertOwned(); return run(); }, heardWait));
+  return run();
+}
+// A launch of the tests here: its turn, and for a fresh one room on the worker before it starts. Urgent work's take both
+// before the others' (checksFirst).
+function testsHere(job: Job, launch: () => Promise<CheckOutcome>, fresh: boolean) {
+  const heardWait = (ms: number) => log(`job #${job.id}: ${TESTS} waited ${Math.round(ms / 1000)} s for its turn here`);
+  return waitOwned(testsTurn(async () => {
+    assertOwned();
+    if (fresh && !room(false)) { log(`job #${job.id}: ${TESTS} waits for room here`); await roomBack(job); }
+    return launch();
+  }, heardWait, () => checksFirst.has(job.id)));
 }
 
 // A push's tests run once on the same code (pushchecks.ts testsOnce), claimed in HQ by the git trees of the pushed commit
@@ -2496,8 +2545,12 @@ async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (c
 // carries.ts) gets a push's checks all the same, and nothing else: no agent runs. The gates run in the job's clone of the
 // commit, the tests in their own checkout, both against main before it. Like a landing it keeps no run record: a reload
 // leaves the job to go stale and be queued again, and the checks run again.
+// hq stop ends its checks where they are, every process of them with them, and the job ends stopped: HQ hands nothing to
+// the keeper (the coordinator's carries.ts), and the commit is checked again by a job of its own if wanted.
 async function carryChecks(job: Job, me: Me, launches: Launched[]) {
   const { dir, home } = jobDirs(WORK, job.id), sha = job.carry!;
+  const stopped = () => ({ status: 'stopped', result: `Stopped by ${stopAsked.get(job.id)}, the checks of ${sha} unfinished.` });
+  if (stopAsked.has(job.id)) return stopped();
   log(`job #${job.id}: the checks of ${sha.slice(0, 9)}, a commit main took outside a pull request`);
   for (const p of [dir, home]) remove(p);
   makeDir(home, me);
@@ -2507,7 +2560,18 @@ async function carryChecks(job: Job, me: Me, launches: Launched[]) {
   const at = testsCheckout(job, me, flow.testedCode(sha, 'parent'));
   const base = at.tested.base;
   const checks = { body: { status: 'done' }, spent: {}, runs: {} };
-  const body = await pushChecks(job, me, dir, at, { checks, keep: () => {}, launches, gatesBase: base });
+  const stop = new AbortController();
+  checksStop.set(job.id, stop);
+  let body: Record<string, unknown>;
+  try {
+    if (stopAsked.has(job.id)) stop.abort();   // (heard while it cloned)
+    body = await ownedUntil(stop.signal, () => pushChecks(job, me, dir, at, { checks, keep: () => {}, launches, gatesBase: base }));
+  } catch (err) {
+    if (!stop.signal.aborted || ownershipSignal()?.aborted) throw err;
+    removeTested(job);   // (its processes go as the job ends: runJob's killAll)
+    log(`job #${job.id}: its checks ended by hq stop`);
+    return stopped();
+  } finally { checksStop.delete(job.id); }
   const passed = (name: CheckName) => (body[name] as CheckOutcome | undefined)?.passed;
   const said = (name: CheckName) => `${name} ${passed(name) ? 'passed' : passed(name) === false ? 'failed' : 'not run'}`;
   // (done only with both verdicts: a check that couldn't run fails the job, and HQ hands the commit to the keeper)
@@ -2519,19 +2583,28 @@ async function carryChecks(job: Job, me: Me, launches: Launched[]) {
 // unless it's given), and with `screens` a pull request's screens against the tests' base.
 async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
   { checks, keep, launches, gatesBase, screens }: { checks: Checks; keep: (checks: Checks) => void; launches: Launched[]; gatesBase?: string; screens?: boolean }) {
+  // (the gates' place is asked once; the tests' at each launch)
   const takeMinutes = await testsHelper(job);
   assertOwned();
   const helper = takeMinutes !== undefined;
-  if (helper) log(`job #${job.id}: ${TESTS} and ${GATES}: helper dispatch enabled`);
+  if (helper) log(`job #${job.id}: ${GATES}: helper dispatch enabled`);
   const lent: Record<string, string> = helper ? { HQ_URL: HQ, HQ_TOKEN: job.token } : {};
   const count = (run: () => Promise<CheckOutcome>) => async () => at.counted(await run());
-  const comparison: Record<string, string> = { HQ_URL: HQ, HQ_TOKEN: job.token };
+  // (TESTS_COMPARISON: its ticket, set once the tests' claim is theirs, before they launch; TESTS_CONCURRENCY: read here alone)
+  const testsEnv: Record<string, string> = { HQ_URL: HQ, HQ_TOKEN: job.token, TESTS_CONCURRENCY: String(TESTS_HERE_CONCURRENCY) };
+  let first: boolean | undefined = helper;   // (the first launch takes the answer just given)
+  const testsLent = async () => {
+    const there = first ?? (await testsHelper(job) !== undefined);
+    first = undefined;
+    if (there) log(`job #${job.id}: ${TESTS}: helper dispatch enabled`);
+    return there;
+  };
   const tests = checkSpec(job, me, dir, 'tests', launches, run => testsOnceOf(job, at.tested, ticket => {
-    comparison.TESTS_COMPARISON = ticket;
-    const counted = count(run);
-    return helper ? counted() : testsTurnOf(job, me, at, counted);
+    testsEnv.TESTS_COMPARISON = ticket;
+    return testsToRun(job, me, at, count(run));
   }),
-    { args: [...helper ? ['--helper'] : [], ...at.args], base: at.tested.base, env: comparison, where: at.launching });
+    { args: at.args, base: at.tested.base, env: testsEnv, where: at.launching, lent: { args: ['--helper'], env: {}, present: testsLent },
+      here: (launch, fresh) => testsHere(job, launch, fresh) });
   const gates = checkSpec(job, me, dir, 'gates', launches, undefined,
     { args: [], base: gatesBase, env: {}, lent: helper ? { args: ['--helper'], env: lent, ms: gatesLentMs(takeMinutes) } : undefined });
   const screensCheck = screens ? checkSpec(job, me, dir, 'screens', launches, undefined,
@@ -2540,7 +2613,7 @@ async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
   const body = await waitOwned(runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
     watch: (pid, check) => checking.set(pid, check), unwatch: pid => checking.delete(pid),
     said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers,
-    roomy: roomBack }));
+    roomy: () => roomBack(job) }));
   // (its sheets out of the tests' checkout before it goes.)
   if (body.screens) body.screens = await keepScreens(SCREENS_KEPT, me, at.tested.sha, body.screens as CheckOutcome);
   removeTested(job);
@@ -2562,45 +2635,44 @@ async function hqAnswers() {
 
 // Resolves once the worker has room again, for a check it had none for to run again (pushchecks.ts): memory for a job
 // to start (no longer short, so no share block for the run) and more disk free than the jobs leave for a deploy's build
-// and the database (HQ's disk reserve).
-async function roomBack() {
-  for (;;) {
-    assertOwned();
-    try {
-      if (room(false)) {
-        const disk = await hq.api('disk', {}, AbortSignal.timeout(ROOM_REQUEST_MS)) as { freeBytes: number; reserveBytes: number };
-        if (disk.freeBytes > disk.reserveBytes) return;
-      }
-    } catch { /* not yet */ }
-    await sleep(HEALTH_POLL_MS);
-  }
-}
+// and the database (HQ's disk reserve). While urgent work's check waits for it (checksFirst), the others' leave it to
+// that one (turns.ts roomInTurn).
+const roomTurn = roomInTurn(async () => {
+  assertOwned();
+  try {
+    if (!room(false)) return false;
+    const disk = await hq.api('disk', {}, AbortSignal.timeout(ROOM_REQUEST_MS)) as { freeBytes: number; reserveBytes: number };
+    return disk.freeBytes > disk.reserveBytes;
+  } catch { return false; }   // (not yet)
+}, sleep, HEALTH_POLL_MS);
+const roomBack = (job: Job) => roomTurn(() => checksFirst.has(job.id));
 
 // Each check's outcome and time go to the worker's log, for what the pipeline costs a push. One runs as the job's own
 // user in its clone, at nice 10: a push's checks are the pipeline's, and the jobs running meanwhile come first. It's
 // held to the job's share like the rest of its processes (shares.ts). A branch from before it has no script, and no
 // report. Its git takes nothing from the session (git.ts pinnedGitEnv, forAgent's settle).
-// extra: arguments, base and environment of its own, and where it runs, made as it launches (the tests: in their
-// checkout, testsCheckout, and the job's token for a lent machine's run). lent: a launch first that sends it to a lent
-// machine's helper, with arguments, environment and a time limit of its own (pushchecks.ts CheckSpec).
+// extra: arguments, base and environment of its own (read as it launches), and where it runs, made as it launches (the
+// tests: in their checkout, testsCheckout, and the job's token for a lent machine's run). lent: a launch that sends it
+// to a lent machine's helper, with arguments, environment and a time limit of its own, and here: what a launch here
+// waits for (pushchecks.ts CheckSpec).
 function checkSpec(job: Job, me: Me, dir: string, name: CheckName, launches: Launched[], turn?: CheckSpec['turn'],
   extra: { args: string[]; base?: string; env: Record<string, string>; where?: () => { cwd: string; env: Record<string, string> };
-    lent?: { args: string[]; env: Record<string, string>; ms: number } } = { args: [], env: {} }): CheckSpec<CheckName> | undefined {
+    lent?: { args: string[]; env: Record<string, string>; ms?: number; present?: () => Promise<boolean> }; here?: CheckSpec['here'] } = { args: [], env: {} }): CheckSpec<CheckName> | undefined {
   const script = CHECKS[name];
   if (!existsSync(`${dir}/${script}`)) return undefined;
-  const launchWith = (args: string[], env: Record<string, string>) => () => {
+  const launchWith = (args: string[], env: Record<string, string> = {}) => () => {
     assertOwned();
     const where = extra.where?.() ?? { cwd: dir, env: { ...me.env, ...pinnedGitEnv } };
     const { child, launched } = launchDetached(RUNS, `${job.id}.${name}`, 'nice', ['-n', '10', 'node', script, '--base', extra.base ?? `origin/${BASE}`, ...args],
-      { cwd: where.cwd, uid: me.uid, gid: me.gid, env: { ...where.env, ...env } });
+      { cwd: where.cwd, uid: me.uid, gid: me.gid, env: { ...where.env, ...extra.env, ...env } });
     child.on('error', () => { /* no pid: it could not start, and says so */ });
     child.stdin!.end();
     launches.push(launched);
     return launched;
   };
-  const { lent } = extra;
-  const lentLaunch = lent && { ms: lent.ms, launch: launchWith([...extra.args, ...lent.args], { ...extra.env, ...lent.env }) };
-  return { name, launch: launchWith(extra.args, extra.env), turn, lent: lentLaunch };
+  const { lent, here } = extra;
+  const lentLaunch = lent && { ms: lent.ms, present: lent.present, launch: launchWith([...extra.args, ...lent.args], lent.env) };
+  return { name, launch: launchWith(extra.args), turn, here, lent: lentLaunch };
 }
 
 const keepRendersOf = async (job: Job, me: Me, dir: string, files: string[]) => {

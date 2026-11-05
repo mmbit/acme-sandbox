@@ -6,18 +6,17 @@
 // under the band: sideways out of the page block to the book's left, upright folded at the screen's left edge (a
 // finger's tap brings them out); a finger's tap turns to a chapter and back. A call's page has one title, the Pencil
 // near it changing nothing there. The two islands of use under the band (islands.mjs); the Pencil's tap and a finger's
-// each pick a tool. (the islands' checks, the blur and the chapter's pick) The Pencil's line in a scrap's room is saved
-// as that scrap's ink. The Pencil's arrow begun by the page's left edge draws, the book staying open; a finger's taps,
-// each where the page arrows were at the start, turn to a read-only call's page and back, the arrows never moving; and
-// a finger's swipe from that edge still closes the book (only a deliberate pull moves it). Two fingers move the page
-// down and draw nothing. Recorded with --shots.
+// each pick a tool. (the islands' checks, the blur and the chapter's pick) The Pencil's tap opens a scrap and its line
+// there is saved as that scrap's ink. The Pencil's arrow begun by the page's left edge leaves the book open; a
+// finger's taps, each where the page arrows were at the start, turn to a read-only call's page and back, the arrows
+// never moving; and a finger's swipe from that edge still closes the book (only a deliberate pull moves it). Two
+// fingers move the page down and draw nothing. Recorded with --shots.
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, middleOf, toChapter, until } from './kit.mjs';
+import { MINI, UPRIGHT, closeScrap, middleOf, openScrap, toChapter, until } from './kit.mjs';
 import { hands } from './hands.mjs';
 import { SEED } from './unitspage.mjs';
 import { OWN_W, anotherColumn, units } from './unitsread.mjs';
 import { UNIT_W } from '../shell/ink/scrapunit.js';
-import { bareOf } from './drawn.mjs';
 import { picksByHand } from './fillislands.mjs';
 import { blurred, islandsSeen, islandsUsable } from './islands.mjs';
 import { tabs } from './bookmarks.mjs';
@@ -27,7 +26,7 @@ import { noMicrophone, watchedPage } from './start.mjs';
 const BAND = 24 + 48;
 // the agent's scraps three times over, so the page is longer than the screen either way up, on a call's notes page titled
 // as the store titles one: the call's date and time, then its topic (callnotes.ts). After it, a later call's page,
-// read-only till its follow-up goes (as a page sent: the tools give way to a lock).
+// read-only till its follow-up goes (as a page sent: the tools give way to a lock), with the agent's scraps twice over.
 const T1 = '2026-10-30T11:00:00.000Z';
 const LONG = {
   ...SEED,
@@ -35,8 +34,13 @@ const LONG = {
     ...SEED.pages.map((p, i) => (i ? p : { ...p, kind: 'call', label: '29 Oct, 15:00, Ink walk-through' })),
     { ...SEED.pages[0], id: 2, pos: 1, kind: 'call', label: '30 Oct, 11:00, Rail check', send_at: Date.parse(T1) },
   ],
-  groups: [0, 100, 200].flatMap(n => SEED.groups.map(g => ({ ...g, id: g.id + n, pos: g.pos + n }))),
+  groups: [
+    ...[0, 100, 200].flatMap(n => SEED.groups.map(g => ({ ...g, id: g.id + n, pos: g.pos + n }))),
+    // (fewer on the read-only page: the scraps' count tells the two pages apart.)
+    ...[1000, 1100].flatMap(n => SEED.groups.map(g => ({ ...g, id: g.id + n, pos: g.pos + n - 1000, page: 2 }))),
+  ],
 };
+const FIRST = LONG.groups.filter(g => g.page === 1).length;
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function fillStories(c) {
@@ -76,7 +80,7 @@ async function byHand(browser, c, name, viewport, columns) {
     await picksByHand(page, hand);
     await oneTitle(page, hand);
     await writes(page, context, hand);
-    await edgeDraws(page, hand);
+    await edgeDraws(page, context, hand);
     await arrowsStay(page, c, name, hand);
     await scrolls(page, hand);
     await c.shot(`fill-${name}-2-scrolled`, page);
@@ -100,7 +104,7 @@ async function opened(page, c, { touch }, viewport) {
     await touch.up();
     await c.settled(page, 'spread');
   } else await c.settled(page, 'open');
-  await until(async () => (await units(page)).length === LONG.groups.length, 'the scraps drawn');
+  await until(async () => (await units(page)).length === FIRST, 'the scraps drawn');
 }
 
 // The book's paper from the screen's top, under the blurred band, to its foot; the page on it up under the band too, its
@@ -150,30 +154,35 @@ async function scrapColumns(page, columns) {
   assert.equal(found, columns, `${columns} columns of scraps`);
 }
 
-// The Pencil's line in the first scrap's room: saved as that scrap's ink
+// The Pencil's tap on the first scrap opens it, and its line there is saved as that scrap's ink; Klaar puts it back.
 async function writes(page, context, { pen }) {
   const [first] = await units(page),
     inked = () =>
       context.notebook.route('/api/notebooks/pages/groups', { page: 1 }).groups.find(g => g.id === first.id).ink.length,
     was = inked(),
-    y = first.y + first.h - 40 * (first.w / UNIT_W);
-  await pen.stroke(Array.from({ length: 14 }, (_, k) => [first.x + 40 + k * 12, y + Math.sin(k / 2) * 6]));
-  await until(() => inked() > was, "the Pencil's line saved in the scrap's room", 8000);
+    { gid, sheet } = await openScrap(page, pen, first.id),
+    y = sheet.y + sheet.height * 0.6;
+  assert.equal(gid, first.id, 'the scrap tapped opened');
+  await pen.stroke(Array.from({ length: 14 }, (_, k) => [sheet.x + 40 + k * 12, y + Math.sin(k / 2) * 6]));
+  await until(() => inked() > was, "the Pencil's line saved in the scrap", 8000);
+  await closeScrap(page, pen);
 }
 
-// The Pencil's arrow begun by the page's left edge, moving right (away from the edge) first: drawn where it went, and
-// the book stays open (only a deliberate pull on the edge moves the book)
-async function edgeDraws(page, { pen }) {
+// The Pencil's arrow begun by the page's left edge, moving right (away from the edge) first: the book stays open (only
+// a deliberate pull on the edge moves the book), and the grid takes no ink from it (README, A page of scraps).
+async function edgeDraws(page, context, { pen }) {
   const mode = () => page.evaluate(() => document.documentElement.dataset.book),
-    was = await mode(),
+    strokes = () =>
+      context.notebook.route('/api/notebooks/pages/groups', { page: 1 }).groups.reduce((n, g) => n + g.ink.length, 0),
+    was = { mode: await mode(), strokes: strokes() },
     paper = await page.locator('#book .bk-paper').boundingBox(),
     x = paper.x + 14,
     y = await byTheEdge(page, paper),
     shaft = Array.from({ length: 12 }, (_, k) => [x + k * 8, y]);
   await pen.stroke([...shaft, [x + 70, y - 14], [x + 60, y - 22]]);
   await page.waitForTimeout(800);
-  assert.equal(await mode(), was, "the book left as it was by the Pencil's arrow by its edge");
-  assert.deepEqual(await bareOf(page, [shaft[0], shaft[6]]), [], "the Pencil's arrow by the edge drawn where it went");
+  assert.equal(await mode(), was.mode, "the book left as it was by the Pencil's arrow by its edge");
+  assert.equal(strokes(), was.strokes, "the Pencil's arrow by the edge no ink on the grid");
 }
 
 // A height by the page's left edge, a little over halfway down, below the pull tab where it lies over that edge
@@ -183,7 +192,8 @@ async function byTheEdge(page, paper) {
 }
 
 // The page arrows where they were whatever page they turn to: a finger's taps, each where the arrow was at the start,
-// turn to the call's page after (read-only, the tools giving way to a lock) and back (the page arrows stay put)
+// turn to the call's page after (read-only, the tools giving way to a lock) and back (the page arrows stay put). On the
+// read-only page the lock and "Locked" show under the view's title, and stay there as two fingers move the page.
 async function arrowsStay(page, c, name, { touch }) {
   const arrows = () =>
       page.evaluate(() =>
@@ -209,6 +219,9 @@ async function arrowsStay(page, c, name, { touch }) {
   await tap(at(was[1]), '2 / 2');
   await c.shot(`fill-${name}-3-read-only`, page);
   assert.deepEqual(await arrows(), was, 'the page arrows where they were on the read-only page');
+  await lockedUnderTitle(page, 'on the read-only page');
+  await twoFingers(page, touch);
+  await lockedUnderTitle(page, 'as two fingers move the read-only page');
   await tap(at(was[0]), '1 / 2');
   assert.deepEqual(await arrows(), was, 'the page arrows where they were back on the call page');
   await until(async () => (await units(page)).length === drawn, "the call's page back");
@@ -262,7 +275,7 @@ async function tabsBeside(page, { touch }, viewport) {
   };
   await tap('sketch');
   await tap('calls');
-  await until(async () => (await units(page)).length === LONG.groups.length, "the call's page back");
+  await until(async () => (await units(page)).length === FIRST, "the call's page back");
 }
 
 // The call's page: one title, the call's date and time leading it, no date of its own under it; a Pencil line beside
@@ -294,34 +307,25 @@ async function oneTitle(page, { pen }) {
   assert.deepEqual(await head(), was, "the page's head as it was after the Pencil came near the title");
 }
 
-// Two fingers a hand's width apart drawn up the page, put down on the page well clear of the scraps' room handles (a
-// finger near a handle is the handle's: Chromium's touch adjustment takes it there): it moves down, and nothing new is
-// drawn
+// Two fingers a hand's width apart drawn up the page across its middle: it moves down, and nothing new is drawn.
+// (No room handles to keep clear of on a page of scraps)
 async function scrolls(page, { touch }) {
+  const count = async () => (await units(page)).length,
+    was = await count();
+  await twoFingers(page, touch);
+  await page.waitForTimeout(600);
+  assert.equal(await count(), was, 'two fingers drew nothing');
+}
+
+// Two fingers moving the page down, once the last page turn has landed
+async function twoFingers(page, touch) {
   // (the last page turn landed first: its pictures hold copies of the page's scraps, and headless WebKit's slow frames
   // keep one turning past the steps before.)
   await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'), null, { timeout: 30_000 });
   const desk = await page.locator('#book .bk-desk:not(.bk-turn-picture *)').boundingBox(),
-    [[left, right], y] = await page.evaluate(desk => {
-      const handles = [...document.querySelectorAll('#book .bk-room-handle')].map(h => h.getBoundingClientRect()),
-        clear = (x, y) =>
-          handles.every(r => y < r.top - 40 || y > r.bottom + 40 || x < r.left - 40 || x > r.right + 40),
-        mid = desk.y + desk.height / 2;
-      for (const pair of [
-        [0.3, 0.7],
-        [0.12, 0.5],
-        [0.5, 0.88],
-        [0.12, 0.88],
-      ])
-        for (const d of [0, 40, -40, 80, -80, 120, -120]) {
-          const xs = pair.map(f => desk.x + desk.width * f),
-            y = mid + d;
-          if (xs.every(x => clear(x, y + 150) && clear(x, y - 150))) return [xs, y];
-        }
-      return [[desk.x + desk.width * 0.3, desk.x + desk.width * 0.7], mid];
-    }, desk),
-    count = async () => (await units(page)).length,
-    was = { pan: await panned(page), units: await count() };
+    [left, right] = [0.3, 0.7].map(f => desk.x + desk.width * f),
+    y = desk.y + desk.height / 2,
+    was = await panned(page);
   await touch.down([
     [left, y + 150],
     [right, y + 150],
@@ -331,9 +335,28 @@ async function scrolls(page, { touch }) {
     [right, y - 150],
   ]);
   await touch.up();
-  await until(async () => (await panned(page)) > was.pan + 100, 'the page moved down by two fingers', 4000);
-  await page.waitForTimeout(600);
-  assert.equal(await count(), was.units, 'two fingers drew nothing');
+  await until(async () => (await panned(page)) > was + 100, 'the page moved down by two fingers', 4000);
+}
+
+// The lock and "Locked" in sight under the view's title (bookviewhead.js, shown by bookcontrols.js lockLine)
+async function lockedUnderTitle(page, at) {
+  const seen = await page.evaluate(() => {
+      const lock = document.querySelector('#book .bk-view-locked'),
+        title = document.querySelector('#book .bk-view-head .bk-page-title');
+      return {
+        shown: !!lock?.checkVisibility(),
+        words: lock?.textContent.trim(),
+        lock: lock?.getBoundingClientRect().toJSON(),
+        title: title.getBoundingClientRect().toJSON(),
+        screen: innerHeight,
+      };
+    }),
+    said = JSON.stringify(seen);
+  assert.ok(seen.shown && seen.words === 'Locked', `"Locked" shown ${at} (${said})`);
+  assert.ok(
+    seen.lock.top >= seen.title.bottom - 1 && seen.lock.bottom <= seen.screen,
+    `under the title ${at} (${said})`,
+  );
 }
 // How far down the page is moved, in screen px
 const panned = page =>

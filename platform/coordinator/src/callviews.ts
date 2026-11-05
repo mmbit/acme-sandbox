@@ -12,6 +12,7 @@ import { createGzip } from 'node:zlib';
 import { db } from './db.ts';
 import { timeZone } from './company.ts';
 import { reply } from './uploads.ts';
+import { exclude } from './latency.ts';
 import { NOTHING, TOOL_PX, callPlayback, clockOf, mirrors } from './watchalong.ts';
 import { when } from './watchtimes.ts';
 import type { Moment } from '../../../shared/watchalong/moments.ts';
@@ -26,23 +27,23 @@ function transcriptOf(call: number) {
     times = row.line_times ? (JSON.parse(row.line_times) as number[]) : null;
   return { lines, times: times?.length === lines.length ? times : null, live: row.status === 'live' };
 }
-// The call's transcript and recording, or why not
-function watchedBack(call: number) {
+// The call's transcript and recording (read on playback.ts's thread), or why not.
+async function watchedBack(call: number) {
   const said = transcriptOf(call);
   if (!said) return 404;
   if (said.live) return [409, `Call #${call} is still going on: its screen is the call's own.`] as Refusal;
-  const recording = callPlayback(call);
+  const recording = await callPlayback(call);
   if (!recording) return [404, `Call #${call} has no recording: nothing of a screen was shown on it.`] as Refusal;
   return { said, recording };
 }
-const refused = (watched: ReturnType<typeof watchedBack>): watched is Refusal =>
+const refused = (watched: Awaited<ReturnType<typeof watchedBack>>): watched is Refusal =>
   typeof watched === 'number' || Array.isArray(watched);
 
 // The call's moments and its transcript's lines in one timeline, each with its time on the company's clock, the moments
 // by number (#14) and the lines by theirs ([12], as hq call numbers them). The same moment's words in a row (no line
 // between) are one line, counted, as the call's agent reads them.
-export function timeline(call: number) {
-  const watched = watchedBack(call);
+export async function timeline(call: number) {
+  const watched = await watchedBack(call);
   if (refused(watched)) return watched;
   const { said, recording } = watched;
   const clock = clockOf({ clockMs: 0 });
@@ -77,12 +78,10 @@ export function timeline(call: number) {
 // day on the company's clock ('17:03:12'), a moment ('#14') or a time from the call's start ('+2m10s': its first line,
 // or the recording's start when that came first or the lines have no times). After the recording's end: its last screen.
 export async function screenAt(call: number, spec = '') {
-  const watched = watchedBack(call);
+  const watched = await watchedBack(call);
   if (refused(watched)) return watched;
   const { said, recording } = watched;
-  const { events, clockMs, moments, shows } = recording;
-  const first = events[0].timestamp,
-    last = events.at(-1)!.timestamp;
+  const { first, last, clockMs, moments, shows } = recording;
   const start = Math.min(first + clockMs, said.times?.[0] ?? Infinity);
   const asked = spec.trim(),
     from = FROM_START.exec(asked);
@@ -102,7 +101,10 @@ export async function screenAt(call: number, spec = '') {
   const moment = asked.startsWith('#') ? moments.find(m => m.n === Number(asked.slice(1))) : undefined;
   const ring = moment?.kind === 'tap' ? { x: moment.x!, y: moment.y! } : undefined;
   const shown = Math.min(time, last);
-  const picture = await mirrors.at(events, shown, { long: TOOL_PX, png: true, ring }, shows);
+  // (Chromium's replay holds nothing of HQ's: latency.ts exclude.)
+  const picture = await exclude(
+    mirrors.at(await recording.at(shown), shown, { long: TOOL_PX, png: true, ring }, shows),
+  );
   if (!picture) return [404, NOTHING] as Refusal;
   const ended = time > last ? ` (the recording ended at ${clock(last)})` : '';
   return {
@@ -128,26 +130,18 @@ const lasted = (ms: number) => {
 // `about` (the call's notes and items, server.ts), then one event a line in order, so the player shows the screen from
 // the first lines while the rest comes. Never the transcript: the board isn't shown its own calls' words.
 export async function forBoard(res: ServerResponse, call: number, about: Record<string, unknown>) {
-  const recording = callPlayback(call);
+  const recording = await callPlayback(call);
   if (!recording) return reply(res, 404, { error: 'nothing recorded' });
-  const { events, clockMs, moments } = recording;
-  const head = { clockMs, moments, start: events[0].timestamp, end: events.at(-1)!.timestamp, ...about };
+  const { first, last, clockMs, moments } = recording;
+  const head = { clockMs, moments, start: first, end: last, ...about };
+  const events = await recording.every();
   res.writeHead(200, {
     'content-type': 'application/x-ndjson; charset=utf-8',
     'content-encoding': 'gzip',
     'cache-control': 'private, no-store',
   });
-  // (a few lines to a chunk: a canvas frame's event is tens of KB, a tap's a hundred bytes)
-  function* chunks() {
-    yield `${JSON.stringify(head)}\n`;
-    for (let i = 0; i < events.length; i += LINES_A_CHUNK)
-      yield events
-        .slice(i, i + LINES_A_CHUNK)
-        .map(event => `${JSON.stringify(event)}\n`)
-        .join('');
-  }
-  await pipeline(Readable.from(chunks()), createGzip({ level: GZIP_LEVEL }), res);
+  // (zlib's threads and the board's line hold nothing of HQ's: latency.ts exclude.)
+  await exclude(pipeline(Readable.from([`${JSON.stringify(head)}\n`, events]), createGzip({ level: GZIP_LEVEL }), res));
 }
 // Gzip's level 4: the canvas frames (base64 WebP) hardly shrink further, the DOM's text does at any level
-const LINES_A_CHUNK = 64,
-  GZIP_LEVEL = 4;
+const GZIP_LEVEL = 4;

@@ -1,29 +1,35 @@
 // The page's title on the view (README, The book's frame: the title on the view): fixed at the top left of the paper's
-// content, below the status bar's blur, never zoomed or panned with the page, and the day of what's showing under it.
+// content, below the status bar's blur, never zoomed or panned with the page, and the day of what's showing under it,
+// with a quiet lock and "Locked" beside it on a read-only page (bookcontrols.js lockLine).
 // It takes no press: the page under it is drawn on as anywhere, and the title is renamed from the dots menu's Rename
 // page (bookcontrols.js, booktitle.js). A page turn's picture carries it with the page it shows (bookflip.js).
 import { dayWords, nameOf } from './bookhead.js';
 import { viewOf } from './bookview.js';
+import { icon } from '../icons.js';
 
-// book (bookpages.js). Returns { el, update() }: el, the head, where the rename's field is written (booktitle.js);
-// update() shows the shown page's title and the day at the view's top, as the view moves or the page changes.
+// book (bookpages.js). Returns { el, update(), locked(on) }: el, the head, where the rename's field is written
+// (booktitle.js); update() shows the shown page's title and the day at the view's top, as the view moves or the page
+// changes; locked(on) shows the lock or not.
 export function mountHead(book) {
   const el = document.createElement('div'),
     title = document.createElement('h2'),
-    day = document.createElement('p');
+    { line, day, lock } = dayLine();
   el.className = 'bk-view-head';
   title.className = 'bk-page-title';
   title.append(document.createElement('span'));
-  day.className = 'bk-view-day';
-  // (no day until a page with one shows: a call's page has none)
-  day.hidden = true;
   // (what the board reads: a minimised call covers as little of it as it can, by their own boxes.)
-  for (const words of [title, day]) words.setAttribute('data-keep-in-sight', '');
-  el.append(title, day);
+  for (const words of [title, day, lock]) words.setAttribute('data-keep-in-sight', '');
+  el.append(title, line);
   book.desk.append(el);
   const shown = { title: null, day: null, h: 0 };
   return {
     el,
+    locked(on) {
+      if (lock.hidden === !on) return;
+      lock.hidden = !on;
+      // (the head's height read again at the next update: on a call's page, with no day, the lock's line is its own)
+      shown.h = 0;
+    },
     update() {
       const view = viewOf(book),
         page = view?.page,
@@ -50,6 +56,22 @@ export function mountHead(book) {
       handedOver(book, view, shown.h, top);
     },
   };
+}
+
+// The line under the title: the day, none until a page with one shows (a call's page has none), and the lock and
+// "Locked", hidden till a read-only page shows.
+function dayLine() {
+  const line = document.createElement('div'),
+    day = document.createElement('p'),
+    lock = document.createElement('p');
+  line.className = 'bk-view-line';
+  day.className = 'bk-view-day';
+  lock.className = 'bk-view-locked';
+  lock.innerHTML = `${icon('lock')}<span>Locked</span>`;
+  lock.setAttribute('role', 'status');
+  day.hidden = lock.hidden = true;
+  line.append(day, lock);
+  return { line, day, lock };
 }
 
 // Whether anything on the page lies under the head (h: its height on the screen, from its top): a unit (a scrap, the

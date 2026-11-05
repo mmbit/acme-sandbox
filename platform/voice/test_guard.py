@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from guard import CALL_TOOLS, HQ_TOOLS, PARTNER, PARTNER_TOOLS, TOOLS, agent_env, hq_tools_work, sign_in_pipe  # noqa: E402
+from guard import CALL_TOOLS, GUEST, GUEST_TOOLS, HQ_TOOLS, PARTNER, PARTNER_TOOLS, TOOLS, agent_env, hq_tools_work, sign_in_pipe  # noqa: E402
 
 HERE = str(Path(__file__).parent)
 HQ = str(Path(HERE).parent / 'worker' / 'bin' / 'hq')
@@ -211,6 +211,22 @@ class Guard(unittest.TestCase):
         self.assertEqual(PARTNER_TOOLS, ['hang_up', 'no_transcript', 'note', 'screen'])
         self.assertEqual(sorted(t['name'] for t in hq_tools.PARTNER_TOOLS), PARTNER_TOOLS)
 
+    def test_a_guest_carrying_the_board_s_call_has_its_own_work_and_no_look_up(self):
+        """A guest goes on with the call the board left: no built-in tool, and of hq_tools.py's only what the line answers
+        on the call's own page and what runs nothing, so a guest's words can't steer a look-up or act for the board
+        (house rule 9)."""
+        import hq_tools
+        args = dict(zip(GUEST[1::2], GUEST[2::2]))
+        self.assertEqual(args['--tools'], '')
+        self.assertEqual(json.loads(args['--mcp-config']),
+                         {'mcpServers': {'hq': {'command': sys.executable, 'args': [f'{HERE}/hq_tools.py', 'guest']}}})
+        self.assertEqual(sorted(t['name'] for t in hq_tools.GUEST_TOOLS), GUEST_TOOLS)
+        runs_nothing = {'hang_up', 'note', 'say_nothing'}
+        self.assertLessEqual(set(GUEST_TOOLS), set(hq_tools.LINE_TOOLS) | runs_nothing)
+        for board_s in ('write_down', 'sketch', 'draw', 'open_work', 'drive', 'ask_to_see', 'save_voice', 'forget_voice',
+                        'name_voice', 'design_session', 'screen'):
+            self.assertNotIn(board_s, GUEST_TOOLS)
+
     def test_a_call_cannot_hand_on_a_file(self):
         """hq job with a file, in the call agent's environment: refused before anything leaves (the file is the seat's token)."""
         hq = HQ
@@ -316,12 +332,12 @@ class HqTools(unittest.TestCase):
             r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', env=env, capture_output=True, text=True)
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
-        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
+        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'replace', 'expedite', 'add', 'page', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'activity', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
                                                                                 'ask_to_see', 'draw', 'open_work', 'drive', 'write_down', 'title_notes',
                                                                                 'read_notes', 'mark_notes', 'change_note', 'try',
                                                                                 'draw_picture', 'prototype', 'name_voice',
                                                                                 'save_voice', 'forget_voice', 'design_session',
-                                                                                'raise_hand', 'say_nothing'])
+                                                                                'raise_hand', 'say_nothing', 'note'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_say_nothing_runs_nothing_and_asks_for_no_words(self):
@@ -436,18 +452,21 @@ class HqTools(unittest.TestCase):
         self.assertEqual(phone[1]['result']['content'][0]['text'], hq_tools.PROTOTYPE_WORDS['none'])
 
     def test_a_prototype_from_a_brief_asks_the_voice_line_in_words(self):
-        """A brief (built in the background, the line's Call.build): the line's word that the builder has it; a brief
-        beside a page, or not words, never reaches the line."""
+        """A brief (built in the background, the line's Call.build), with what its version changes or without: the
+        line's word that the builder has it; a brief beside a page, or not words, never reaches the line."""
         import hq_tools
-        path, asked = line_socket(self, [{'ok': 'The builder has it.'}])
+        path, asked = line_socket(self, [{'ok': 'The builder has it.'}] * 2)
         with tempfile.TemporaryDirectory() as d:
             env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
-            out = self.call(('prototype', {'name': 'Kattengotchi', 'brief': 'A cat to feed.'}),
+            next_one = {'name': 'Kattengotchi', 'brief': 'A bowl, and it purrs.', 'about': 'A bowl and a purr'}
+            out = self.call(('prototype', {'name': 'Kattengotchi', 'brief': 'A cat to feed.'}), ('prototype', next_one),
                             ('prototype', {'name': 'Kattengotchi', 'brief': 'A cat.', 'html': '<!doctype html>'}),
-                            ('prototype', {'name': 'Kattengotchi', 'brief': 5}), env=env)
+                            ('prototype', {'name': 'Kattengotchi', 'brief': 5}),
+                            ('prototype', {'name': 'Kattengotchi', 'brief': 'A cat.', 'about': 5}), env=env)
         replies = [(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]]
-        self.assertEqual(replies, [(False, 'The builder has it.'), *[(True, hq_tools.BUILD_TOOL_WORDS['shape'])] * 2])
-        self.assertEqual(asked, [{'prototype': {'name': 'Kattengotchi', 'brief': 'A cat to feed.'}, 'key': 'key-1'}])
+        self.assertEqual(replies, [*[(False, 'The builder has it.')] * 2, *[(True, hq_tools.BUILD_TOOL_WORDS['shape'])] * 3])
+        self.assertEqual(asked, [{'prototype': {'name': 'Kattengotchi', 'brief': 'A cat to feed.'}, 'key': 'key-1'},
+                                 {'prototype': next_one, 'key': 'key-1'}])
 
     def test_ask_to_see_and_draw_ask_the_voice_line_in_words_only_on_the_boards_call(self):
         """ On the board's call: the line's answer in words (what it did, or its
@@ -624,6 +643,11 @@ class HqTools(unittest.TestCase):
         self.assertEqual(log.count('ARG --now\n'), 1)
         self.assertEqual([s[3].get('now') for s in Coordinator.seen], [None, None, True])
         self.assertEqual([reply['result']['isError'] for reply in out[4:]], [True, True, True])
+        # (one started now isn't left to read as waiting till the call ends.)
+        words = [reply['result']['content'][0]['text'] for reply in out[1:4]]
+        self.assertIn("nobody is on it until it runs", words[1])
+        self.assertIn('it starts as soon as a seat takes it', words[2])
+        self.assertNotIn('nobody is on it', words[2])
 
     def test_after_queues_the_job_behind_another(self):
         """The job reaches the coordinator with its dependency, and invalid job numbers are refused.
@@ -919,6 +943,23 @@ class HqTools(unittest.TestCase):
         self.assertEqual([(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]],
                          [(True, "There's no picture on the phone: write it down in your words alone")] * 2)
 
+    def test_off_the_notes_is_on_the_list_alone(self):
+        """write_down with page false on the board's call in HQ: hq's item add --off-page, never the line's notes; left
+        out or true, the line's notes, with no page in what it's asked (a fault in our tools on a call about something
+        else)."""
+        path, asked = line_socket(self, [{'ok': 'Written down.'}, {'ok': 'Written down.'}])
+        note = {'goal': 'g', 'owner': 'bolt', 'words': 'Dragging fails'}
+        with tempfile.TemporaryDirectory() as d:
+            url = coordinator(self)
+            out = self.call(('write_down', {**note, 'page': False}), ('write_down', note),
+                            ('write_down', {**note, 'page': True}), env=self.env(d, url, (path, 'key-1')))
+            log = Path(d, 'hq.log').read_text()
+        self.assertEqual([r['result']['isError'] for r in out[1:]], [False] * 3)
+        self.assertEqual(log.count('ARG --off-page\n'), 1)
+        self.assertIn('ARG task\nARG --off-page\nARG bolt\n', log)
+        self.assertEqual(len(asked), 2)
+        self.assertTrue(all('page' not in a['write_down'] for a in asked))
+
     def test_a_lost_answer_to_what_is_written_down_is_unconfirmed(self):
         """A retry could put it on the list twice: the agent hears it may be there, and that the follow-up catches it if not."""
         for lose, why in (('drop', 'Empty reply from server'), (500, 'HTTP 500: internal')):
@@ -977,13 +1018,16 @@ class HqTools(unittest.TestCase):
             q = "Penny's request #35; $(cat /seat/token) `id`"
             out = self.call(('search', {'query': q}), ('history', {'query': '#35'}), ('history', {}),
                             ('when', {'what': q, 'size': sized_time('1h30m'), 'agent': 'bolt', 'after': 123, 'by': '2026-10-06T14:30Z'}),
-                            ('intercom', {'query': q}), ('eta', {'query': q}), env=env)
+                            ('intercom', {'query': q}), ('eta', {'query': q}), ('activity', {'of': '#24845', 'since': '2h'}),
+                            ('activity', {'of': 'lark'}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertIn(f'ARG search\nARG {q}\nARG 5\n', log)  # (as typed: nothing expanded)
         self.assertIn(f'ARG when\nARG {q}\nARG --size\nARG {sized_time("1h30m")}\nARG --agent\nARG bolt\nARG --after\nARG 123\nARG --by\nARG 2026-10-06T14:30Z\n', log)
         self.assertIn(f'ARG intercom\nARG {q}\n', log)
         self.assertIn(f'ARG projects\nARG {q}\n', log)  # (eta)
         self.assertIn('ARG history\nARG #35\n', log)
+        self.assertIn('ARG activity\nARG 24845\nARG --since\nARG 2h\n', log)
+        self.assertIn('ARG activity\nARG lark\n', log)
         self.assertEqual(log.count('ARG history\n'), 2)  # (and with no query, no argument after it)
         self.assertNotIn(SEAT, log)
         self.assertTrue(all(r['result']['isError'] for r in out[1:]))  # (port 9: the coordinator isn't there)
@@ -1037,7 +1081,9 @@ class HqTools(unittest.TestCase):
                    *[('when', {'what': 'x', 'after': after}) for after in (0, -1, True, '123', None)], ('search', {'query': ['x']}), ('history', {'query': 35}),
                    ('intercom', {'query': ' '}), ('intercom', {}), ('eta', {'query': ['x']}),
                    ('call', {}), ('call', {'id': '12; id'}), ('call', {'id': '12'}), ('call', {'id': 0}), ('call', {'id': -3}),
-                   ('call', {'id': True}), ('call', {'id': 12.5})]
+                   ('call', {'id': True}), ('call', {'id': 12.5}),
+                   ('activity', {}), ('activity', {'of': 12}), ('activity', {'of': '--since'}), ('activity', {'of': 'lark; id'}),
+                   ('activity', {'of': 'lark', 'since': '$(id)'}), ('activity', {'of': 'lark', 'since': '--limit'})]
             out = self.call(*bad, env={**fake_hq(d), 'HQ_URL': 'http://127.0.0.1:9'})
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertTrue(all(r['result']['isError'] for r in out[1:]))
@@ -1133,6 +1179,26 @@ class CallsList(unittest.TestCase):
         self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
         token, _ = self.start('kit')
         self.assertEqual(self.tools(token, 'kit', ('expedite', {'job': job})), [(True, 'Nothing expedited: only the CEO expedites a job: ask juno')])
+        self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
+
+    # What the board settles on the CEO's call is on its page at once, for a check before the follow-up: added to the page
+    # as it is now, each version kept with the call.
+    def test_the_ceos_call_writes_on_its_page_at_once_and_a_colleagues_cant(self):
+        self.db('delete from pad_versions')
+        token, call = self.start('juno')
+        first, then = 'The board: the shop opens Friday, not Monday.', 'Watch the first orders on Friday evening.'
+        out = self.tools(token, 'juno', ('page', {'words': first}), ('page', {'words': then}),
+                         ('page', {'words': then}), ('page', {'words': ' '}))
+        self.assertEqual(out[:2], [(False, "On the page: every job, check and call of the CEO's reads it from now.")] * 2)
+        self.assertEqual(out[2], (True, 'The page is as it was: the page ends with those words already'))
+        self.assertEqual(out[3], (True, 'page needs the words to add'))
+        self.assertEqual(self.db('select text, by, job, call from pad_versions order by id'),
+                         [(first, 'juno', None, call), (f'{first}\n{then}', 'juno', None, call)])
+        self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
+        token, _ = self.start('kit')
+        self.assertEqual(self.tools(token, 'kit', ('page', {'words': 'My plan instead.'})),
+                         [(True, "The page is as it was: the page is the CEO's: only its jobs and calls write on it")])
+        self.assertEqual(len(self.db('select id from pad_versions')), 2)
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
 
     def test_a_call_token_adds_to_no_other_call_and_reads_no_calls_items_nor_its_own_transcript(self):
@@ -1436,6 +1502,13 @@ class CallAgent(unittest.TestCase):
         self.assertEqual(sorted(init['tools']), [f'mcp__hq__{t}' for t in PARTNER_TOOLS])
         self.assertEqual(sorted(seen[0][1]), [f'mcp__hq__{t}' for t in PARTNER_TOOLS])
         self.assertIn('Noted.', seen[-1][2])
+        self.assertEqual(log, '')
+
+    def test_a_guest_carrying_the_call_is_offered_only_its_own_work(self):
+        init, seen, log = self.turn('mcp__hq__note', {'what': 'Esmee wants a darker cover'}, tools=GUEST)
+        self.assertEqual(sorted(init['tools']), [f'mcp__hq__{t}' for t in GUEST_TOOLS])
+        self.assertEqual(sorted(seen[0][1]), [f'mcp__hq__{t}' for t in GUEST_TOOLS])
+        self.assertIn('Noted for your follow-up', seen[-1][2])
         self.assertEqual(log, '')
 
     def test_open_work_and_drive_are_refused_on_a_call_out_and_the_phone(self):

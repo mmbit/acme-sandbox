@@ -6,6 +6,7 @@
 // window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page. A box of
 // words' grip starts the same move with any tool (grab).
 import { draw } from '/__review/ink.js';
+import { layered } from '/__review/inkshape.js';
 import { drawScrap } from './bookscrapdraw.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
@@ -130,7 +131,7 @@ function canvasFor(book, view, { ink, scraps }, box) {
   const g = c.getContext('2d');
   g.setTransform(k, 0, 0, k, (PAD - box.x0) * k, (PAD - box.y0) * k);
   for (const s of scraps) drawScrap(g, s);
-  draw(g, [...ink.filter(s => s.alpha < 1), ...ink.filter(s => !(s.alpha < 1))]);
+  draw(g, layered(ink));
   view.el.append(c);
   requestAnimationFrame(() => (c.dataset.up = ''));
   return c;

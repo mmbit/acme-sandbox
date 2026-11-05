@@ -310,6 +310,23 @@ test('a close reaches the same owner as one item and can be dropped without crea
   assert.equal(proposals.list('bolt').find(p => p.id === 'findings:71')!.status, 'dropped');
 });
 
+test("a notice on the owner's session isn't offered once its item is decided elsewhere, and lapses with it", async () => {
+  const windows = await import('./windows.ts');
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
+  const session = await h.start({ agent: 'wren', title: 'The second world', engine: 'claude' });
+  const { item } = await deliver('close');
+  const notice = () => db.prepare('select job, lapsed from messages where held = ?').get(item.proposal) as any;
+  assert.equal(notice().job, session.id);
+  const sorter = await h.start({ agent: 'wren', title: 'Sort new proposals into the plan' });
+  const dropped = await h.hq(sorter, 'inbox', 'drop', 'findings:71', 'Draw a smaller slice');
+  assert.equal(dropped.code, 0, dropped.out);
+  const hook = await h.hq({ ...session, stdin: '' }, 'inbox', '--hook');
+  assert.doesNotMatch(hook.out, /findings:71/);
+  assert.equal((await h.finish(session)).status, 200);
+  assert.ok(notice().lapsed, 'it lapses with the session, no job of its own');
+});
+
 test('touch-ups without blockers reach the assigned worker with their full instructions', async () => {
   const { author, branch } = await deliver();
   h.storedPr(71, author.id, 'open', ['game.ts'], { round: 2 });
@@ -343,7 +360,7 @@ for (const [windowed, stops] of [
   [true, 'yields'],
   [true, 'parks'],
 ] as const)
-  test(`findings on a thread ${windowed ? `with a window wait in no queued planning job (the session ${stops})` : 'without a window go as before'}, without review.drawWindowedChanges`, async () => {
+  test(`findings on a thread ${windowed ? `with a window reach the running session too, held by their planning job (the session ${stops})` : 'without a window go as before'}, without review.drawWindowedChanges`, async () => {
     const { orderingSnapshot } = await import('./backlog.ts');
     const windows = await import('./windows.ts');
     const deadline = Date.now() + 3_600_000;
@@ -354,20 +371,21 @@ for (const [windowed, stops] of [
     const planning = heardBy();
     if (windowed) windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
     assert.equal(orderingSnapshot(Date.now()).jobs.find(job => job.id === planning)!.due, windowed ? deadline : null);
-    // the next round's touch-ups: with a window, the owner's session hears them at once and holds them
+    // the next round's touch-ups: with a window, the owner's session hears them at once, and the planning job holds
+    // them all the same
     h.storedPr(71, author.id, 'open', ['game.ts'], { round: 2 });
     proposals.deliverFindings(
       { pr: 71, round: 2, branch, agent: 'bolt', decision: 'changes', summary: 'Check the touch-ups', findings: [] },
       { agent: 'bolt', job: author.id },
     );
-    assert.equal(heardBy(), windowed ? session.id : planning);
+    assert.equal(heardBy(), planning);
     const told = db.prepare("select job from messages where recipient = 'wren' and text like '%findings:71%'").all();
     assert.deepEqual(
       told.map(m => m.job),
       windowed ? [session.id] : [],
     );
-    // the session stops running without deciding them: the planning job holds them again, drawn first by the window,
-    // and the unread notice lapses rather than becoming a job too
+    // the session stops running without deciding them: the planning job still holds them, drawn first by the window,
+    // and the unread notice lapses rather than becoming a job too (a yielded session keeps it for its next run)
     if (stops === 'parks') await h.park(session, {});
     else
       await h.finish(session, stops === 'yields' ? { status: 'yielded', session: 'its-session' } : { status: 'done' });
@@ -385,7 +403,7 @@ for (const [windowed, stops] of [
           .prepare("select became, lapsed is not null lapsed from messages where text like '%findings:71%'")
           .all()
           .map(m => ({ ...m })),
-        [{ became: null, lapsed: 1 }],
+        [{ became: null, lapsed: stops === 'yields' ? 0 : 1 }],
       );
     assert.equal(fixTasks().length, 0);
     assert.equal((await h.claim('claude'))?.id, windowed ? planning : unhurried);
@@ -544,6 +562,24 @@ test('with review.drawWindowedChanges, a windowed thread\'s "changes" ruling giv
     },
     { became: null, lapsed: 1 },
   );
+  // a later session's hook offers the next draw's notice, though its item was accepted before it was sent
+  const next = await h.start({ agent: 'wren', title: 'Plan the till', engine: 'claude' });
+  h.storedPr(71, author.id, 'open', ['game.ts'], { round: 3 });
+  proposals.deliverFindings(
+    {
+      pr: 71,
+      round: 3,
+      branch,
+      agent: 'bolt',
+      decision: 'changes',
+      summary: 'Check the touch-ups again',
+      findings: [],
+      touchups: 'Check the review touch-ups again',
+    },
+    { agent: 'bolt', job: author.id },
+  );
+  const hook = await h.hq({ ...next, stdin: '' }, 'inbox', '--hook');
+  assert.match(hook.out, /Review findings:71 from bolt for game: .*, so HQ drew #\d+ for bolt to answer it/);
 });
 
 // findings:2004 on 23 Oct: round 1's touch-ups still open after round 2 had started

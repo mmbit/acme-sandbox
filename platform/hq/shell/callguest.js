@@ -4,6 +4,7 @@
 // agent is an AI and the call is written down, asks their name (remembered on the device), and the call's page opens.
 // Good until the call ends. (the QR code in place of a guest's name and email)
 import { act } from './data.js';
+import { esc } from '../util.js';
 import { qrCode, qrPath } from '/shared/qr/qr.js';
 
 let joining = null; // (the call whose joins it hears, guestKey.)
@@ -38,6 +39,7 @@ export async function addGuest(c) {
   if (!card) return;
   if (!card.hidden) return void (card.hidden = true);
   card.hidden = false;
+  card.dataset.ask = 'join';
   card.innerHTML = '<b>Join from an iPad</b><p>Making the code…</p>';
   try {
     // (the call's own language: its join page speaks it)
@@ -60,3 +62,24 @@ function shown(card, link) {
   a.href = a.textContent = link;
   card.querySelector('.guest-close').onclick = () => (card.hidden = true);
 }
+
+// Hanging up with guests on the call's page asks first: end the call for everyone, or leave it to them, one of them
+// going on with the agent on their own device (the line holds it for them: the coordinator's callguests.ts). Hang up
+// again ends it.
+export function askHangUp(c, { end, leave }) {
+  const card = c.layer?.querySelector('#call-guest-card');
+  if (!card || !c.guests?.length || !c.live) return end();
+  if (!card.hidden && card.dataset.ask === 'hang-up') return end();
+  const who = esc(listed(c.guests)),
+    name = esc(c.name),
+    own = c.guests.length > 1 ? 'devices' : 'device';
+  card.dataset.ask = 'hang-up';
+  card.hidden = false;
+  card.innerHTML = `<b>Hang up</b><p>${who} can go on with ${name} on their own ${own}. Call ${name} again to come back, or to end it.</p>
+    <div class="guest-keys"><button type="button" class="guest-leave">Leave it to ${who}</button><button type="button" class="guest-end">End for everyone</button><button type="button" class="guest-close">Cancel</button></div>`;
+  card.querySelector('.guest-leave').onclick = leave;
+  card.querySelector('.guest-end').onclick = end;
+  card.querySelector('.guest-close').onclick = () => (card.hidden = true);
+}
+// Names as words: Esmee; Esmee and Sam; Esmee, Sam and Ana
+export const listed = names => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]);

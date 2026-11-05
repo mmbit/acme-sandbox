@@ -103,14 +103,11 @@ export async function underUnit(page, g, selector) {
           return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
         },
         unit = document.querySelector(`#book .bk-unit[data-unit="${id}"]`),
-        at = document.querySelector(sel),
-        tie = document.querySelector(`#book .bk-tie[data-g="${id}"] polyline`);
+        at = document.querySelector(sel);
       const others = [...unit.closest('.bk-page').querySelectorAll('.bk-unit[data-unit], .bk-under[data-g]')]
         .filter(el => (el.dataset.unit ?? el.dataset.g) !== String(id))
         .map(el => ({ id: el.dataset.unit ?? el.dataset.g, ...box(el) }));
-      // (a tie's points on the screen)
-      const tied = tie && [...tie.points].map(p => new DOMPoint(p.x, p.y).matrixTransform(tie.getScreenCTM()));
-      return { at: at && box(at), unit: box(unit), others, tie: tied?.map(p => [p.x, p.y]) };
+      return { at: at && box(at), unit: box(unit), others };
     },
     [g.id, sel],
   );
@@ -119,60 +116,40 @@ export async function underUnit(page, g, selector) {
 const overlapping = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 // What hangs under group g's unit (selector, in its .bk-under) where the board reads it as its note's at every width: by
 // its own unit, under it in its column or level with it beside it (a slip's half-degree tilt aside), with no other unit
-// nor what hangs under one between them or over it; or past its row, tied to it (tiedToItsNote); and on the paper left
-// of the tools
+// nor what hangs under one between them or over it; and on the paper left of the tools
 export async function underItsNote(page, g, selector) {
-  const { at, unit, others, tie } = await underUnit(page, g, selector),
-    shown = JSON.stringify({ at, unit, tie }),
+  const { at, unit, others } = await underUnit(page, g, selector),
+    shown = JSON.stringify({ at, unit }),
     under = at.top >= unit.bottom && at.left >= unit.left - TILT && at.right <= unit.right + TILT,
     beside = at.top < unit.bottom && unit.top < at.bottom && (at.left >= unit.right || at.right <= unit.left);
   for (const o of others) assert.ok(!overlapping(at, o), `clear of ${o.id} at ${JSON.stringify(o)}: ${shown}`);
-  if (tie) tiedToItsNote({ at, unit, others, tie }, shown);
-  else {
-    assert.ok(under || beside, `under its note's unit or beside it: ${shown}`);
-    // (the paper between them: down from the unit to the slip, or across from it, where both are)
-    const between = under
-      ? { left: Math.max(at.left, unit.left), top: unit.bottom, right: Math.min(at.right, unit.right), bottom: at.top }
-      : {
-          left: Math.min(at.right, unit.right),
-          top: Math.max(at.top, unit.top),
-          right: Math.max(at.left, unit.left),
-          bottom: Math.min(at.bottom, unit.bottom),
-        };
-    for (const o of others)
-      assert.ok(!overlapping(between, o), `${o.id} at ${JSON.stringify(o)} between it and its note: ${shown}`);
-  }
+  assert.ok(under || beside, `under its note's unit or beside it: ${shown}`);
+  // (the paper between them: down from the unit to the slip, or across from it, where both are)
+  const between = under
+    ? { left: Math.max(at.left, unit.left), top: unit.bottom, right: Math.min(at.right, unit.right), bottom: at.top }
+    : {
+        left: Math.min(at.right, unit.right),
+        top: Math.max(at.top, unit.top),
+        right: Math.max(at.left, unit.left),
+        bottom: Math.min(at.bottom, unit.bottom),
+      };
+  for (const o of others)
+    assert.ok(!overlapping(between, o), `${o.id} at ${JSON.stringify(o)} between it and its note: ${shown}`);
   await inSight(page, `.bk-under[data-g="${g.id}"] ${selector}`);
   await onPaper(page, `.bk-under[data-g="${g.id}"] ${selector}`);
 }
-// A tie (bookunder.js .bk-tie, screen px) from the top of its note's unit to the top of what hangs under it, over no
-// other unit nor what hangs under one
-function tiedToItsNote({ at, unit, others, tie }, shown) {
-  const [[x0, y0], [x1, y1]] = [tie[0], tie.at(-1)];
-  assert.ok(Math.abs(y0 - unit.top) <= 1 && x0 > unit.left && x0 < unit.right, `tied from its note's top: ${shown}`);
-  assert.ok(Math.abs(y1 - at.top) <= TILT && x1 > at.left && x1 < at.right, `tied to its top: ${shown}`);
-  for (const [[ax, ay], [bx, by]] of tie.slice(1).map((pt, k) => [tie[k], pt])) {
-    const line = { left: Math.min(ax, bx), top: Math.min(ay, by), right: Math.max(ax, bx), bottom: Math.max(ay, by) };
-    for (const o of others) assert.ok(!overlapping(line, o), `the tie over ${o.id} at ${JSON.stringify(o)}: ${shown}`);
-  }
-}
-// What came under group g's unit (selector, in its .bk-under), its unit and the tie between them where there's one
-// (bookunder.js) on one screen, on the paper left of the tools: the paper slides to them as a face or an answer comes
+// What came under group g's unit (selector, in its .bk-under: bookunder.js) and its unit on one screen, on the paper left of the tools: the paper slides to them as a face or an answer comes
 // (bookarrive.js hung), never panned to here. Waited on, the slide taking its time on a loaded machine; whether it
 // reads as its note's is underItsNote's
 export async function shownByItsNote(page, g, selector) {
-  const sels = [`.bk-under[data-g="${g.id}"] ${selector}`, `.bk-unit[data-unit="${g.id}"]`],
-    tie = `.bk-tie[data-g="${g.id}"] polyline`;
+  const sels = [`.bk-under[data-g="${g.id}"] ${selector}`, `.bk-unit[data-unit="${g.id}"]`];
   let seen;
   const read = async () => ({
     desk: (await page.locator('#book .bk-desk').boundingBox()).x,
     tools: await toolsLeft(page),
     boxes: await page.evaluate(
-      ([sels, tie]) =>
-        [...sels.map(sel => document.querySelector(`#book ${sel}`)), document.querySelector(`#book ${tie}`)]
-          .filter((el, i) => i < sels.length || el)
-          .map(el => el.getBoundingClientRect().toJSON()),
-      [sels, tie],
+      sels => sels.map(sel => document.querySelector(`#book ${sel}`).getBoundingClientRect().toJSON()),
+      sels,
     ),
   });
   await until(

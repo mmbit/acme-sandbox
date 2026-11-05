@@ -131,9 +131,10 @@ const heads = new Map<number, string>();
 // Synthetic PR branches use their own namespace, separate from the worker's job/<id> branches.
 // The author's job on PR n ends with a push (the worker's hand-off): `by`, or its job queued on the branch, or a new one.
 // `push`: what the worker reports of it (its files against main, its head commit...).
+// (on the seat that claims its fix rounds, so a warm session goes on: carryover.ts.)
 async function submit(n: number, push: Record<string, unknown> = {}, by?: Running) {
   const [own] = by ? [] : queued(n).filter(j => j.kind === 'work' && j.ready);
-  const job = by ?? (own ? (await claim(n, j => j.id === own.id))[0] : await h.start({ agent: 'bolt', branch: `review/${n}` }));
+  const job = by ?? (own ? (await claim(n, j => j.id === own.id))[0] : await h.start({ agent: 'bolt', branch: `review/${n}` }, { seat: 'claude-1' }));
   const report = { pr: n, branch: `review/${n}`, files: FILES, sha: newSha(), ...push };
   if (typeof report.sha === 'string') heads.set(n, report.sha);
   await end(job, report);
@@ -498,7 +499,8 @@ test("a fix round goes on in its author's last session on the branch, whose fold
   assert.deepEqual(await ended([work]), [], 'kept while the pull request can merge');
   await decide(n, 'changes');
   const [fix] = await claim(n);
-  assert.deepEqual(fix.resumes, { job: work, session: 'bolt-1', seat: null });
+  // (no seat in resumes: the claim's seat decides, carryover.ts.)
+  assert.deepEqual(fix.resumes, { job: work, session: 'bolt-1' });
   await submit(n, { files, session: 'bolt-1' }, fix);
   await decide(n, 'merge');
   assert.deepEqual(prs(n), { round: 2, status: 'merged' });

@@ -21,6 +21,7 @@ import { changed, said, shut } from './booksave.js';
 import { grownTo, pageBox, scrapBoxOf } from './bookrow.js';
 import { shrink } from './bookscrapdraw.js';
 import { placeScrap } from './bookscrap.js';
+import { newId } from './bookedit.js';
 import { arrive } from './bookarrive.js';
 import { downToClear } from './bookwords.js';
 import * as brought from './bookbrought.js';
@@ -52,7 +53,7 @@ export function mountTape(book, paper, pages) {
   // voice note's words, at a point on a page where it has one ({ view, x, y }, book.at's): bookvoice.js)
   book.tape = {
     fromClipboard: (got, at) => fromClipboard(tape, got, at),
-    words: (words, point = null) => wordsIn(tape, words, { point }),
+    words: (words, point = null) => wordsIn(tape, words, { point, voice: true }),
   };
 }
 
@@ -139,9 +140,9 @@ async function pictureAt(url) {
 
 // Words onto the book in boxes (booktexts.js put), where landing() puts them on the page pageFor finds, wrapping at a
 // readable width and kept inside the paper shown. One step Undo takes back. A voice note's words land here too
-// (bookvoice.js, book.tape.words). at: [x, y] on screen; point: { view, x, y }, a point on a view's page, the words
-// starting there (a voice note held at it: bookinput.js).
-async function wordsIn(tape, words, { at = null, point = null }) {
+// (bookvoice.js, book.tape.words), on a slip of their own (voice). at: [x, y] on screen; point: { view, x, y }, a point
+// on a view's page, the words starting there (a voice note held at it: bookinput.js).
+async function wordsIn(tape, words, { at = null, point = null, voice = false }) {
   const { book } = tape;
   const found = point ? { v: point.view } : await pageFor(tape, { at });
   if (!found.v || !book.tools) return;
@@ -156,7 +157,11 @@ async function wordsIn(tape, words, { at = null, point = null }) {
       view = k === book.cur ? book.shown() : pageBox(page),
       spot = point ? { x: point.x, y: point.y, centre: false } : landing(v, view, hit?.i === k ? [hit.x, hit.y] : null);
     // (a voice note's shown there as they were heard: bookheard.js)
-    const texts = book.tools.put({ view: v, x: spot.x, y: spot.y }, words, { centre: spot.centre, there: !!point });
+    const texts = book.tools.put({ view: v, x: spot.x, y: spot.y }, words, {
+      centre: spot.centre,
+      there: !!point,
+      voice,
+    });
     if (!texts.length) return;
     // (moved as one inside the paper shown, its first line never above it, and in the middle, below what's there
     // already)
@@ -262,6 +267,7 @@ async function tapeIn(tape, file, { at = null, i = 0, today = false }) {
       spot = point?.i === k ? [point.x, point.y] : null,
       view = k === book.cur ? book.shown() : pageBox(page);
     const scrap = {
+      id: newId(), // (its own: bookedit.js)
       file: kept.file,
       url: kept.url,
       ...placeScrap({ nw: small.w, nh: small.h }, page, { at: spot, view, i }),
@@ -273,6 +279,7 @@ async function tapeIn(tape, file, { at = null, i = 0, today = false }) {
     sfx.land();
     changed(book, page);
     book.steps.push({
+      page,
       undo: () => {
         const n = page.scraps.indexOf(scrap);
         if (n < 0) return;

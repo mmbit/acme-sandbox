@@ -339,7 +339,7 @@ test('a scrap lands on the current page, under what is there; its picture is ser
   assert.equal(drawn.status, 200, 'the page drawn whole, groups and all');
 });
 
-test("a page's picture is the page as the board sees it: each scrap's words under it, the last long note whole", async () => {
+test("a page's picture is the page as the board sees it: each unit on its post-it, the last long note whole", async () => {
   const nb = await myNotebook();
   await noneOpen(nb);
   const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
@@ -353,7 +353,8 @@ test("a page's picture is the page as the board sees it: each scrap's words unde
   const { data, info } = await sharp(Buffer.from(await res.arrayBuffer()))
     .raw()
     .toBuffer({ resolveWithObject: true });
-  // (two columns of units, each scrap's post-it its own down the left of its column: none hidden under another unit)
+  // (two columns of units, each on its own post-it as the grid lays it, a scrap's words on it under its picture: none
+  // hidden under another unit.)
   const k = info.width / widthFor(2),
     at = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels).subarray(0, 3)];
   const yellow = (x: number, y: number) => {
@@ -365,7 +366,7 @@ test("a page's picture is the page as the board sees it: each scrap's words unde
     for (let y = 1; y < info.height; y++) if (yellow(x + 4, y) && !yellow(x + 4, y - 1)) runs++;
     return runs;
   });
-  assert.equal(postIts[0] + postIts[1], scraps.length, `each scrap's words on their own post-it (${postIts})`);
+  assert.equal(postIts[0] + postIts[1], scraps.length + 5, `each unit on its own post-it (${postIts})`);
   assert.ok(
     postIts.every(n => n > 0),
     'in both columns',
@@ -437,11 +438,18 @@ test('send a page: at once, each group to its agent, no page made, the page read
   const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
   const cut = (await scrap({ owner: 'moss', words: 'The basket button is tiny' })).body;
   const sketch = (await draw(page, [stroke(600, 600)])).body;
+  const blank = (await h.board('/api/notebooks/groups/create', { page, empty: true })).body;
   assert.equal(cut.page, page);
   const before = (await pages(nb)).pages.length;
 
   const went = (await h.board('/api/notebooks/pages/send', { id: page })).body;
   assert.ok(went.sent && !went.sending, 'sent at once: no seconds to undo');
+  assert.ok(!(await groups(page)).some(g => g.id === blank.id), 'a scrap nobody wrote on let go as the page locks');
+  assert.equal(
+    (db.prepare('select note from notebook_groups where id = ?').get(blank.id) as any).note,
+    null,
+    'sent to nobody',
+  );
   assert.equal((await pages(nb)).pages.length, before, 'no page made after it');
   assert.equal((await draw(page, [stroke(1, 1)])).status, 409, 'read-only');
   assert.equal((await h.board('/api/notebooks/pages/undo', { id: page })).status, 404, 'no Undo of a send');
@@ -652,4 +660,17 @@ test("an agent's card about a sent group's note: under the group, Open in the bo
     [page],
   );
   await h.finish(job);
+});
+
+test("an element's own id is kept through a save, and one that isn't 12 hex digits is refused", async () => {
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: await myNotebook() })).body.id,
+    id = '0123456789ab';
+  const made = (await draw(page, [{ ...stroke(10, 10), id }])).body;
+  assert.equal(made.ink[0].id, id);
+  const edited = (
+    await h.board('/api/notebooks/groups/edit', { id: made.id, since: made.updated, ink: [{ ...stroke(60, 10), id }] })
+  ).body;
+  assert.equal(edited.ink[0].id, id, 'a line moved keeps it');
+  assert.equal((await draw(page, [{ ...stroke(10, 10), id: 'not-an-id' }])).status, 400);
+  await h.board('/api/notebooks/groups/delete', { id: made.id });
 });

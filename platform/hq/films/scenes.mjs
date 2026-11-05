@@ -98,7 +98,9 @@ export const FILMS = {
     },
     play: async hq => {
       await hq.wait(0.8);
-      await hq.tap('#viewer .bar .share');
+      await hq.tap('#viewer .bar .more'); // (Share under More options.)
+      await hq.wait(0.5);
+      await hq.tap('#viewer .options .share');
       await hq.wait(0.6);
       await hq.type('Ilse', '#viewer .sharebox form.invite [name=name]');
       await hq.type('ilse@example.com', '#viewer .sharebox form.invite [name=email]');

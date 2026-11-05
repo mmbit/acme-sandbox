@@ -1,0 +1,97 @@
+/* A scrap opened off the grid (bookscrapopen.js): the grid's view waits under it as it was, a light scrim over it, and
+   the sheet nearly fills the paper, the scrap's own post-it yellow under its soft shadow, its ink clipped to it. The
+   bar along the foot is put away while it's open; Undo and Redo join the tools on the right. */
+/* (its own stacking: the grid's raised things, its typed words above all, stay under the scrim and the sheet) */
+#book .bk-backdrop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  isolation: isolate;
+}
+#book .bk-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(60, 45, 10, 0.1);
+  pointer-events: none;
+}
+#book .bk-lift {
+  position: absolute;
+  inset: 0;
+}
+/* (the sheet's shadow follows its clip as it flies; once it's down a still one, cheap to draw under the pen) */
+#book .bk-lift[data-flying] {
+  filter: drop-shadow(0 2px 3px rgba(60, 40, 0, 0.16)) drop-shadow(0 14px 30px rgba(60, 40, 0, 0.22));
+}
+#book .bk-sheet-shadow {
+  position: absolute;
+  border-radius: 14px;
+  box-shadow:
+    0 2px 3px rgba(60, 40, 0, 0.16),
+    0 14px 30px rgba(60, 40, 0, 0.22);
+}
+#book .bk-lift[data-flying] .bk-sheet-shadow {
+  display: none;
+}
+#book .bk-flyer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  overflow: hidden;
+}
+#book .bk-sheet {
+  position: absolute;
+  background: var(--bk-postit, #fdf1a9);
+}
+/* the sheet is the scrap's paper: no card of its own inside it */
+#book .bk-page[data-focus] .bk-unit-paper {
+  display: none;
+}
+#book .bk-sheet-keys {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+}
+#book .bk-sheet-keys .bk-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 16px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 1px 3px rgba(40, 30, 0, 0.18);
+  font: 600 16px/1 var(--bk-font, system-ui, sans-serif);
+}
+#book .bk-scrap-history {
+  display: none;
+}
+#book[data-scrap-open] .bk-scrap-history {
+  display: flex;
+  flex-direction: column;
+}
+/* the page's counter of what's open goes with its head: it would lie over the sheet's keys */
+#book :is(.bk-foot, .bk-view-head, .bk-for-you-count) {
+  transition: opacity 0.2s ease;
+}
+#book[data-scrap-open] :is(.bk-foot, .bk-view-head, .bk-for-you-count) {
+  opacity: 0;
+  pointer-events: none;
+}
+/* the grid takes no typing: a scrap's words are typed in once it's opened */
+#book .bk-page:not([data-focus]) :is(textarea.bk-scrap-words, .bk-typed) {
+  pointer-events: none;
+}
+/* a question on an Asks page gathered from another page: that page's name over its card */
+#book .bk-unit-from {
+  position: absolute;
+  left: 2px;
+  bottom: 100%;
+  max-width: 100%;
+  padding-bottom: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 500 11px/1.2 var(--bk-font, system-ui, sans-serif);
+  color: var(--bk-muted, #8a849c);
+}

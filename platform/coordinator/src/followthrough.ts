@@ -340,7 +340,7 @@ function runningPart(open: OpenByID, last: Check | undefined) {
     const fresh = since && last && since > last.created ? ', started since the last check' : '';
     return `- ${j.line} · since ${since ? `${since.slice(11, 16)} UTC` : 'unknown'}${fresh}`;
   });
-  return `Running now:\n${lines.join('\n') || '- nothing'}`;
+  return `Running now (hq activity <job>: what one is doing this minute):\n${lines.join('\n') || '- nothing'}`;
 }
 
 function readyPart(open: OpenByID) {

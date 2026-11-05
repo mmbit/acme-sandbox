@@ -11,13 +11,10 @@ import { DIR, notFound, serveFile } from '../pagescraps.ts';
 import { BOARD, drawnOf, row, type Page } from './book.ts';
 import { partsOf, shown, type Group, type Parts } from '../notebookgroups.ts';
 import { CAPTION, boxOf, slipsUnder, underAt } from '../../../hq/shell/ink/notebookstack.js';
-import { shifted } from '../../../hq/shell/ink/notebookparts.js';
-import { UNIT_W, heightFor } from '../../../hq/shell/ink/scrapunit.js';
+import { hasAny, shifted } from '../../../hq/shell/ink/notebookparts.js';
+import { CARD, UNIT_W, bodyOf } from '../../../hq/shell/ink/scrapunit.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
-import { MARGIN, layout, widthFor } from '../../../hq/shell/ink/masonry.js';
-import { canvasOf } from '../../../hq/shell/ink/sketchcanvas.js';
-import { onCanvas } from '../notebookplaces.ts';
-import { pageRow } from '../notebook.ts';
+import { layout, widthFor } from '../../../hq/shell/ink/masonry.js';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
 import { unfoldedCard } from '../../../hq/shell/card.js';
 import { WORDS as ASKING, said } from '../../../hq/shell/questions.js';
@@ -35,7 +32,7 @@ export async function servePicture(req: IncomingMessage, res: ServerResponse, wh
 }
 // How the pictures kept are drawn, in their files' names: a page's picture drawn another way is drawn again when next
 // read. Change it with what render() draws, or how a page lays its units out.
-const DRAWING = 'y';
+export const DRAWING = 'ac'; // (units as the grid's cards, the slip's shadows; exported for the tests)
 
 // The page's picture's file in DIR: the one kept since its last change, or drawn now and kept. null: the page was
 // deleted while it was drawn.
@@ -88,33 +85,53 @@ export async function unitsPage(page: number): Promise<Drawn> {
     // they had.)
     await latency.exclude(scrubbed());
     const parts = partsOf(g),
-      h = heightFor(parts, g.h!),
       under = underOf(g);
-    const below = under ? CAPTION.top + (await underHigh(under, DIR)) : 0;
-    const place = g.place ? JSON.parse(g.place) : undefined,
-      box = boxOf(parts),
+    const { h, below, hung, body } = await cardOf(g, parts, under);
+    const box = boxOf(parts),
       wide = box ? Math.max(UNIT_W, box.x + box.w) : UNIT_W;
-    units.push({ id: g.id, h, w: wide, below, parts, under, follows: units.length > 0 && g.kind === 'drawing', place });
+    units.push({
+      ...{ id: g.id, h, w: wide, below, parts, under: below ? hung : null },
+      ...{ follows: units.length > 0 && g.kind === 'drawing', card: g.kind !== 'drawing' && h > 0 },
+      words: under?.text ? { ...under, x: 0, y: body } : null,
+    });
   }
-  // (two columns wide: the picture agents read of a page, at scale 1; what's under a unit at its foot, or on a sketch
-  // page by its unit where it covers no other: sketchcanvas.js)
+  // (two columns wide: the picture agents read of a page, at scale 1; what's under a unit at its foot. Every page is a
+  // masonry, an old sketch page's too: its units' stored places are left unread.)
   const w = widthFor(2),
-    sketch = onCanvas(pageRow(page, null)!),
     grown = units.map(u => ({ ...u, h: u.h + u.below })),
-    masonry = sketch ? null : layout(grown, w),
-    places = masonry
-      ? masonry.places.map((p, i) => ({ ...p, hung: { x: p.x, y: p.y + units[i].h, w: UNIT_W, h: units[i].below } }))
-      : canvasOf(units, w).places,
-    placed = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] })),
-    { on, size } = masonry ? { on: placed, size: { w, h: masonry.height } } : cropped(placed);
+    masonry = layout(grown, w),
+    places = masonry.places.map((p, i) => ({
+      ...p,
+      hung: { x: p.x, y: p.y + units[i].h, w: UNIT_W, h: units[i].below },
+    })),
+    on = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] }));
   return {
-    ...{ x: 0, y: 0, ...size },
+    ...{ x: 0, y: 0, w, h: masonry.height, dotted: true },
+    cards: on.flatMap(u => (u.card ? [{ x: u.at.x, y: u.at.y, w: UNIT_W, h: u.h }] : [])),
     // (each stroke with its unit, painted as the book paints it: bookrender.ts.)
     ink: on.flatMap(u => (u.parts.ink as Stroke[]).map(s => ({ ...s, unit: u.id }))),
     scraps: on.flatMap(u => u.parts.pictures),
     texts: on.flatMap(u => u.parts.texts) as Typed[],
-    under: on.flatMap(u => (u.under ? [{ ...u.under, x: u.under.x + u.at.hung.x, y: u.under.y + u.at.hung.y }] : [])),
+    under: on.flatMap(u => [
+      ...(u.words ? [{ ...u.words, x: u.at.x, y: u.at.y + u.words.y, onCard: true }] : []),
+      ...(u.under ? [{ ...u.under, x: u.under.x + u.at.hung.x, y: u.under.y + u.at.hung.y }] : []),
+    ]),
   };
+}
+// A unit as the grid shows it (HQ's bookunits.js cardOf): a card as tall as what's on it, a scrap's words written on it
+// under its picture from body, what's under it (hung, below tall) at its foot; an agent's on its post-it, the board's
+// own drawing ink on the paper. Never shown smaller, as a card past CARD.most is: agents read the page from this. One
+// with nothing on it but what hangs under it (a call prototype's clip) is no card, only that (bookunits.js hung).
+async function cardOf(g: Group, parts: Parts, under: Under | null) {
+  const words = under?.text ? await underHigh({ ...under, slips: [], asks: [], tried: undefined }, DIR) : 0,
+    body = g.kind === 'drawing' ? 0 : bodyOf(parts),
+    box = boxOf(parts),
+    hung = under && { ...under, text: '' },
+    below =
+      hung && (hung.slips?.length || hung.asks?.length || hung.tried) ? CAPTION.top + (await underHigh(hung, DIR)) : 0,
+    bare = g.kind !== 'drawing' && !hasAny(parts) && !words && below > 0,
+    h = bare ? 0 : Math.ceil(Math.max(body + words, CARD.least, box ? box.y + box.h + CARD.pad : 0));
+  return { h, below, hung, body };
 }
 // What's under a unit: a scrap's words, the answers and replies slipped under it, its cards and its try's versions
 function underOf(g: Group): Under | null {
@@ -134,38 +151,18 @@ function underOf(g: Group): Under | null {
     : null;
 }
 // A unit of a notebook page: h tall and w wide (its parts', page px), with what's under it below tall (unitsPage)
-type Unit = { id: number; h: number; w: number; below: number; parts: Parts; under: Under | null; follows: boolean } & {
-  place?: { x: number; y: number };
+type Unit = {
+  id: number;
+  h: number;
+  w: number;
+  below: number;
+  parts: Parts;
+  under: Under | null;
+  follows: boolean;
+  // (on a post-it; a scrap's words on its card, from y)
+  card: boolean;
+  words: Under | null;
 };
-// A sketch page's units (on: each at its place, its parts with it) moved in together, MARGIN from the picture's
-// top-left with what hangs under them, and the picture as big as they reach.
-// → { on: the units moved, size }
-function cropped<U extends { parts: Parts; at: { x: number; y: number; hung: Box }; h: number }>(on: U[]) {
-  if (!on.length) return { on, size: { w: widthFor(2), h: 2 * MARGIN } };
-  const reach = on.map(u => union(union(boxOf(u.parts), { x: u.at.x, y: u.at.y, w: UNIT_W, h: u.h }), u.at.hung)),
-    dx = MARGIN - Math.min(...reach.map(r => r.x)),
-    dy = MARGIN - Math.min(...reach.map(r => r.y)),
-    moved = on.map(({ at, ...u }) => ({
-      ...u,
-      parts: shifted(u.parts, dx, dy),
-      at: { ...at, x: at.x + dx, y: at.y + dy, hung: { ...at.hung, x: at.hung.x + dx, y: at.hung.y + dy } },
-    }));
-  return {
-    on: moved,
-    size: {
-      w: Math.max(widthFor(2), ...reach.map(r => r.x + r.w + dx + MARGIN)),
-      h: Math.max(...reach.map(r => r.y + r.h + dy + MARGIN)),
-    },
-  };
-}
-// The box round two (the first null when there's nothing in it)
-function union(a: Box | null, b: Box): Box {
-  if (!a) return b;
-  const x = Math.min(a.x, b.x),
-    y = Math.min(a.y, b.y);
-  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
-}
-type Box = { x: number; y: number; w: number; h: number };
 // An answer's picture's file
 function slipPicture(slip: number) {
   const { picture } = (db.prepare('select picture from book_slips where id = ?').get(slip) ?? {}) as {

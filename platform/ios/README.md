@@ -14,8 +14,7 @@ What it adds:
   transparent PencilKit canvas lies over its paper and the Apple Pencil draws there: Apple's own ink, as quick as
   Notes'. Fingers never meet it and go to the page as ever (moving the page, taps, the tools), and so does the Pencil
   off the paper. Each finished stroke goes to the page (`platform/hq/shell/ink/booknative.js`), which plays it as the
-  pen's own pointer events, so the book takes it exactly as one drawn on the page (a scratch-out, a line through words,
-  Undo); the canvas's line fades as the page's is painted. A Pencil's tap is a click where it tapped (the rail's mic
+  pen's own pointer events, so the book takes it exactly as one drawn on the page (a line through words, Undo); the canvas's line fades as the page's is painted. A Pencil's tap is a click where it tapped (the rail's mic
   among them: a voice note). With any other
   tool, in the overview or with the book folded, the Pencil is the page's, as in a browser; in a browser nothing of
   this loads.

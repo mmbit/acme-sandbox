@@ -31,7 +31,9 @@
 //   - What's drawn or written on the call's notes page itself, from any screen (the board's iPad, its guest's: the
 //     coordinator's callguests.ts), goes to the line too once it rests ({ type: 'mark', id, updated }): each of the
 //     page's units the agent didn't make, as it stands once the page has had no news for MARK_REST_MS, sent again as it
-//     changes. The line fetches it with who drew it. (marks)
+//     changes. The line fetches it with who drew it. So does what's drawn on the agent's own scraps and versions there,
+//     which points: it goes from the page once the agent's turn on it is done (the coordinator's ink/callpointers.ts).
+//     (marks)
 import { esc } from '../../util.js';
 import { minimise, share, shown } from '../callscreen.js';
 import { aimed } from '../calldrive.js';
@@ -123,7 +125,7 @@ function relayMarks(c) {
     if (c.over || !c.notesPage) return;
     const r = await fetch(`/api/notebooks/pages/groups?page=${c.notesPage.id}`, { credentials: 'same-origin' });
     if (!r.ok) throw new Error(`the store answered ${r.status}`);
-    const units = (await r.json()).groups.filter(g => g.by !== c.agent && g.kind !== 'reply');
+    const units = (await r.json()).groups.flatMap(g => marksOf(g, c.agent));
     if (c.over) return;
     const first = !known;
     known ??= new Map();
@@ -150,23 +152,22 @@ function relayMarks(c) {
     document.removeEventListener('book:paged', heard);
   };
 }
+// What on a unit of the call's page is a mark for its agent: the unit, unless it's the agent's own and nobody drew on it
+// (pointed: ink/callpointers.ts), and anyone else's reply on one of its versions.
+const marksOf = (g, agent) => [
+  ...(g.by !== agent || g.pointed ? [g] : []),
+  ...(g.children ?? []).filter(r => r.kind === 'reply' && r.by !== agent),
+];
 // The call's notes page, made as the call is picked up (with the page brought to it, c.brought), and the book turned to
 // it if it's open. HQ asks again while the call is on if the store wasn't reached: an ask the network dropped, or the
 // proxy's 503 while the coordinator is away. The board hears of any other failure on a card.
 async function notesPage(c) {
-  // (a design session's is a sketch page)
-  const design = !!c.design,
-    ask = () =>
-      post('/api/notebooks/call', {
-        call: c.call,
-        ...(c.brought ? { page: c.brought } : {}),
-        ...(design && { design }),
-      });
+  const ask = () => post('/api/notebooks/call', { call: c.call, ...(c.brought ? { page: c.brought } : {}) });
   try {
     const r = await reached(ask, c);
     if (!r.ok) throw new Error(`the store answered ${r.status}`);
     const { page, notebook } = await r.json();
-    c.notesPage = { id: page.id, notebook, sketch: !!page.sketch };
+    c.notesPage = { id: page.id, notebook };
     if (c.over) return;
     event('book:paged', { page: page.id });
     if (c.design) designed(c); // (and a design session the line started while it was asked for)
@@ -175,26 +176,14 @@ async function notesPage(c) {
     if (!c.over) notesCard(c);
   }
 }
-// A design session (call.js callAgent's design, or the line's 'design' as the agent switches to one): the call's page a
-// sketch page, a canvas to draw anywhere on (sketchcanvas.js), and the book opened at it at once whatever the screen's
-// shape, so the board never opens it by hand. Before the page is there, notesPage asks for it as one and comes back
-// here.
-async function designed(c) {
+// A design session (the line's 'design' as the agent switches to one): the book opened at the call's page at once
+// whatever the screen's shape, so the board never opens it by hand. Before the page is there, notesPage comes back here
+// once it is.
+function designed(c) {
   c.design = true;
   const at = c.notesPage;
-  if (c.over || !at || c.sketchOpened) return;
-  if (!at.sketch) {
-    try {
-      const r = await reached(() => post('/api/notebooks/call', { call: c.call, design: true }), c);
-      if (!r.ok) throw new Error(`the store answered ${r.status}`);
-      at.sketch = !!(await r.json()).page.sketch;
-    } catch (err) {
-      console.error('[hq] the call’s page wasn’t made a sketch page:', err);
-    }
-    if (!at.sketch || c.over || c.sketchOpened) return;
-    event('book:notebook'); // (its pages read again: the page shown as notes so far is laid as a canvas)
-  }
-  c.sketchOpened = c.notesOpened = true;
+  if (c.over || !at || c.designOpened) return;
+  c.designOpened = c.notesOpened = true;
   openAt({ page: at.id, notebook: at.notebook });
 }
 // An ask's answer once the store is reached. It asks again a second later, then a second more each time, at most every

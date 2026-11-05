@@ -52,8 +52,9 @@ const tipsFor = ({ phone, intercom }) => [
     opens: { app: 'artifacts' },
     steps: [
       { at: '#tool .applist a.open', say: 'Open your artifact' },
-      { at: '#viewer .bar .share', say: 'Share it for notes' },
-      { at: '#viewer .sharebox form.invite', say: 'Invite someone by their name and email' },
+      // (Share is under the viewer's More options.)
+      { at: '#viewer .bar .more', say: 'Open More options' },
+      { at: '#viewer .options .share', say: 'Share it for notes' },
     ],
   },
   {

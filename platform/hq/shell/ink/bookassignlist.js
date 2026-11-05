@@ -59,15 +59,18 @@ const folded = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 let given = null;
 export const freshTag = (g, to, at) => (given = { g, to, at });
 
-// A group's tags, at its unit's bottom-right corner (bookunits.js places them): an initial in a circle for each person
-// it went to, with a tick by it once they've answered
+// A group's tags, at its card's bottom-right corner (bookunitcards.js places them): the face of each person it went to,
+// as the seen mark draws one (their initial on a disc ringed in their colour), a tick on it once they've answered.
 export function tagsHtml(g) {
   if (scope || !g.assigned?.length) return '';
-  const tags = (g.assigned ?? []).map(p => {
+  const tags = g.assigned.map(p => {
     const label = p.answered ? word('nameAnswered', { name: p.name }) : word('assignedTo', { name: p.name });
-    const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '';
-    return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? TICK : ''}<span
-      class="bk-face">${esc(initial(p.name))}</span></span>`;
+    const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '',
+      colour = p.colour ? ` style="--face:${esc(p.colour)}"` : '';
+    return `<span class="bk-tag" data-assigned${p.answered ? ' data-answered' : ''}${fresh} title="${esc(label)}"
+      aria-label="${esc(label)}" role="img"><span${colour}>${faceHtml({ by: p.to, name: p.name })}</span>${
+        p.answered ? TICK : ''
+      }</span>`;
   });
   return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}</div>`;
 }

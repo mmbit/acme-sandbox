@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { clipped, pageAt, turnTo, where } from './notebookscreen.mjs';
 import { dragTo, targetsShown, tearOffMenu } from './tearing.mjs';
-import { DESKTOP, MINI, UPRIGHT, inkAt, pressAlong, until } from './kit.mjs';
+import { DESKTOP, MINI, UPRIGHT, inkAt, openScrap, pressAlong, until } from './kit.mjs';
 import { en } from '../shell/ink/notebookwordsen.js';
 import { watchedPage } from './start.mjs';
 
@@ -106,7 +106,7 @@ async function locked(c, page, size) {
   );
   const s = await stampOf(page);
   assert.ok(s.toolsHidden, `locked: the tools gone (${size.name})`);
-  assert.ok(!s.lock, `no lock and words in the tools' place: the stamp says it (${size.name})`);
+  assert.ok(!s.lock, `no lock under the title: the stamp says it (${size.name})`);
   assert.deepEqual(s.history, [], `no Undo or Redo on the bar (${size.name})`);
   assert.ok(inside(s.box, s.paper), `the stamp on the paper in view (${size.name}): ${JSON.stringify(s.box)}`);
   // (its ink shows only within its box, its mask's: the turned outline whole inside it)
@@ -216,7 +216,7 @@ async function withAsks(browser, c) {
 // ---- the page
 
 // The sent page duplicated from its lock: the copy at the Sketch tab's end, open, with the same units, turned to and
-// drawn on; the page sent unchanged. An open page has no Duplicate.
+// drawn on in a scrap opened on it; the page sent unchanged. An open page has no Duplicate.
 async function duplicated(browser, c, size) {
   const { page, play, errors, done } = await open(browser, c, size),
     key = page.locator('#book').getByRole('button', { name: 'Duplicate this page' });
@@ -243,17 +243,7 @@ async function duplicated(browser, c, size) {
       `the tools back (${size.name})`,
     );
     await until(async () => !(await page.locator('#book .bk-turn-picture').count()), `the leaf turned (${size.name})`);
-    const desk = await page.locator('#book .bk-desk').boundingBox(),
-      [x, y] = [desk.x + desk.width / 2, desk.y + desk.height * 0.7];
-    await pressAlong(
-      page,
-      [
-        [x - 60, y],
-        [x, y - 20],
-        [x + 60, y],
-      ],
-      { type: size.touch ? 'pen' : 'mouse' },
-    );
+    await drawnOn(page, play, copy, size);
     await until(
       () => unitsOf(play, copy.id).flatMap(u => u.ink).length > sent.flatMap(u => u.ink).length,
       `ink on the copy (${size.name})`,
@@ -265,6 +255,19 @@ async function duplicated(browser, c, size) {
   } finally {
     await done();
   }
+}
+// A line drawn on a page (copy) in its first scrap, opened by the Pencil or the mouse: the grid takes no ink.
+async function drawnOn(page, play, copy, size) {
+  const type = size.touch ? 'pen' : 'mouse',
+    [first] = play.route('/api/notebooks/pages/groups', { page: copy.id }).groups,
+    { sheet } = await openScrap(page, { tap: at => pressAlong(page, [at], { type }) }, first.id),
+    [x, y] = [sheet.x + sheet.width / 2, sheet.y + sheet.height * 0.7];
+  const line = [
+    [x - 60, y],
+    [x, y - 20],
+    [x + 60, y],
+  ];
+  await pressAlong(page, line, { type });
 }
 // HQ at a size on the played Notebook, the book open on the seed's second page (folded ones opened by the lip, as
 // notebook.mjs's open)
@@ -320,7 +323,7 @@ const targetsOf = page =>
     return { kinds: shown.map(b => b.dataset.share), submit: shown[0].innerText.replace(/\s+/g, ' ').trim() };
   });
 // The shown page's stamp: its words, box and ink (its turned outline), the paper's, what's written on the page (its
-// title and units), and whether it's locked: its lock and words in the tools' place, the tools hidden, and Undo and
+// title and units), and whether it's locked: its lock and words under the view's title, the tools hidden, and Undo and
 // Redo on the bar
 const stampOf = page =>
   page.evaluate(() => {
@@ -341,7 +344,7 @@ const stampOf = page =>
         words.selectNodeContents(el);
         return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());
       }),
-      lock: !!document.querySelector('#book .bk-locked')?.checkVisibility(),
+      lock: !!document.querySelector('#book .bk-view-locked')?.checkVisibility(),
       // (Undo and Redo a pill of their own beside the bar: the Ink README, The book's frame.)
       history: [...document.querySelectorAll('#book .bk-undo-pill :is(.bk-undo, .bk-redo)')]
         .filter(b => b.checkVisibility())

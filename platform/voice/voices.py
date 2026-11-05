@@ -10,11 +10,20 @@ by its saved print refines that print at the call's end, if it still sounds like
 
 Measured on CMU ARCTIC's speakers (7, both sexes) with a room's echo and noise added (job #21883): told apart, two
 known voices were right on 47 of 48 pieces of 1.5 s and 46 of 48 of 0.7 s (the misses all between two women's
-voices); with the other person talking over at a third of the loudness, 47 and 43 of 48. Heard as a call (the board
-alone first, then both, short words among them), six pairs were right on 64 of 72 pieces, the misses mostly a new
-voice's first words, which go to the board until a piece of theirs is clearly another voice; the board alone opened no
-second voice in any of the six. A higher NEW opened one for a lone board (0.40: once in six), a lower one found new
-voices later (0.28: 56 of 72). Real rooms differ: each call logs the likeness each voice opened at (report).
+voices); with the other person talking over at a third of the loudness, 47 and 43 of 48. NEW was set on six pairs heard
+as a call (the board alone first, then both, short words among them), with a single piece opening a voice. At 0.36 they
+were right on 64 of 72 pieces and the board alone opened no second voice. At 0.40 a lone board opened one once in six.
+At 0.28 new voices were found later (56 of 72). Real rooms differ: each call logs the likeness each voice opened at and
+each stray piece had (report).
+
+On the board's own calls, alone, its hums, a raised voice, a word to its cat and its words after a first short "yeah"
+each sound unlike the rest of its speech. So a hum's print places nothing (server.py hesitant), the first voice's print
+starts on a piece of NEW_SECONDS (a word or two before it is the first voice's, by name), and a piece unlike every voice
+opens one only with a second that sounds like it within STRAY_SECONDS of speech (unlike). Replayed on ARCTIC (job
+#25286: 7 readers, four rooms): none of 28 lone readers split, also after a first word of 0.7 s; 16 pairs were right on
+200 of 240 pieces with the board talking first and 216 of 240 alternating from the first piece, none opening a voice too
+many. A new person's first piece goes to the closest voice, and one who speaks again only after STRAY_SECONDS of the
+others' speech opens their voice a piece later.
 
 Saved prints made in one simulated room from 2 or 3 sentences (about 6 to 10 s), a call's voice in another (job #22101):
 a single piece of 1.5 s is too unsure to name by (a stranger's best likeness to six saved voices reached 0.56), its
@@ -22,10 +31,12 @@ pieces together are not. At MATCH 0.55, three pieces named the right person 92 t
 most; five or more, all right and a stranger at most 2 in 100 (8 pieces, six saved voices to be taken for)."""
 import math
 import re
+from typing import NamedTuple
 
 RATE = 16000
-NEW = 0.36          # a piece this unlike every known voice (cosine) opens a new one...
-NEW_SECONDS = 1.5   # ...if it's at least this long: a shorter one goes to the closest voice
+NEW = 0.36          # two pieces this unlike every known voice (cosine), and not this unlike each other, open a new one...
+NEW_SECONDS = 1.5   # ...if it's at least this long: a shorter one goes to the closest voice (or starts no first one)
+STRAY_SECONDS = 30  # ...and if the second comes within this much speech of the first: two a call apart are the board's
 KEEP = 0.35         # a piece this like its voice adds to that voice's print (a stray one doesn't drag it)
 SHORT_SECONDS = 0.5  # shorter than this ("yes", "mm") a piece is too short to measure: the last speaker's
 MOST_SECONDS = 8    # a long piece is measured on its first seconds (a print takes about 0.07 s a second of audio)
@@ -34,6 +45,14 @@ MATCH = 0.55        # a call's voice this like a saved one (its pieces' print to
 NAME_PIECES = 3     # a voice is named by its saved print only once this many pieces of it are heard, and...
 NAME_SECONDS = 4.5  # ...seconds (three of 1.5 s): one piece is too unsure (a stranger's reached 0.56)
 ENROL_SECONDS = 6   # what the line must have heard of a voice to save it: a few sentences of free speech
+
+
+class Stray(NamedTuple):
+    """A piece unlike every voice, waiting for a second like it to open its voice (Voices.unlike)."""
+    voiceprint: list
+    seconds: float
+    likeness: float  # to the closest voice then (report)
+    spoken: float    # the call's seconds of speech once it was placed
 
 
 class Voices:
@@ -51,6 +70,9 @@ class Voices:
         self.last = None      # the voice of the last piece placed
         self.news = []        # the voices opened that the agent hasn't been told of yet (told)
         self.opened = []      # the likeness to the closest known voice each new one opened at (report)
+        self.spoken = 0       # the seconds of speech placed so far
+        self.stray = None     # the last piece unlike every voice, a Stray (unlike)
+        self.strays = []      # the likeness each stray piece had to its closest voice (report)
         self.saved = []       # the people saved before, as HQ gave them (know)
         self.sure = {}        # a voice whose name is settled (its saved print, the agent's name, enrolled): its saved one or None
         self.known = []       # voices named by their saved print the agent hasn't been told of yet (told): (was, is)
@@ -81,24 +103,48 @@ class Voices:
 
     def place(self, voiceprint, seconds):
         """The name of the voice a piece with words is in."""
-        if voiceprint is None:  # (too short to tell: whoever spoke last, or the first voice)
+        self.spoken += seconds
+        if voiceprint is None:  # (too short to tell, or a hum: whoever spoke last, or the first voice)
             return self.names[self.last or 0]
         if not self.prints:
+            # (a word or two: too unsure a print to tell others from)
+            if seconds < NEW_SECONDS:
+                return self.names[0]
             best = self.open(voiceprint, seconds)
         else:
             likeness = [cosine(voiceprint, p) for p in self.prints]
             best = likeness.index(max(likeness))
             if likeness[best] < NEW and seconds >= NEW_SECONDS:
-                self.opened.append(likeness[best])
-                best = self.open(voiceprint, seconds)
-                self.news.append(best)
+                best = self.unlike(voiceprint, seconds, likeness[best], best)
             elif likeness[best] >= KEEP:
-                self.prints[best] = [a + b for a, b in zip(self.prints[best], voiceprint)]
-                self.pieces[best] += 1
-                self.seconds[best] += min(seconds, MOST_SECONDS)
+                self.add(best, voiceprint, seconds)
         self.recognise(best)
         self.last = best
         return self.names[best]
+
+    def unlike(self, voiceprint, seconds, likeness, closest):
+        """A piece unlike every voice: the voice it opens with the stray piece before it, if the two sound alike and lie
+        within STRAY_SECONDS of speech, or the closest one, as the stray. One piece unlike every voice is often the
+        board's own (a laugh, a word to the cat, a raised voice), and so are two alike a long talk apart (a laugh, a
+        raised voice half an hour on); a guest speaks again among the board's words."""
+        stray = self.stray
+        near = stray and self.spoken - seconds - stray.spoken <= STRAY_SECONDS
+        if near and cosine(voiceprint, stray.voiceprint) >= NEW:
+            self.stray = None
+            self.opened.append(stray.likeness)
+            voice = self.open(stray.voiceprint, stray.seconds)
+            self.add(voice, voiceprint, seconds)
+            self.news.append(voice)
+            return voice
+        self.stray = Stray(voiceprint, seconds, likeness, self.spoken)
+        self.strays.append(likeness)
+        return closest
+
+    def add(self, voice, voiceprint, seconds):
+        """A piece of a voice, in its print."""
+        self.prints[voice] = [a + b for a, b in zip(self.prints[voice], voiceprint)]
+        self.pieces[voice] += 1
+        self.seconds[voice] += min(seconds, MOST_SECONDS)
 
     def open(self, voiceprint, seconds):
         """A new voice from its first piece: the first one heard is taken for the board's until a saved print says
@@ -202,12 +248,13 @@ class Voices:
         return out
 
     def report(self, agent):
-        """The call's log line at hang-up: how many voices, and how unlike the others each new one was when it opened
-        (the numbers NEW is tuned by; never a voiceprint), and how many were named by a saved voice (never whose)."""
-        opened = ', '.join(f'{likeness:.2f}' for likeness in self.opened)
+        """The call's log line at hang-up: how many voices, how unlike the others each new one was when it opened and
+        each stray piece was (the numbers NEW is tuned by; never a voiceprint), and how many were named by a saved voice
+        (never whose)."""
+        opened, strays = (', '.join(f'{likeness:.2f}' for likeness in at) for at in (self.opened, self.strays))
         named = sum(1 for s in self.sure.values() if s)
         return (f"call: {agent} voices: {len(self.prints)}{f' (opened at {opened})' if opened else ''}"
-                f"{f', {named} by a saved voice' if named else ''}")
+                f"{f', strays at {strays}' if strays else ''}{f', {named} by a saved voice' if named else ''}")
 
     def joined(self, name):
         """The board added a guest to the call (HQ's Add a guest): someone in the room with it, whom the line hears

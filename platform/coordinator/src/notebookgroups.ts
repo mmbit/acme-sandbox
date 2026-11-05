@@ -14,8 +14,8 @@ import { existsSync, rmSync } from 'node:fs';
 import { ours, pictureUrl } from './notebookpictures.ts';
 import { emptyGroup, hasAny, joined, picks } from '../../hq/shell/ink/notebookparts.js';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
-import { heightFor } from '../../hq/shell/ink/scrapunit.js';
-import { firstPos, lastPos, posAfter } from './notebookorder.ts';
+import { heightFor, unitOf } from '../../hq/shell/ink/scrapunit.js';
+import { lastPos, posAt } from './notebookorder.ts';
 import { db, inOneStep, lacks } from './db.ts'; // (lacks)
 import { BOARD } from './ink/book.ts';
 import { inkOf, isRefused, textsOf, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
@@ -26,7 +26,8 @@ import { changed, currentPage, pageRow, shut, type NotebookPage } from './notebo
 import { judgeEdited, judgeLater } from './ink/bookjudge.ts';
 import { ASK_GONE, askDeleted, askShown } from './ink/bookasks.ts';
 import { keepInStep } from './ink/bookassign.ts';
-import { placeOf, resized, splitOut } from './notebookplaces.ts';
+import { gatheredOn, unitAfter } from './ink/askgather.ts';
+import { drawnOn, pointerOf } from './ink/callpointers.ts';
 
 // parent: a reply's group. answers: the slip a reply is under. owner: the agent a scrap was cut from the work of (the
 // page's data-owner), who gets it when its page is sent; null, the routing check decides. note: the note it went as.
@@ -86,7 +87,7 @@ export type Group = {
   request: number | null; // (the card it asks, an agent's design ask: ink/askpages.ts)
   column: number | null; // (the column a board's drawing keeps: bookunits.js.)
   frame: string | null;
-  place: string | null; // (a sketch page's unit's place, JSON { x, y }: notebookplaces.ts.)
+  place: string | null; // (an old sketch page's unit's place: data, read by nothing.)
 };
 
 // ---------------------------------------------------------------- a page whole
@@ -105,26 +106,26 @@ export function listGroups(b: any, who = BOARD) {
     page: p.id,
     notebook: p.notebook,
     title: p.label,
-    groups: kept.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)),
+    groups: [...kept.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)), ...gatheredOn(p)],
   };
 }
 
 // ---------------------------------------------------------------- writing
-// POST /api/notebooks/groups/create { page, ink?, texts?, pictures?, after?, column?, place? }: a drawing on an open page,
-// a unit in its scrap px right after the unit after, else the page's last (kept in its column, or on a sketch page at
-// its place, when given). by: who drew it, the page's own person, or a call's agent on the board's (ink/callpage.ts)
+// POST /api/notebooks/groups/create { page, ink?, texts?, pictures?, after?, column?, empty? }: a drawing on an open
+// page, a unit right after unit after (its first for 'start': ink/askgather.ts unitAfter), else the page's last (in its
+// column); empty: a new scrap with nothing on it yet. by: who drew it (callpage.ts)
 export function createGroup(b: any, who = BOARD, by = who) {
   const p = openPage(Number(b?.page), who);
   if (isRefused(p)) return p;
-  const after = b.after == null ? undefined : row(Number(b.after));
-  if (b.after != null && !isUnitOn(after, p.id)) return [400, 'after is a unit on this page'] as Refused;
+  const placed = unitAfter(b.after, p);
+  if (isRefused(placed)) return placed;
+  const { after, atStart } = placed;
   if (b.column != null && !(Number.isInteger(b.column) && b.column >= 0)) return [400, 'a column from 0'] as Refused;
-  const parts = elementsOf(b, who, emptyGroup),
-    place = placeOf(p, b.place);
+  const parts = elementsOf(b, who, emptyGroup);
   if (isRefused(parts)) return parts;
-  if (isRefused(place)) return place;
-  if (!hasAny(parts)) return [400, 'a group holds something: ink, words or a picture', 'noteEmpty'] as Refused;
-  const g = insertGroup(p, 'drawing', by, parts, { after, column: after ? null : b.column, place });
+  if (!hasAny(parts) && !b.empty)
+    return [400, 'a group holds something: ink, words or a picture', 'noteEmpty'] as Refused;
+  const g = insertGroup(p, 'drawing', by, parts, { after, atStart, column: after || atStart ? null : b.column });
   if (by === BOARD && parts.texts.length) judgeLater({ grp: g.id }); // (bookjudge.ts)
   return shown(g);
 }
@@ -142,6 +143,7 @@ export function editGroup(b: any, who = BOARD, by = who) {
   const said = b.words === undefined ? { words: g.words, said: g.said } : wordsOf(b.words, b.said);
   if (isRefused(said)) return said;
   if (!hasAny(parts) && g.kind !== 'scrap') return [400, 'an empty group is deleted instead', 'noteDelete'] as Refused;
+  drawnOn(g, by, parts.ink); // (a call's agent's scrap pointed at on its live call.)
   write(g.id, parts, { words: said.words, said: said.said });
   if (by === BOARD) judgeEdited(g, said.words, parts.texts); // (bookjudge.ts)
   keepInStep(row(g.id)!); // (a scrap handed to guests and their copies)
@@ -149,7 +151,7 @@ export function editGroup(b: any, who = BOARD, by = who) {
 }
 // POST /api/notebooks/groups/resize { id, since, h }: an open unit's height set by hand (its room to write dragged), as
 // the page has it without the post-it words; it's never shown shorter than what's on it (scrapunit.js heightFor), since:
-// as edit's. push: on a sketch page, what's below its foot moved down as its room grew (notebookplaces.ts resized).
+// as edit's.
 export function resizeGroup(b: any, who = BOARD) {
   const g = openGroup(Number(b?.id), who);
   if (isRefused(g)) return g;
@@ -158,8 +160,11 @@ export function resizeGroup(b: any, who = BOARD) {
   const h = Number(b.h);
   if (!Number.isFinite(h) || h <= 0) return [400, 'h is a positive number'] as Refused;
   const p = pageRow(g.page, who)!;
-  const done = resized(p, g, Math.round(h), b.push); // (as dragged)
-  if (isRefused(done)) return done;
+  db.prepare('update notebook_groups set h = ?, updated = ? where id = ?').run(
+    Math.round(h),
+    new Date().toISOString(),
+    g.id,
+  );
   changed(p.notebook, p.id);
   return shown(row(g.id)!);
 }
@@ -170,17 +175,13 @@ export function moveGroup(b: any, who = BOARD) {
   if (isRefused(g)) return g;
   const to = openPage(Number(b.page), who);
   if (isRefused(to)) return to;
-  const after = b.after == null ? undefined : row(Number(b.after));
-  const atStart = b.after === 'start';
-  if (b.after != null && !atStart && (!isUnitOn(after, to.id) || after.id === g.id))
-    return [400, "after is another unit on that page, or 'start'"] as Refused;
+  const placed = unitAfter(b.after, to, g.id);
+  if (isRefused(placed)) return placed;
   const from = g.page;
   inOneStep(() => {
-    const pos = atStart ? firstPos(to.id) : posAfter(to.id, after);
+    const pos = posAt(to.id, placed);
     db.prepare('update notebook_groups set page = ? where id = ? or parent = ?').run(to.id, g.id, g.id);
     db.prepare('update notebook_groups set pos = ?, updated = ? where id = ?').run(pos, new Date().toISOString(), g.id);
-    // (onto another page, it's laid there afresh: notebookplaces.ts)
-    if (to.id !== from) db.prepare('update notebook_groups set place = null where id = ?').run(g.id);
     changed(to.notebook, from);
   });
   changed(to.notebook, to.id);
@@ -249,12 +250,13 @@ export function splitGroup(b: any, who = BOARD) {
   const p = pageRow(g.page, who)!;
   const lifted = inOneStep(() => {
     write(g.id, left, {});
-    const unit = splitOut(p, g, {
+    // (scaled to a unit's width: scrapunit.js.)
+    const unit = unitOf({
       ink: out.ink.map(i => parts.ink[i]),
       texts: out.texts.map(i => parts.texts[i]),
       pictures: out.pictures.map(i => parts.pictures[i]),
     });
-    const split = insertGroup(p, 'drawing', g.by, unit.parts, { after: g, h: unit.h, place: unit.place });
+    const split = insertGroup(p, 'drawing', g.by, unit.parts, { after: g, h: unit.h });
     for (const hear of splits) hear(g.id, split.id);
     return split;
   });
@@ -273,14 +275,14 @@ function elementsOf(b: any, who: string, was: Parts): Parts | Refused {
   if (isRefused(placed)) return placed;
   return { ink, texts: texts ?? [], pictures: placed };
 }
-// A group onto a page. A top-level one is a unit there, its parts in its scrap px: its page's last, or right after
-// unit after, h tall (as tall as its parts by default.)
+// A group onto a page. A top-level one is a unit there, its parts in its scrap px: its page's last, right after
+// unit after or its first (atStart), h tall (as tall as its parts by default.)
 export function insertGroup(
   p: NotebookPage,
   kind: Group['kind'],
   by: string,
   parts: Parts,
-  more: Omit<Partial<Group>, 'anchor'> & { anchor?: Anchor; after?: Group },
+  more: Omit<Partial<Group>, 'anchor'> & { anchor?: Anchor; after?: Group; atStart?: boolean },
 ) {
   const now = new Date().toISOString(),
     top = more.parent == null;
@@ -288,13 +290,12 @@ export function insertGroup(
     db
       .prepare(
         `insert into notebook_groups (page, parent, answers, kind, by, ink, texts, pictures, column, anchor, words, said,
-        owner, created, updated, pos, h, place) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        owner, created, updated, pos, h) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         ...[p.id, more.parent ?? null, more.answers ?? null, kind, by, ...partsJson(parts), more.column ?? null],
         ...[more.anchor ? JSON.stringify(more.anchor) : null, more.words ?? '', more.said ?? null, more.owner ?? null],
-        ...[now, now, top ? posAfter(p.id, more.after) : null, top ? (more.h ?? heightFor(parts, 0)) : null],
-        more.place ?? null,
+        ...[now, now, top ? posAt(p.id, more) : null, top ? (more.h ?? heightFor(parts, 0)) : null],
       ).lastInsertRowid,
   );
   changed(p.notebook, p.id);
@@ -381,10 +382,12 @@ function groupOf(g: Group, replies: Group[], listed = listedOnce()) {
     mineReplies = replies.filter(r => r.parent === g.id);
   const { answers, ...about } = answersOf(g, mineReplies, listed); // (seen, waiting, try, asks)
   const anchor = g.anchor ? (JSON.parse(g.anchor) as Anchor) : null;
-  const head = { ...element(g, parts), pos: g.pos, h: g.h, column: g.column, place: g.place && JSON.parse(g.place) };
+  const head = { ...element(g, parts), pos: g.pos, h: g.h, column: g.column };
+  // (someone's pointer ink on it, for its call's agent: ink/callpointers.ts.)
+  const pointed = !!pointerOf(g.id);
   const of = (r: Group) => ({ answers: r.answers, frame: r.frame && JSON.parse(r.frame), seen: seenTick(r, answers) });
   const replied = mineReplies.map(r => ({ ...element(r, partsOf(r)), ...of(r) }));
-  return readOf({ ...head, anchor, ...about }, g.owner, answers, replied);
+  return readOf({ ...head, pointed, anchor, ...about }, g.owner, answers, replied);
 }
 // (as the book's played store has it: notebookplaygroups.js)
 const element = (g: Group, parts: Parts) => ({

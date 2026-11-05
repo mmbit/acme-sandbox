@@ -20,12 +20,12 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
 - `bookreview.ts` brings review mode's notes on a preview into the book, `bookguests.ts` an invited person's.
 - `bookcalls.ts` is a call's page, `booksearch.ts` the book's Search.
 - Answers to any note: `bookjudge.ts` is the one judge of every note the board
-  makes (a small model through `../smallmodel.ts`'s queue: none, an answer, or a try; no rule on the words' shape), with
+  makes outside a call's notes page (a small model through `../smallmodel.ts`'s queue: none, an answer, or a try,
+  answered only when the board really asks; no rule on the words' shape), with
   its verdicts and their why kept; `bookseen.ts` is what it reads of a note. Every note is judged once it rests: words
   as they're saved, a group's ink and pictures once nothing on it has changed for ten seconds (`judgeRested`, swept
   from server.ts), whatever it holds. A verdict holds for what it read: anything drawn since is read again. The seen
-  tick (`groupanswers.ts` seenTick) shows a note read as it stands, by the judge with nothing to say back or by a
-  call's agent that heard it (`bookheard.ts`, from `callguests.ts` markForVoice). A note that gets no answer (its run ended
+  tick (`groupanswers.ts` seenTick) shows a note read as it stands, by the judge with nothing to say back. A note that gets no answer (its run ended
   without one, it couldn't be judged, or it came past the judge's day) says why in the answer's place, one reason a note until the next ask or answer takes it. `bookanswer.ts`
   answers: the owner's quick run, `hq answer` (words, a drawing, a
   picture, a form, a question, versions; `answerparts.ts` checks what one holds), forms answered, ticks and the open list; an
@@ -70,6 +70,10 @@ Board routes:
 - `POST /api/notebooks/guests` takes `{ kind?: 'invited', name?, people: [{ name, email? }] }` with one person, and makes
   one invited notebook (named for the person when no name is given). It refuses `kind: 'round'`: rounds start in Reviews.
 - `POST /api/notebooks/guests/revoke` takes `{ notebook, guest? }`. Omitting `guest` revokes every invitation.
+- `POST /api/notebooks/pages/give` takes `{ id, to }` (someone invited, the people list's `to`) or
+  `{ id, person: { name, email } }`, and puts a copy of the board's page in that person's journal as their own page:
+  its units and the versions under them. It returns `{ name, page, link }`, the link their shelf's
+  (`../notebookgive.ts`).
 - `GET /api/notebooks/guests/pages?notebook=` reads one notebook. `/groups?page=` reads a page with child answers.
 - `/pictures?file=`, `/slip/picture?id=` and `/slip/now?id=` serve its pictures to the board's authenticated session.
 
@@ -86,6 +90,10 @@ room at the call's notes page alone, its list and groups read as the board's (`o
 change, delete and restore only their own groups there (`onPage`'s `CALL`), as their grant's `guest:<id>`; nothing
 else of the board's book. The call ended, the page closes to them. Every mark on that page reaches the call's agent
 with who drew it: HQ's call relays it (`calldraw.js` relayMarks), and the line fetches it (`GET /api/voice/drawn`).
+Nothing else reacts to that page: no judge, no tick. What the board draws there on the agent's own scraps and versions
+(and on a prototype from another screen) is pointer ink (`callpointers.ts`): it reaches the agent the same way, a
+reply on a version goes to nobody as a note, and once the agent's turn on it is done the line has it taken off
+(`POST /api/voice/pointed`).
 
 A round notebook may allow `colleagues` (Reviews never does). In those notebooks, `/api/invite` takes
 `{ notebook, name, email }` and returns the new person's link. The guest can invite three colleagues at their own

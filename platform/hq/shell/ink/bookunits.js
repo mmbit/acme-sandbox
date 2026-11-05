@@ -18,17 +18,11 @@
 // as many: only what's under a unit that grew moves, and only down.
 // A unit grows to hold whatever goes past its foot (heightOf), and its canvas reaches its ink wherever that goes
 // (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the page, no paper; an agent's scrap a card.
-// A sketch page is a canvas instead (sketchcanvas.js): each unit at the place the store keeps for it, the same at any
-// width, in page px at the board's own zoom (bookview.js; opening at opensAt), and a stroke drawn apart from every unit,
-// any way from the page's origin, a unit of its own where it's drawn. A unit with no place yet is laid as the masonry
-// lays it, and this screen pins it there (page.pins, saved by booksave.js). What hangs under a unit there covers none
-// of them: at its foot, or the first clear paper below.
 import { MARGIN, columnUnder, columnsOf, layout, placeAt, scaleOf } from './masonry.js';
-import { UNIT_W, WORDS_IN, bodyOf } from './scrapunit.js';
+import { CARD, UNIT_W, WORDS_IN, bodyOf } from './scrapunit.js';
 import { boxOf, bottomOf, shift, startOf } from './bookunitbox.js';
 import { union } from './bookselectmath.js';
 import { underOf } from './bookunder.js';
-import { canvasOf, daysOf, isCanvas, pushedDown } from './sketchcanvas.js';
 import { unitFor } from './bookunitfor.js';
 
 // the page's px above its grid, where the view's title and day lie at rest
@@ -38,6 +32,8 @@ export const TITLE_H = 72;
 const INSET = 8;
 // a new unit on a page not laid yet starts this far above its first stroke
 const PAD = 12;
+// A card on the grid (scrapunit.js CARD).
+const { least: CARD_LEAST, most: CARD_MOST, pad: CARD_PAD } = CARD;
 export const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
 
 // A unit's page origin, at the top-left before it is laid
@@ -52,13 +48,13 @@ export function unitsOf(page) {
   const gone = g => g.vanished && !Object.values(LISTS).some(list => page[list]?.some(el => el.g === g.id)),
     groups = [...(page.groups?.values() ?? [])]
       .filter(g => !gone(g))
-      .sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0) || a.id - b.id),
+      // (an Asks page's questions gathered from the book's other pages after its own)
+      .sort((a, b) => !!a.elsewhere - !!b.elsewhere || (a.pos ?? 0) - (b.pos ?? 0) || a.id - b.id),
     units = groups.map(g => ({
-      ...{ id: g.id, day: dayOf(g.created), place: g.place ?? page.pins?.get(g.id), drawn: g.kind === 'drawing' },
+      ...{ id: g.id, day: dayOf(g.created), drawn: g.kind === 'drawing' },
       ...placing(g.kind === 'drawing', g.column),
     }));
-  for (const p of page.pending ?? [])
-    units.push({ id: p.id, day: today(), column: p.column, place: p.place, drawn: true });
+  for (const p of page.pending ?? []) units.push({ id: p.id, day: today(), column: p.column, drawn: true });
   if (units.length) units[0].follows = false;
   // (a unit following another is of its day, and one drawn between older ones of theirs: the days only go on down
   // the page)
@@ -72,6 +68,7 @@ const placing = (drawn, column) => (!drawn ? {} : column == null ? { follows: tr
 // A unit's height in its scrap px: as the store or a drag set it with its post-it words added (the store keeps it
 // without them), and never shorter than what's on it reaches
 export function heightOf(page, id) {
+  if (!page.focus) return cardOf(page, id).h;
   const set = page.resizing?.id === id ? page.resizing.h : (page.groups?.get(id)?.h ?? 0),
     o = originOf(page, id);
   let foot = 0;
@@ -79,14 +76,37 @@ export function heightOf(page, id) {
     for (const el of page[list] ?? []) if (el.g === id) foot = Math.max(foot, bottomOf(kind, el) - o.y);
   return Math.max(set + wordsOf(page, id), Math.ceil(foot));
 }
+// A scrap's card on the grid: everything on it in its own px (its picture and words, its ink wherever it was drawn
+// on the opened scrap), fitted to the card's width and at most CARD_MOST tall, never enlarged. { h: the card's height,
+// k: the scale, x0, y0: what of its own px is at the card's top-left (k 1 and 0, 0 when it's as drawn: plain) }.
+export function cardOf(page, id) {
+  const o = originOf(page, id),
+    body = bodyIn(page, id) + wordsOf(page, id);
+  let r = { x0: 0, y0: 0, x1: UNIT_W, y1: Math.max(body, CARD_LEAST) };
+  for (const [kind, list] of Object.entries(LISTS))
+    for (const el of page[list] ?? [])
+      if (el.g === id) {
+        const b = boxOf(kind, el);
+        r = union(r, {
+          x0: b.x0 - o.x - CARD_PAD,
+          y0: b.y0 - o.y - CARD_PAD,
+          x1: b.x1 - o.x + CARD_PAD,
+          y1: b.y1 - o.y + CARD_PAD,
+        });
+      }
+  r = { x0: Math.min(0, r.x0), y0: Math.min(0, r.y0), x1: Math.max(UNIT_W, r.x1), y1: r.y1 };
+  const w = r.x1 - r.x0,
+    h = r.y1 - r.y0,
+    k = Math.min(1, UNIT_W / w, CARD_MOST / h);
+  if (k === 1 && !r.x0 && !r.y0) return { h: Math.ceil(h), k: 1, x0: 0, y0: 0, plain: true };
+  // (fitted: centred across the card)
+  return { h: Math.ceil(h * k), k, x0: r.x0 - (UNIT_W - w * k) / 2 / k, y0: r.y0, plain: false };
+}
+// A point in a scrap's own px where its card shows it on the grid's page (page px)
+export const onCard = (fit, o, x, y) => ({ x: o.x + (x - fit.x0) * fit.k, y: o.y + (y - fit.y0) * fit.k });
+
 // How tall a scrap's post-it words are, drawn in its body under its picture (page px; 0 for none)
 export const wordsOf = (page, id) => page.words?.get(id) ?? 0;
-// Whether a scrap has post-it words the page hasn't drawn and measured yet (bookgroups.js draws a scrap's words: the
-// board's typing, else the store's).
-function wordsUnread(page, id) {
-  const g = page.groups?.get(id);
-  return g?.kind === 'scrap' && !!(page.typed?.get(id) ?? g.words) && !page.words?.has(id);
-}
 // How far down the page (its px) what's on a unit reaches: its picture, words and ink, its post-it words too; its top
 // when it has nothing
 export function footOf(page, id) {
@@ -129,9 +149,9 @@ export function layUnits(view, width) {
       .filter(w => w.offsetHeight)
       .map(w => [Number(w.dataset.g), w.offsetHeight + 8]),
   );
-  const units = unitsOf(page).map(u => ({ ...u, below: underOf(view, u.id) })),
-    // (isCanvas takes the page)
-    l = (isCanvas(page) ? canvasLaid : masonryLaid)(page, units, width),
+  const units = unitsOf(page).map(u => withBelow(view, u)),
+    // (an opened scrap lies alone, the grid in its columns)
+    l = (page.focus ? alone : masonryLaid)(page, units, width),
     origins = new Map(l.places.map(p => [p.id, { x: p.x, y: p.y }]));
   let moved = page.scale !== l.scale;
   for (const [kind, list] of Object.entries(LISTS))
@@ -153,10 +173,21 @@ export function layUnits(view, width) {
   page.day = units.find(u => u.day !== undefined)?.day;
   page.headers = l.headers.filter(h => !inkedOver(page, h));
   page.columns = l.columns;
+  page.fits = page.focus ? null : new Map(units.map(u => [u.id, cardOf(page, u.id)]));
   Object.assign(page, { x: 0, y: 0, ...(l.size ?? canvasSize(page, width / l.scale)), scale: l.scale });
-  // (a sketch page's units laid where they had no place: kept there, bookpages.js)
-  if (page.pins?.size) view.pinned();
   return moved;
+}
+// A unit with what hangs under it (below, page px). One with nothing on it but what hangs under it (a call prototype's
+// clip: its versions, the coordinator's callprototypes.ts) draws no card: it's 0 tall, what hangs under it at its top.
+function withBelow(view, u) {
+  const page = view.page,
+    bare =
+      !page.focus &&
+      !u.drawn &&
+      !wordsOf(page, u.id) &&
+      !Object.values(LISTS).some(list => page[list]?.some(el => el.g === u.id)),
+    below = underOf(view, u.id, bare);
+  return bare && below ? { ...u, h: 0, below } : { ...u, below };
 }
 // The page's units laid as a masonry at width (CSS px), each as tall as it and what hangs under it (below) and as wide
 // as the ink beside it reaches: their places in the page's px, each
@@ -168,7 +199,7 @@ function masonryLaid(page, units, width) {
     grown = units.map(u => ({
       ...u,
       h: u.h + u.below,
-      w: besideOn(page, u.id),
+      w: UNIT_W,
       ...(kept.has(u.id) && { column: kept.get(u.id) }),
       ...(page.kind === 'call' && { day: undefined }),
     })),
@@ -188,47 +219,12 @@ function masonryLaid(page, units, width) {
     size: { w: width / s, h: l.height / s + TITLE_H },
   };
 }
-// A sketch page's units at their places, the ones with none laid at width and pinned there (page.pins), what hangs
-// under each where it covers none of them (sketchcanvas.js), in page px: the board's zoom shows it larger or smaller
-// (bookview.js)
-function canvasLaid(page, units, width) {
-  // (a room being dragged taller pushes what's below it down as it goes: bookunitcards.js)
-  const inner = width - 2 * INSET,
-    pushed = new Map(pushedDown(units, page.resizing?.push).map(u => [u.id, u.place])),
-    wide = units.map(u => ({ ...u, w: widthOn(page, u.id), ...(pushed.has(u.id) && { place: pushed.get(u.id) }) })),
-    { places, fresh } = canvasOf(wide, inner, { x: INSET, y: TITLE_H });
-  page.pins ??= new Map();
-  // (pinned only once every scrap among them has its post-it words measured, in the book's own font: one laid before is
-  // too short or too tall, and what's pinned under it would lie under its words or a gap away. bookgroups.js lays the
-  // page again once the font is in.)
-  const measured = globalThis.document?.fonts?.status !== 'loading' && fresh.every(id => !wordsUnread(page, id));
-  for (const p of places)
-    if (measured && fresh.includes(p.id) && page.groups.has(p.id)) page.pins.set(p.id, { x: p.x, y: p.y });
-  const at = new Map(places.map(p => [p.id, p])),
-    first = units.find(u => u.day !== undefined)?.day;
-  return {
-    ...{ laid: { units: wide, width: inner, canvas: true }, scale: 1, columns: null, places },
-    headers: daysOf(units, at, first).map(d => ({ ...d, w: UNIT_W })),
-  };
+// An opened scrap laid alone at its own px, the page's origin, scale 1: the view zooms and pans it as a canvas
+function alone(page, units) {
+  const places = units.map(u => ({ id: u.id, x: 0, y: 0, column: 0, hung: { x: 0, y: u.h, w: UNIT_W, h: 0 } }));
+  return { laid: { units, width: UNIT_W, canvas: true }, scale: 1, columns: null, places, headers: [] };
 }
-// How wide a unit is from its origin's left (page px): a scrap's width, or as far as what's drawn on it reaches
-const widthOn = (page, id, o = originOf(page, id)) => reachOn(page, { id, ...o, w: UNIT_W, h: 0 }).x1 - o.x;
-// How wide a unit is from its origin's left (page px) with the ink beside it: a scrap's width, or as far as the ink
-// wholly right of it reaches. A stroke that touches another note is that note's (unitFor). So the ink a note has beside
-// it was drawn in clear paper, and an arrow from a note onto its neighbour never widens it. The board's drawing has no
-// paper, so all its ink counts
-function besideOn(page, id) {
-  const o = originOf(page, id);
-  if (drawing(page, id)) return widthOn(page, id, o);
-  let x1 = o.x + UNIT_W;
-  for (const [kind, list] of Object.entries(LISTS))
-    for (const el of page[list] ?? []) {
-      const box = boxOf(kind, el);
-      if (el.g === id && box.x0 >= o.x + UNIT_W) x1 = Math.max(x1, box.x1);
-    }
-  return x1 - o.x;
-}
-// The zoom a sketch page opens at on a paper width (CSS px) wide: 1, or as a scrap's column fits on a narrower one (a
+// The zoom an opened scrap opens at on a paper width (CSS px) wide: 1, or as a scrap's column fits on a narrower one (a
 // phone's, the narrowest book's, its margin at the right giving way first as on a page of units)
 export const opensAt = width => scaleOf(width - 2 * INSET, 1);
 // A canvas as big as what's on it and what hangs under its units reach, any way from its origin, the paper's width
@@ -252,17 +248,16 @@ const keptColumns = (page, width) =>
   new Map(page.columns === columnsOf(width) ? (page.places ?? []).map(p => [p.id, p.column]) : []);
 // Whether the board's own writing, kept where drawn (above its unit too), crosses the words of a day's date at y (the
 // page's px, bookgroups.css's .bk-day): the date gives way.
-// (a sketch page's, over a scrap, only where it is across: { y, x?, w? })
-const inkedOver = (page, { y, x, w }) =>
+const inkedOver = (page, { y }) =>
   page.places.some(p => {
     const r = reachOn(page, p);
-    return drawing(page, p.id) && r.y0 < y + 26 && r.y1 > y + 14 && (w === undefined || (r.x0 < x + w && r.x1 > x));
+    return drawing(page, p.id) && r.y0 < y + 26 && r.y1 > y + 14;
   });
 // Where a new unit h tall (its scrap px) goes as the page's last, today's: where a scrap lands (booklanding.js)
 export function nextPlace(page, h) {
   const unit = { id: null, h, below: 0, day: today() };
-  if (!page.laid?.canvas) return placeAmong(page, unit, page.laid?.units.length);
-  return canvasOf([...page.laid.units, unit], page.laid.width, { x: INSET, y: TITLE_H }).places.at(-1);
+  if (page.focus) return { x: 0, y: 0 };
+  return placeAmong(page, unit, page.laid?.units.length);
 }
 // Where a unit put among the page's laid units at an index goes, in the page's px as layUnits lays it: null on a page
 // not laid yet
@@ -284,13 +279,16 @@ const homed = (page, el) => page.groups.has(el.g) || page.gone?.has(el.g) || pag
 // An element with no unit yet (a picture taped in, words typed on the page, a shape): its unit as a stroke's
 function home(page, kind, el) {
   const box = boxOf(kind, el);
-  el.g = unitFor(page, startOf(kind, el), box, kind === 'ink' ? el : box);
+  // (on an opened scrap, its own; on the grid, which takes no ink, a picture pasted there is a scrap of its own.
+  if (page.focus) el.g = page.focus;
+  else if (!page.places) el.g = unitFor(page, startOf(kind, el), box, kind === 'ink' ? el : box);
+  else el.g = newUnit(page, box);
 }
 // The unit a stroke goes to (page px): the one it starts on, else the board's drawing whose ink it comes near, else a
 // new one.
-export const inkUnit = (page, stroke) => unitFor(page, stroke.points[0], boxOf('ink', stroke), stroke);
+export const inkUnit = (page, stroke) => page.focus ?? unitFor(page, stroke.points[0], boxOf('ink', stroke), stroke);
 // The unit what is put at a point goes to (typed words), as a stroke starting there
-export const pointUnit = (page, x, y) => unitFor(page, [x, y], { x0: x, y0: y, x1: x, y1: y });
+export const pointUnit = (page, x, y) => page.focus ?? unitFor(page, [x, y], { x0: x, y0: y, x1: x, y1: y });
 // The unit at a point on the page (its px), or undefined in the space between units
 export const unitAt = (page, x, y) => (page.places ? placeAt(page.places, x, y)?.id : undefined);
 // Whether a unit is the board's own drawing (a stroke's unit not yet in the store too): ink on the page, no paper card
@@ -315,15 +313,15 @@ export function drawnOn(page, id) {
 // A new unit for what's drawn in a box below every scrap: the page's last, today's, kept in the column it's drawn in, at
 // the place the masonry gives it, as layUnits lays it, so what's drawn stays where it was. On a page not laid yet, just
 // above what's drawn. Lifted: what's lifted out of others for another page (bookmoveto.js), kept where it is on its own
-// page too.
+// page too. On an opened scrap, what's drawn is all its own; what's lifted out of it is a new scrap on the grid's page,
+// right after it, what's lifted where it was on its own paper.
 export function newUnit(page, box, lifted = false) {
+  if (page.focus && !lifted) return page.focus;
   const id = (page.temp = (page.temp ?? 0) - 1),
     here = { x: box.x0 - PAD, y: box.y0 - PAD };
-  // (isCanvas takes the page)
-  if (isCanvas(page)) {
-    // (on a canvas, where it's drawn, kept there by the store)
-    (page.pending ??= []).push({ id, place: here });
-    page.origins.set(id, here);
+  if (page.focus) {
+    (page.pending ??= []).push({ id, after: page.focus });
+    page.origins.set(id, { x: 0, y: 0 });
     return id;
   }
   const column = columnAt(page, (box.x0 + box.x1) / 2),

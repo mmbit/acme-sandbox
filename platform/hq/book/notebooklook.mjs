@@ -142,7 +142,7 @@ async function seenFace(p, at) {
   const icons = p.locator('#book :is(.bk-tags, .bk-seen) svg[data-icon]');
   assert.equal(await icons.count(), 0, `${at}: no HQ icon on the paper's tags`);
   assert.equal(
-    await p.locator('#book .bk-view-head svg, #book .bk-view-head button').count(),
+    await p.locator('#book .bk-view-head :is(svg:not(.bk-view-locked *), button)').count(),
     0,
     `${at}: no title key`,
   );

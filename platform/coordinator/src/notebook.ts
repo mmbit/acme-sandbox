@@ -49,7 +49,6 @@ for (const column of [
   "title_seen text not null default ''",
   "zooms text not null default '{}'",
   'followed integer',
-  'sketch integer',
 ])
   if (lacks('book_pages', column.split(' ')[0])) db.exec(`alter table book_pages add column ${column}`);
 db.exec('create index if not exists book_pages_notebook on book_pages (notebook, pos)');
@@ -83,11 +82,8 @@ export type NotebookPage = Page & {
   zooms: string;
   // A call's notes page: when its call's follow-up handed out what's on it, its Sent stamp (ink/callnotes.ts followed)
   followed: number | null;
-  // A call's page a design session made a sketch page, a canvas (sketchcanvas.js isCanvas) in the Calls chapter: set
-  // once, never unset (ink/callnotes.ts openFor).
-  sketch: number | null;
 };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, followed, sketch`;
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, followed`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
@@ -374,6 +370,5 @@ export function pageOf(p: NotebookPage) {
     groups: n,
     picture: `/api/book/picture?id=${p.id}&v=${encodeURIComponent(p.updated)}`,
     ...chapterOf(p),
-    ...(!!p.sketch && { sketch: true }), // (a design session's call page)
   };
 }

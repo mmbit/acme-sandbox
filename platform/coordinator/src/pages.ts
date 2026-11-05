@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ORIGIN, PUBLIC_HOST, ZONE } from './config.ts';
 import { publicOrigins } from './approvals.ts';
+import { FONT_HOSTS } from './webfonts.ts';
 
 // HQ's Content-Security-Policy. The inline <script> and <style> blocks of a page (the pages below: fixed text, no data
 // in them) are allowed by hash; HQ's own app has none. Style attributes stay allowed (HQ sets a few colours inline);
@@ -12,8 +13,9 @@ import { publicOrigins } from './approvals.ts';
 export function csp(html = '') {
   const hashes = (tag: string) => [...html.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))]
     .map(m => ` 'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`).join('');
-  return `default-src 'self'; script-src 'self'${hashes('script')}; style-src 'self' https://fonts.googleapis.com${hashes('style')}; ` +
-    "style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self'; " +
+  // (Google's font hosts: webfonts.ts.)
+  return `default-src 'self'; script-src 'self'${hashes('script')}; style-src 'self' ${FONT_HOSTS.stylesheets}${hashes('style')}; ` +
+    `style-src-attr 'unsafe-inline'; font-src 'self' ${FONT_HOSTS.files}; img-src 'self' data: blob:; media-src 'self'; ` +
     `connect-src 'self' ${ORIGIN.replace(/^http/, 'ws')}; frame-src 'self'${ZONE ? ` https://*.preview.${ZONE}` : ''}${publicOrigins().map(o => ` ${o}`).join('')}; ` +
     "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 }

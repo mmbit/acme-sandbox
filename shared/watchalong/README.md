@@ -127,6 +127,12 @@ status to answer), `end(purpose, ref)`, `read` (the events in order, and `clockM
 the server's, to line the events up with a transcript), `sessionsOf`, `forget`, and `sweep` (sessions past `KEEP_DAYS`,
 90). Each batch is one gzip member appended to `<folder>/<id>.ndjson.gz` (0600) with the time it came in.
 
+`playback.ts` reads a recording back on a thread of its own, as a long call's (170 MB as posted after an hour) held the
+app's event loop for seconds on each ask: `played` (its moments folded and settled, `clockMs`, its first and last
+event's time), `at` (the events a replay to a time needs: what the screen still shows then and the recording's pages
+and pictures, `shown.ts` `replayAt`) and `every` (every event as NDJSON, for a player). The thread keeps the recording
+it read last, read again once a session grew, and ends `IDLE_MS` (a minute) after the last ask.
+
 ## What an agent sees
 
 Agents can't watch video, so a session reaches one as lines and pictures.
@@ -149,7 +155,8 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   recording was on that preview host and the session may show it: the board's call any preview (its key opens each), a
   guest's walk-through only the hosts its call out's share reached when it started (`store.ts` keeps them with it). It fetches them through Caddy on a pass of HQ's own (`previewfiles.ts` `mirrored`:
   held in memory, one host's files, GETs only, never a page or a script), within `LOADING_MS` and 16 MB each, typed by
-  their names. Nothing goes to any other host, and a proxy that isn't there stops anything else.
+  their names. Nothing goes to any other host but Google's fonts (below), and a proxy that isn't there stops anything
+  else.
   Nothing of the recorded page runs either (an onerror, a javascript: address): the replay's page allows only its own
   script files, and rrweb's frame takes that policy on (the frame runs scripts, as rrweb draws canvas frames only so).
   A mirror closes with its session or after `IDLE_MS` with nothing recorded or asked; Chromium with the last one.
@@ -163,6 +170,28 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   snapshot, each canvas's latest picture alone (canvas.js's wipe the whole canvas). From the whole recording a share of
   HQ's building took 2.8 s to its first picture after 10 minutes and past 15 s after 30; now 0.9 s after 60 (measured
   with Chromium 1243, a 744 × 1133 canvas at 0.5 frames a second, 58 KB each).
+- What the replay rebuilds unlike the page is put right in its events before the replayer has them (`rebuilt.js`,
+  in the mirror and the player alike): what came after `<body>` goes in after it (rrweb's rebuild puts `<body>` last,
+  and a look's rules by that order, such as `body ~ #book`, need those nodes after it), and a shadow host moved on the page adopts its
+  stylesheets again (rrweb sends them once, and the replayer builds a moved host anew, bare). The page's pictures a replay can't load by their address (a route behind
+  the viewer's sign-in) come in the recording (`routepictures.js`, a `picture` custom event), and the mirror answers
+  them by their address. A picture on screen that still didn't load is drawn in the picture taken as a box marked
+  "picture not captured", never as a broken image, and the briefing tells the agent it's there on the screen.
+
+- A linked stylesheet goes in the recording as the browser's reading of its rules, and Chromium leaves out a shorthand
+  with a var() in it (HQ's `font: 16px/1.4 var(--font)`, so a replay of the recorder's reading draws HQ's type in the
+  default serif). The recorder keeps such a stylesheet's address, and the mirror gives the replay the file's own text
+  where its owner answers it (`sheets.ts`, plain imports inlined), still inline, so media.js reads its rules. The owner
+  answers HQ's own fonts too (the Notebook's lettering). The recorder's batches to the store are `sender.js`.
+
+- The fonts HQ's looks load from Google Fonts (the brownstone's Pixelify Sans, the wire's Bricolage Grotesque) are the
+  one thing the replay gets from outside: the coordinator fetches them for it (`webfonts.ts`), only Google's
+  stylesheets of fonts and font files, from the two hosts HQ's own policy takes fonts from (`fonthosts.js`), GETs with
+  nothing held, within `LOADING_MS`, kept in memory by address. The recorder keeps a link to one of Google's
+  stylesheets whole, as its query names the fonts. Without them the replay draws a look's fallback face where the board
+  sees its own.
+- A mirror's stylesheets, held and in one step's events, come to at most `SHEETS_BYTES` (16 MB, a recording's
+  addresses being a guest's own), read `READS` at a time: past it the step fails and the mirror closes.
 - Memory (measured with Playwright's Chromium 1243, proportional set size of the whole process tree): about 440 MB
   with one mirror open, growing about 2.5 MB a minute at HQ's canvas rate (90 frames a minute; 520 MB after 30
   minutes), and about 60 MB more for each further mirror.
@@ -183,14 +212,15 @@ call's moments and its transcript's lines in one timeline by the server's clock,
 clock: `17:03:12  #14 tapped "Add to basket" (button)`, `17:03:10  [12] Board: and then this one here`) and `hq call
 <id> screen <time>` (a PNG of the screen then, 1568 px on its long side, the ink drawn and a moment's tap ringed, saved
 to a file: `17:03:12`, `#14`, or `+2m10s` from the call's start). Both on exactly the access `hq call <id>` has (the
-coordinator's `GET /api/agent/call` with `view`, `watchalong.ts timeline` and `screenAt`). The lines line up because
+coordinator's `GET /api/agent/call` with `view`, `callviews.ts timeline` and `screenAt`, reading through
+`playback.ts`). The lines line up because
 the voice line keeps when each was said (`calls.line_times`: a turn's start, the board's words from their first sound,
 the agent's reply from when it was first heard); a call from before they were kept has none, and lists only its moments.
 
 ## Checking it
 
-- `node --test shared/watchalong/store.test.ts shared/watchalong/moments.test.ts shared/watchalong/shown.test.ts
-shared/watchalong/mirror.test.ts` (the mirror's needs `CHROMIUM_PATH`), and the coordinator's
+- `node --test shared/watchalong/store.test.ts shared/watchalong/playback.test.ts shared/watchalong/moments.test.ts
+shared/watchalong/shown.test.ts shared/watchalong/mirror.test.ts` (the mirror's needs `CHROMIUM_PATH`), and the coordinator's
   `src/watchalong.test.ts`, `src/watchtimes.test.ts` and `src/callviews.test.ts` (hq call's views; their pictures need
   `CHROMIUM_PATH`). `walk.test.json.gz` is a walk-through recorded with
   watchalong.js in Chromium (moments.test.ts says what's in it).
@@ -198,6 +228,9 @@ shared/watchalong/mirror.test.ts` (the mirror's needs `CHROMIUM_PATH`), and the 
   Chromium, as a guest and as the board, while someone taps, types and moves on in the frame. It checks what the
   recording holds and keeps out, and has rrweb's replayer draw the moment after a tap in the frame (PNGs in the temp
   folder). It needs the coordinator's `node_modules` (`npm ci` there).
+- `node platform/hq/callshot-check.mjs [--shots dir]`: the board's call on an iPad-sized Chromium (Brownstone), and
+  the agent's picture of its screen compared with the board's, part by part: a call page with the agent's drawing on a
+  post-it, the Shelf open, and a picture only the board's device could load, marked as not captured.
 - `node platform/hq/private-check.mjs`: HQ as the board's call records it (Care, Mail, the desk phone's email, address,
   key and guest cards, typed into), with none of the mock customers' details or that typing in the stream.
 

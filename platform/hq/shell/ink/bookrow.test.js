@@ -6,7 +6,6 @@ import {
   ROOM_PX,
   ZOOM_MAX,
   ZOOM_OUT,
-  canvasPans,
   dotsShown,
   grownTo,
   pageAt,
@@ -78,57 +77,18 @@ test('a remembered page opens where it was left, and a page gone or none remembe
   assert.deepEqual(placeIn([2, 3, 'new'], null), { i: 2, at: null });
 });
 
-// (a sketch page's zoom and pan)
-test('a sketch page zooms in to the most, and out past its least only as far as what is drawn needs to show whole', () => {
+// (an opened scrap's zoom.)
+test('an opened scrap zooms in to the most, and out past its least only as far as what is drawn needs to show whole with paper round it', () => {
   assert.equal(zoomWithin(9, page, view), ZOOM_MAX);
   assert.equal(zoomWithin(0.01, page, view), ZOOM_OUT, 'a page the paper nearly holds: out to the least');
+  assert.equal(zoomWithin(0.15, page, view), 0.15, 'out far past the page it opened on');
   const far = { x: -3000, y: -2000, w: 9000, h: 8000 };
-  assert.equal(zoomWithin(0.01, far, view), view.w / far.w, 'drawn far out: out till it all shows');
+  assert.equal(
+    zoomWithin(0.001, far, view),
+    view.w / 3 / far.w,
+    'drawn far out: out till it shows in a third of the paper',
+  );
   assert.equal(zoomWithin(1.5, far, view), 1.5);
-});
-
-test('a sketch page pans down till only an edge of what is on it is left, never above or left of its corner', () => {
-  const box = { x: -100, y: -50, w: 1000, h: 2000, ink: [], scraps: [] },
-    at1 = canvasPans(box, view, 1, 120);
-  assert.deepEqual(at1, { x0: 0, x1: 0, y0: 0, y1: 1950 - 120 });
-  const blurred = { ...view, top: 54 },
-    at2 = canvasPans(box, blurred, 2, 120);
-  assert.equal(at2.y1, 1950 - 60, 'zoomed in, the edge in page px is smaller');
-  assert.equal(at2.y0, -27, "the room above the corner, the blur's, in sight at any zoom");
-  assert.equal(at2.x0, 0, 'never left of the corner');
-});
-
-// (the board: a Notebook scrolls up and down, never wiggles sideways.)
-test("a sketch page pans across only as far as it's zoomed past the paper or something on it lies past its edge", () => {
-  const blank = { w: 1200, h: 2400, ink: [], scraps: [] };
-  assert.equal(canvasPans(blank, view, 1, 120).x1, 0, "at rest: not into the page box's spare paper");
-  assert.equal(canvasPans(blank, view, 0.9, 120).x1, 0, 'zoomed out: still not');
-  assert.equal(canvasPans(blank, view, 2, 120).x1, view.w / 2, "zoomed in: across the paper's zoomed width");
-  const unit = { ...blank, places: [{ id: 1, x: 40, y: 72 }] };
-  assert.equal(canvasPans(unit, view, 1, 120).x1, 0, 'a note within the paper: no sideways pan');
-  const wide = { ...blank, places: [{ id: 1, x: 300, y: 72 }] };
-  assert.equal(
-    canvasPans(wide, view, 1, 120).x1,
-    300 + UNIT_W + MARGIN - view.w,
-    "a note placed past its edge: as far as it and a canvas's margin",
-  );
-  const stroke = {
-    size: 4,
-    points: [
-      [600, 10],
-      [610, 20],
-    ],
-  };
-  assert.equal(
-    canvasPans({ ...blank, ink: [stroke] }, view, 1, 120).x1,
-    614 - view.w,
-    "a line past it: to the line's edge",
-  );
-  assert.equal(canvasPans({ ...blank, ink: null }, view, 1, 120).x1, 1200 - view.w, 'its ink not read yet: its box');
-  const tools = { ...view, right: 60 },
-    under = { ...blank, ink: [{ size: 4, points: [[440, 10]] }] };
-  assert.equal(canvasPans(under, tools, 1, 120).x1, 444 - 395, 'a line under the tools: out from under them');
-  assert.equal(canvasPans(blank, tools, 2, 120).x1, 395 / 2, 'zoomed in: across the paper left of the tools, zoomed');
 });
 
 test('a page with ink and a scrap above and left of its corner pans as far as they reach, and no further', () => {
@@ -144,21 +104,11 @@ test('a page with ink and a scrap above and left of its corner pans as far as th
     blurred = { ...view, top: 54 },
     // (a stroke's reach is its widest line's half past its points: 4 × 0.75 + 1)
     reach = { x: -80 - 4, y: -200 + 30 - Math.hypot(100, 60) / 2 };
-  const canvas = canvasPans(drawn, blurred, 2, 120);
-  assert.equal(canvas.x0, reach.x, "left to the stroke's left edge, not the page box's");
-  assert.equal(canvas.y0, reach.y - 27, "up to the scrap's top, the blur's room above it");
-  const units = unitsPans({ w: 380, h: 2000, ink: [stroke], scraps: [] }, blurred, 2, 120);
-  assert.deepEqual([units.x0, units.y0], [-84, -30 - 4 - 27], 'a page of scraps the same');
-  const unread = canvasPans({ ...drawn, ink: null, scraps: [] }, blurred, 2, 120);
+  const units = unitsPans(drawn, blurred, 2, 120);
+  assert.equal(units.x0, reach.x, "left to the stroke's left edge, not the page box's");
+  assert.equal(units.y0, reach.y - 27, "up to the scrap's top, the blur's room above it");
+  const unread = unitsPans({ ...drawn, ink: null, scraps: [] }, blurred, 2, 120);
   assert.deepEqual([unread.x0, unread.y0], [0, -27], "a page whose ink isn't read yet: its title's corner");
-});
-
-test('a sketch page pans left and up as far as an answer hung past its row reaches, with its margin', () => {
-  const hung = { x: -312, y: 180, w: 320, h: 110 },
-    page = { x: -350, y: 0, w: 2000, h: 1200, ink: [], scraps: [], places: [{ id: 1, x: 40, y: 72, hung }] };
-  assert.equal(canvasPans(page, view, 1, 120).x0, -312 - MARGIN, "left to the answer's left edge and its margin");
-  const above = { ...page, places: [{ id: 1, x: 40, y: 72, hung: { ...hung, x: 40, y: -40 } }] };
-  assert.equal(canvasPans(above, view, 1, 120).y0, -40 - MARGIN, "up to the answer's top and its margin");
 });
 
 // (every page pinch-zooms, a page of scraps too)

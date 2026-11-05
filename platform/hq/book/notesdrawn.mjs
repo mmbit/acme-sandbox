@@ -1,7 +1,7 @@
 // book-check.mjs's story of an agent's notes on a call's page: its drawing shown as a drawing (bookgroups.css
 // .bk-photo[data-drawing]: lines straight on its post-it) and a screenshot as a picture taped on, and each note a unit
-// of its own that no other covers, on a call's notes page and a design session's (a canvas: sketchcanvas.js), on an
-// iPad mini upright and in landscape, a bigger iPad in landscape and a phone. Its shots show how they look.
+// of its own that no other covers, on a call's notes page (a design session's is the same), on an iPad mini upright and
+// in landscape, a bigger iPad in landscape and a phone. Its shots show how they look.
 import assert from 'node:assert/strict';
 import { watchedPage } from './start.mjs';
 import { mode } from './notespage.mjs';
@@ -19,18 +19,14 @@ export const notesDrawnStories = c => {
   const devices = { 'iPad mini upright': UPRIGHT, 'iPad mini landscape': MINI, 'iPad landscape': IPAD, phone: c.PHONE };
   const stories = {};
   for (const [device, viewport] of Object.entries(devices))
-    for (const sketch of [false, true])
-      stories[
-        `a call's notes: an agent's drawing shown as a drawing, each note its own unit (${
-          sketch ? 'design session' : 'call'
-        }, ${device})`
-      ] = browser => drawnOwn(browser, c, viewport, { sketch, device });
+    stories[`a call's notes: an agent's drawing shown as a drawing, each note its own unit (call, ${device})`] =
+      browser => drawnOwn(browser, c, viewport, device);
   return stories;
 };
 
-async function drawnOwn(browser, c, viewport, { sketch, device }) {
+async function drawnOwn(browser, c, viewport, device) {
   const T = new Date().toISOString();
-  const context = await c.hqIn(browser, viewport, { notebooks: seed(T, sketch) });
+  const context = await c.hqIn(browser, viewport, { notebooks: seed(T) });
   const pictures = await picturesOf(context);
   const { page, errors } = await watchedPage(context);
   // (the seed's pictures, as the store would serve them)
@@ -58,7 +54,7 @@ async function drawnOwn(browser, c, viewport, { sketch, device }) {
     await page.waitForTimeout(600);
     await drawnAndTaped(page);
     await ownUnits(page);
-    await c.shot(`book-notes-drawn-${sketch ? 'session' : 'call'}-${device.replaceAll(' ', '-')}`, page);
+    await c.shot(`book-notes-drawn-call-${device.replaceAll(' ', '-')}`, page);
     c.noErrorsIn(errors);
   } finally {
     await context.close();
@@ -96,8 +92,8 @@ async function ownUnits(page) {
 }
 
 // A call's page with what an agent puts on it: a drawing (a mug, its lines on a clear ground), a note, a screenshot,
-// and two notes more. sketch: a design session's page, a canvas.
-const seed = (T, sketch) => {
+// and two notes more.
+const seed = T => {
   const words = (id, text) => ({ id, page: PAGE, kind: 'note', by: 'juno', created: T, texts: typed(text) });
   const picture = (id, file, more) => ({
     id,
@@ -112,7 +108,7 @@ const seed = (T, sketch) => {
     pages: [
       {
         ...{ id: PAGE, notebook: 1, pos: 0, kind: 'call', label: 'Oefensessie', created: T, updated: T },
-        ...{ w: 1200, h: 1600, ...(sketch && { sketch: true }) },
+        ...{ w: 1200, h: 1600 },
       },
     ],
     groups: [

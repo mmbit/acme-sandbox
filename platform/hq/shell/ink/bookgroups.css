@@ -12,21 +12,6 @@
   position: absolute;
   pointer-events: auto;
 }
-/* a tie from a note to what hangs under it past its row (bookunder.js): one line in the book's ink, its ends and turns
-   round, nothing to press */
-#book .bk-tie {
-  position: absolute;
-  overflow: visible;
-  width: 1px;
-  height: 1px;
-  fill: none;
-  stroke: var(--bk-ink, #2a2352);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
 /* under a group: a scrap's words, its answers and the board's replies */
 #book .bk-under {
   width: 320px;
@@ -134,49 +119,10 @@
 #book {
   --bk-postit: #fdf1a9;
 }
-/* the room to write under it: plain page, its dots and all, no inner shadow and no corner; its handle at its foot
-   says where it ends */
-#book .bk-room {
-  position: absolute;
-  inset: auto 0 0;
-}
-/* a slip's room pulled out (bookslipreply.css): its lined paper */
-#book .bk-slip-room[data-open] .bk-slip-room-paper {
-  border: 1px solid rgba(42, 35, 82, 0.3);
-  border-radius: 3px;
-  background: #fff repeating-linear-gradient(180deg, transparent 0 31px, rgba(42, 35, 82, 0.1) 31px 32px);
-}
-/* the room's handle: a short quiet bar at the unit's foot, a 44 px target round it for a finger and the Pencil, its
-   size on screen at any zoom, so zoomed in it never takes the room's writing;
-   a slip's room's handle the same bar, placed by bookslipreply.css */
-#book .bk-room-handle,
-#book .bk-slip-room-pull {
-  all: unset;
-  position: absolute;
-  width: 88px;
-  height: 44px;
-  margin: -22px 0 0 -44px;
-  scale: calc(1 / var(--bk-scale, 1));
-  pointer-events: auto;
-  cursor: ns-resize;
-  touch-action: none;
-}
-#book .bk-room-handle::before,
-#book .bk-slip-room-pull::before {
-  content: '';
-  position: absolute;
-  left: 30px;
-  right: 30px;
-  top: 19px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(42, 35, 82, 0.18);
-}
-#book .bk-room-handle:hover::before,
-#book .bk-room-handle:focus-visible::before,
-#book .bk-slip-room-pull:hover::before,
-#book .bk-slip-room-pull:focus-visible::before {
-  background: rgba(42, 35, 82, 0.4);
+/* a reply's ink under its "You" on an answer's slip: one drawn before the slips' room went (one drawn on its scrap
+   shows there only: bookgroups.js replyHtml). */
+#book .bk-reply .bk-slip-ink {
+  margin-top: 4px;
 }
 /* a scrap's post-it words, part of its body under its picture, the unit's width */
 #book .bk-words {

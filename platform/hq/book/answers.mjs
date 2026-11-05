@@ -5,9 +5,9 @@
 // as the store keeps them (no spot): by the unit, under it or beside it, clear of every other unit, at every width the
 // board reads on.
 // A drawing, its strokes on its slip under the note, a form there too (answered and sent) and an agent's question;
-// the overview lists what's open (a note's versions: versions.mjs). The board answers one by drawing, in the room
-// pulled out under its slip. On a call's page, the call's agent's answer
-// lands the same way. On an iPad mini, a phone and a desktop. (Its Notebook played by notebookOn)
+// the overview lists what's open (a note's versions: versions.mjs). The board answers one from its scrap opened, by
+// its sheet's key (notebookasks.mjs). On a call's page, the call's agent's answer lands the same way. On an iPad mini,
+// a phone and a desktop. (Its Notebook played by notebookOn)
 import assert from 'node:assert/strict';
 import { FEED_MS, inSight, notebookOn, opened, shownByItsNote, underItsNote } from './answersplay.mjs';
 import { press } from './bar.mjs';
@@ -27,21 +27,20 @@ export function answerStories(c) {
         await answered(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
         await answered(browser, c, { width: 744, height: 1133 }, 'mini-upright');
         await answered(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
-        // (its columns side by side, the note asked about in the middle of a full row: its answer past the row, tied
-        // to it)
+        // (its columns side by side, the note asked about in the middle of a full row.)
         const wide = { hasTouch: false, deviceScaleFactor: 1, book: 1100 };
         await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-wide', wide, { at: 1 });
         // (a staggered masonry: the note asked about boxed in by a short note over it and one under it and a tall
-        // drawing either side, its tie climbing round the one over it)
+        // drawing either side.)
         await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-staggered', wide, STAGGERED);
         // (four columns, three rows: the second row's two middle notes boxed in, one asked about, the other answered
-        // already, both ties over the gap under the row above, none through a note)
+        // already.)
         const wider = { ...wide, book: 1600 };
         await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-rows', wider, ROWS);
       },
     'an agent’s drawing, form and question; the form answered; the overview lists what’s open': browser =>
       kinds(browser, c),
-    'a drawing answer’s strokes on its slip under its note, a wide one fit to the slip, answered by drawing under it, at a phone, an iPad mini and a desktop':
+    'a drawing answer’s strokes on its slip under its note, a wide one fit to the slip, at a phone, an iPad mini and a desktop':
       async browser => {
         await drawn(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
         await drawn(browser, c, c.MINI, 'mini');
@@ -82,8 +81,7 @@ export const slipOf = (page, g, id) =>
 // The note asked about (at: the first unless named) on a page of notes (each in the column it was drawn in, where the
 // page has it; tall: a drawing down it, three short notes tall; answered: its answer come already). A wide book lays
 // them side by side, one under another, a gap apart, and pins them there: whatever hangs under a note reads as its own
-// at every width, beside it where no answer fits under it, tied to it past its row where neither side is clear, the
-// tie over clear paper
+// at every width, beside it where no answer fits under it.
 async function answered(browser, c, viewport, size, options = {}, { at = 0, notes = GRID } = {}) {
   const nb = notebookOn(c),
     groups = notes.map(({ column, tall }, i) =>
@@ -255,30 +253,9 @@ async function drawn(browser, c, viewport, size, options) {
     await inkOnSlip(page, small, 4330, chart);
     await inkOnSlip(page, wide, 4331, year);
     await c.shot(`answers-drawn-${size}`, page);
-    await drawnBack(page, small, 4330);
-    await c.shot(`answers-drawn-back-${size}`, page);
+    // (no field under an answer: the board answers from the scrap opened, its sheet's key, notebookasks.mjs)
+    assert.equal(await slipOf(page, small, 4330).locator('textarea, input').count(), 0, 'no field under an answer');
   });
-}
-// The board answers slip id by drawing: no field under it, its room pulled out by the handle under it, a circle drawn
-// there gone as its reply with the room's Send, and shown under the slip as drawn
-async function drawnBack(page, g, id) {
-  const slip = slipOf(page, g, id);
-  assert.equal(await slip.locator('textarea, input').count(), 0, 'no field under an answer');
-  await slip.locator('.bk-slip-room-pull').click();
-  const room = slip.locator('.bk-slip-room-paper');
-  await room.scrollIntoViewIfNeeded();
-  const r = await room.boundingBox();
-  assert.ok(r.height > 60, `${r.height} px: the room pulled out`);
-  const ring = [...Array(17).keys()].map(i => [Math.cos(i / 2.5) * 50, Math.sin(i / 2.5) * 28]);
-  await page.mouse.move(r.x + 90 + ring[0][0], r.y + 60 + ring[0][1]);
-  await page.mouse.down();
-  for (const [dx, dy] of ring) await page.mouse.move(r.x + 90 + dx, r.y + 60 + dy);
-  await page.mouse.up();
-  await room.locator('.bk-slip-room-send').click();
-  const reply = page.locator(`#book .bk-under[data-g="${g.id}"] .bk-reply .bk-slip-ink`);
-  await reply.waitFor({ timeout: FEED_MS });
-  await reply.scrollIntoViewIfNeeded();
-  assert.equal(await room.locator('.bk-reply-wet path').count(), 0, 'its ink gone from the room, under the slip now');
 }
 // slip id's drawing (ink) under note g's words, on the slip, every stroke in view
 async function inkOnSlip(page, g, id, ink) {

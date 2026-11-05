@@ -101,10 +101,13 @@ export function end({ db }: Store, purpose: string, ref: string) {
 // timestamp for the server's time): the smallest gap between a batch's arrival and its last event
 export function read(store: Store, id: number): Recording | undefined {
   const session = find(store, id);
-  if (!session) return undefined;
+  return session && recordingOf(store.dir, session);
+}
+// (the same from the store's folder alone, as playback.ts's thread reads it.)
+export function recordingOf(dir: string, session: Session): Recording {
   // (no more than a session's room inflates, whatever its row counts: a larger file fails rather than fill the memory)
   const inflated = { maxOutputLength: SESSION_BYTES };
-  const batches = session.bytes ? lines(gunzipSync(readFileSync(fileOf(store, id)), inflated)) : [];
+  const batches = session.bytes ? lines(gunzipSync(readFileSync(fileOf({ dir }, session.id)), inflated)) : [];
   const events = batches.flatMap(batch => batch.events);
   const gaps = batches.filter(batch => batch.events.length).map(batch => batch.at - batch.events.at(-1)!.timestamp);
   return { session, events, clockMs: gaps.length ? Math.min(...gaps) : 0 };
@@ -137,7 +140,7 @@ function remove(store: Store, id: number) {
   store.db.prepare('delete from watchalong_sessions where id = ?').run(id);
 }
 
-const fileOf = ({ dir }: Store, id: number) => `${dir}/${id}.ndjson.gz`;
+const fileOf = ({ dir }: Pick<Store, 'dir'>, id: number) => `${dir}/${id}.ndjson.gz`;
 const keyOf = ({ db }: Store, id: number) =>
   (db.prepare('select key_hash from watchalong_sessions where id = ?').get(id) as { key_hash: string }).key_hash;
 

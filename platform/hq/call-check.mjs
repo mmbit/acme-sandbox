@@ -669,7 +669,7 @@ await faceOverArtifact();
 // key, before the line picks up too, the backdrop, Escape) starts no watch-along and the bubble shows no eye. The call
 // screen's Show my screen starts one, the bubble's eye shows it, and Stop showing pauses it (Show my screen again).
 // A start that fails says so on the call screen until the next try. The line hears the screen's state as it changes and
-// at pick-up (call #258.).
+// at pick-up.
 async function shareScreen() {
   const { context, page, errors } = await callPage();
   let starts = 0, line = null, pickUp = null;

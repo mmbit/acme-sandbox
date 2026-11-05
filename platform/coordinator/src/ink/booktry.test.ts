@@ -7,7 +7,7 @@ import { harness } from '../harness.ts';
 const h = await harness('booktry');
 const { db } = h;
 const { ORIGIN } = await import('../config.ts');
-const { tryNow, tryHolds, onCall } = await import('./booktry.ts');
+const { tryNow, tryHolds } = await import('./booktry.ts');
 
 const SNIP = `data:image/png;base64,${(
   await sharp({ create: { width: 320, height: 200, channels: 3, background: '#ff0000' } })
@@ -51,7 +51,6 @@ test('a try starts an expedited try run for the owner, its versions coming under
   assert.equal((await tryOn(g)).expect, 3);
   assert.equal(tryHolds(g.id, job), true);
   assert.equal(tryHolds(g.id, job + 1), false);
-  assert.equal(onCall({ grp: g.id }), null);
   // the chat slot never takes it; a work slot takes it at once, ahead of work queued before it
   h.jobs.createJob({ agent: 'moss', title: 'earlier work', prompt: 'x', engine: 'claude', word: 'EARLIER' } as any);
   assert.equal(await h.claim('claude', { kind: 'chat' }), null);
@@ -131,21 +130,6 @@ test('a try that ends with no version says so under the note, never "0 versions"
   // and new groups land on its page, as on any
   const next = await scrap('And the footer');
   assert.equal(next.page, g.page);
-});
-
-test("a note the board types on a live call's page gets no quick run: the call's agent is with the board", async () => {
-  const { pageFor } = await import('./callnotes.ts');
-  const { answerNow } = await import('./bookanswer.ts');
-  const { call } = await h.liveCall('juno');
-  const page = pageFor(call)!;
-  const typed = (
-    await h.board('/api/notebooks/groups/create', {
-      page: page.id,
-      texts: [{ x: 40, y: 80, w: 200, text: 'Is the price right?', color: '#2a2352' }],
-    })
-  ).body;
-  assert.equal(onCall({ grp: typed.id }), call);
-  assert.equal(answerNow({ grp: typed.id }, VERDICT), null);
 });
 
 test("the page's picture shows a try's versions under its scrap, in its agent's ink, and the ones still coming", async () => {

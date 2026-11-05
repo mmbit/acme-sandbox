@@ -96,9 +96,12 @@ def report(a, hq_env):
     if r.returncode:
         return False, f'hq report failed: {(r.stderr or r.stdout).strip()[:300] or "the coordinator refused it"}'
     parts = sections(r.stdout)
+    # hq report's first line, the report's time and how long ago it was written, heads every answer and page: a
+    # section or a find leaves the opening out, and a report that missed its writes would read as live.
+    written = r.stdout.split('\n', 1)[0]
     if not section.strip() and not find.strip():
         listed = [f'{heading} ({len(lines)} lines)' for heading, lines in parts]
-        return paged('The report\'s sections (ask for one by words of its heading):\n' + '\n'.join(listed), start, offset)
+        return dated(written, paged('The report\'s sections (ask for one by words of its heading):\n' + '\n'.join(listed), start, offset))
     chosen = [(h, ls) for h, ls in parts if section.strip().lower() in named(h, ls).lower()]
     if not chosen:
         return False, f'no section\'s heading has "{section}": leave section out for the list of them'
@@ -106,8 +109,14 @@ def report(a, hq_env):
     kept = [(h, [line for line in ls if words in line.lower()]) for h, ls in chosen]
     kept = [(h, ls) for h, ls in kept if ls]
     if not kept:
-        return True, f'No line has "{find}" in {"that section" if section.strip() else "the report"}.'
-    return paged('\n'.join(line for h, ls in kept for line in [h, *ls]), start, offset)
+        return True, f'{written}\nNo line has "{find}" in {"that section" if section.strip() else "the report"}.'
+    return dated(written, paged('\n'.join(line for h, ls in kept for line in [h, *ls]), start, offset))
+
+
+def dated(written, answer):
+    """A page of the report (paged's (ok, text)) under the report's own first line; a refusal as it is."""
+    ok, text = answer
+    return (True, f'{written}\n{text}') if ok else answer
 
 
 def git_env(mirror):

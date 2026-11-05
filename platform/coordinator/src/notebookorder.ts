@@ -28,6 +28,10 @@ export function firstPos(page: number) {
     .get(page) as { first: number | null };
   return first === null ? 0 : first - 1;
 }
+// A new unit's place as unitAfter gives it (ink/askgather.ts): its page's first, else after unit after (its last for
+// none).
+export const posAt = (page: number, at: { after?: { id: number; pos: number | null }; atStart?: boolean }) =>
+  at.atStart ? firstPos(page) : posAfter(page, at.after);
 // The last place in a page's order, its Undo's deleted units too (-1: none)
 export const lastPos = (page: number) =>
   (
@@ -35,6 +39,10 @@ export const lastPos = (page: number) =>
       last: number | null;
     }
   ).last ?? -1;
+// Whether a page has a unit on it (its strokes and scraps columns stay empty on a Notebook page: bookreads.ts,
+// callnotes.ts).
+export const hasGroups = (page: number) =>
+  !!db.prepare('select 1 from notebook_groups where page = ? and parent is null and deleted is null limit 1').get(page);
 
 // Things with their boxes on a page as they read: top to bottom, then left to right, then as they came; one with no box
 // last

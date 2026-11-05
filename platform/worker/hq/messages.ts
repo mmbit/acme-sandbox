@@ -117,7 +117,7 @@ type Said = {
   call?: number;
 };
 
-// (and a call with the board the recipient is on hears it too, within about 15 s: the coordinator's messages.ts send.
+// (and a call with the board the recipient is on hears it too, within about 15 s: the coordinator's callmessages.ts offer.
 function said(to: string, sent: Said) {
   const where = delivery(to, sent);
   return present(sent.call)

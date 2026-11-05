@@ -85,7 +85,7 @@ export function addPicture(
 }
 // Typed words on a page, its last (a call agent's notes too: ink/callnotes.ts), a post-it as a scrap's words are: a
 // group of its own kind, 'note'. room: the room to write under it (ROOM, or none for a note what hangs under it belongs
-// to: a call prototype's clip, callprototypes.ts.)
+// to.)
 export function addWords(
   p: NotebookPage,
   who: string,

@@ -58,7 +58,7 @@ from wherever the conversation is now.`;
 // CEO's (call.ts says the same).
 // A long reply hears so in its next turn (LONG_REPLY).
 // A window puts work first, a pause only waits on a condition.
-// One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME, board, call 256).
+// One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME).
 // Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when missed,
 // once.
 // Work only one engine and model do is marked as it's queued (hq job --only, org.yaml engineOnly: the call's job tool

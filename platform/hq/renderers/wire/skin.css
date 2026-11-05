@@ -391,7 +391,9 @@ body.touring #card {
 #viewer :is(.bar .seg button, .bar .qr, .stage .head .link)[aria-pressed='true'],
 #viewer .bar .qr[aria-expanded='true'],
 #viewer .stage .head .tabs [aria-selected='true'],
-#viewer .sharebox .seg button[aria-pressed='true'] {
+#viewer .sharebox .seg button[aria-pressed='true'],
+#viewer .bar .more[aria-expanded='true'],
+#viewer .options [data-book][aria-checked='true'] {
   background: var(--key-bg);
   color: var(--key-ink);
   border-color: var(--key-edge);
@@ -702,8 +704,8 @@ body.wire-dark ~ #book :is(.bk-strip, .bk-bar, .bk-undo-pill) {
   transform: var(--key-down);
   box-shadow: var(--key-on-down-lip);
 }
-/* Share's box over a preview: a panel with its lip */
-#viewer .sharebox {
+/* Share's box and More options over a preview: a panel with its lip */
+#viewer :is(.sharebox, .options) {
   border: 0;
   border-radius: var(--r-xl);
   box-shadow:

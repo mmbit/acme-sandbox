@@ -56,8 +56,8 @@ function toolsOf(st) {
   return {
     mode: () => st.mode,
     ink: () => inkOf(st),
-    // Whether a line drawn now may be a gesture (a scratch-out, a circle carried out to assign): the pen's own nib's
-    // alone, never the pencil's or the brush's
+    // Whether a line drawn now may be a gesture (the grid's circle and line): the pen's own nib's alone, never the
+    // pencil's or the brush's.
     gestures: () => gestures(st),
     press: e => press(st, e),
     // A Pencil's tap on a box of words its ink would draw over (the highlighter's): it's edited, the caret there.

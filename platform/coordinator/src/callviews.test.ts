@@ -4,6 +4,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Writable } from 'node:stream';
 import { gunzipSync } from 'node:zlib';
 import { harness } from './harness.ts';
 
@@ -12,6 +13,8 @@ const { base, voice, agent } = h;
 const { ORIGIN } = await import('./config.ts');
 const ledger = await import('./ledger.ts');
 const watchalong = await import('./watchalong.ts');
+const callviews = await import('./callviews.ts');
+const latency = await import('./latency.ts');
 after(() => watchalong.closeMirrors());
 const BOARD = { cookie: h.boardCookie, origin: ORIGIN };
 const noChromium =
@@ -42,7 +45,7 @@ async function walkThrough(who: string, said: [string, number][], timed = true) 
     });
     assert.equal(posted.status, 200);
   }
-  const { clockMs } = watchalong.callPlayback(ctx.call)!;
+  const { clockMs } = (await watchalong.callPlayback(ctx.call))!;
   await end(
     who,
     ctx,
@@ -126,10 +129,36 @@ test("hq call <id> moments: the moments and the transcript in one timeline by th
   assert.equal((await view(plain.call, juno.token, 'view=film')).status, 400);
 });
 
+// What a view waited for on playback.ts's thread (and Chromium's, and the board's line) isn't HQ's hold: the request's
+// record (latency.ts requestHold) is its time less that wait. Each wait is checked on its own, so dropping any one of
+// its exclude()s fails here.
+const excludedIn = (view: () => Promise<unknown>) =>
+  latency.requestHold(async excluded => {
+    const began = performance.now();
+    await view();
+    return { ms: excluded.ms, wall: performance.now() - began };
+  });
+
+test("a view's wait on the recording's thread isn't recorded as HQ's hold", async () => {
+  const call = await walkThrough('wren', [['Board: here we go', 0]]);
+  // the recording's three asks of playback.ts's thread (watchalong.ts callPlayback), each its own
+  assert.ok((await excludedIn(() => watchalong.callPlayback(call))).ms > 0, 'played');
+  const recording = (await watchalong.callPlayback(call))!;
+  assert.ok((await excludedIn(() => recording.at(recording.last))).ms > 0, 'at');
+  assert.ok((await excludedIn(() => recording.every())).ms > 0, 'every');
+  // the board's player: its line (a sink that takes LINE_MS to finish) waited for, not held
+  const LINE_MS = 200;
+  const sink = Object.assign(
+    new Writable({ write: (_c, _e, done) => done(), final: done => setTimeout(done, LINE_MS) }),
+    { writeHead: () => sink },
+  );
+  assert.ok((await excludedIn(() => callviews.forBoard(sink as never, call, {}))).ms >= LINE_MS, "the board's player");
+});
+
 test('the views go only where hq call goes: not a live call, nor a call about keys to another agent', async () => {
   const juno = await h.start({ agent: 'juno', title: 'Watching calls back' });
   const live = await h.liveCall('wren');
-  // (a colleague's: the CEO reads a live call's lines so far, job #24358, never its screen, which is the call's own)
+  // (a colleague's: the CEO reads a live call's lines so far, never its screen, which is the call's own.)
   const bolt = await h.start({ agent: 'bolt', title: 'Watching calls back' });
   for (const more of ['view=moments', 'view=screen&at=%2312'])
     assert.deepEqual(await view(live.call, bolt.token, more), NOT_FOUND, more);
@@ -162,6 +191,12 @@ test(
     const call = await walkThrough('wren', [['Board: here we go', 0]]);
     const juno = await h.start({ agent: 'juno', title: 'Stepping back' });
     const PNG = (data: string) => Buffer.from(data, 'base64').subarray(1, 4).toString() === 'PNG';
+    // (Chromium's replay is most of a screen's time: waited for, not held)
+    const screen = await excludedIn(() => callviews.screenAt(call, '#4'));
+    assert.ok(
+      screen.ms > screen.wall / 2,
+      `screen: ${Math.round(screen.ms)} of ${Math.round(screen.wall)} ms excluded`,
+    );
     const tapped = (await view(call, juno.token, 'view=screen&at=%234')).body;
     assert.ok(PNG(tapped.picture.data));
     assert.equal(Math.max(tapped.width, tapped.height), 1568);

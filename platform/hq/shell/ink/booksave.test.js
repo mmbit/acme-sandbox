@@ -8,7 +8,7 @@ import { registerHooks } from 'node:module';
 const REVIEW = new URL('../../../../shared/review/', import.meta.url);
 const module = text => ({ url: `data:text/javascript,${encodeURIComponent(text)}`, shortCircuit: true });
 const STORE = module(
-  ['createGroup', 'deleteGroup', 'editGroup', 'loadGroups', 'placeGroups', 'restoreGroup']
+  ['createGroup', 'deleteGroup', 'editGroup', 'loadGroups', 'restoreGroup']
     .map(name => `export const ${name} = (dev, ...args) => globalThis.store.${name}(...args);`)
     .join('\n'),
 );
@@ -321,4 +321,121 @@ test('a stroke the pen drew here, moved here and moved again on another screen: 
   const again = { id: 1, w: 800 };
   await readPage(bookOf(again), again);
   assert.deepEqual(xs(again), [100], 'read again from the store: the one stroke');
+});
+
+test('a line drawn on an opened scrap while its page is read again stays, and is saved with what another screen drew', async () => {
+  const store = (globalThis.store = storeOf());
+  store.add({ ink: [line(0)] });
+  // (the store refuses an edit made since another screen's, as notebookgroups.ts does)
+  const edit = store.editGroup;
+  store.editGroup = async (gid, since, parts) => {
+    if (store.groups.get(gid).updated !== since) throw Object.assign(new Error('changed meanwhile'), { status: 409 });
+    return edit(gid, since, parts);
+  };
+  const page = { id: 1, w: 800, focus: 1, origins: new Map([[1, { x: 0, y: 0 }]]) },
+    book = bookOf(page);
+  // (laid, what's in no unit is the scrap's, as bookunits.js layUnits homes it)
+  book.view.place = () => page.ink.forEach(el => (el.g ??= page.focus));
+  await readPage(book, page);
+  // (another screen draws on it, and this screen's read of that is on its way as the pen draws here: a guest's page is
+  // read every second)
+  store.groups.set(1, { ...store.groups.get(1), updated: 99, ink: [line(0), line(500)] });
+  const load = store.loadGroups;
+  let arrive;
+  store.loadGroups = () => new Promise(done => (arrive = () => done(load())));
+  const read = readAgain(book, page);
+  await new Promise(setImmediate);
+  drawn(page, 200);
+  changed(book, page);
+  store.loadGroups = load;
+  arrive();
+  await read;
+  await saved(book, page);
+  // (its edit refused, as the other screen's came first: read, and saved again)
+  await saved(book, page);
+  assert.deepEqual(
+    xs(page).sort((a, b) => a - b),
+    [0, 200, 500],
+    'the line drawn here stays on the page',
+  );
+  assert.deepEqual(
+    stored(store).sort((a, b) => a - b),
+    [0, 200, 500],
+    'and is stored with the other screen’s',
+  );
+});
+
+test('a line drawn on an opened scrap while the save before its read is on its way stays, and is saved', async () => {
+  const store = (globalThis.store = storeOf());
+  store.add({ ink: [line(0)] });
+  const page = { id: 1, w: 800, focus: 1, origins: new Map([[1, { x: 0, y: 0 }]]) },
+    book = bookOf(page);
+  book.view.place = () => page.ink.forEach(el => (el.g ??= page.focus));
+  await readPage(book, page);
+  drawn(page, 200);
+  changed(book, page);
+  // (the save readAgain makes first is on its way, and an answer lands on the note meanwhile)
+  const edit = store.editGroup;
+  let sending, arrive;
+  const sent = new Promise(done => (sending = done));
+  store.editGroup = async (gid, since, parts) => {
+    store.editGroup = edit;
+    sending();
+    await new Promise(done => (arrive = done));
+    const g = await edit(gid, since, parts);
+    store.groups.get(gid).children = [{ kind: 'answer' }];
+    return g;
+  };
+  const read = readAgain(book, page);
+  await sent;
+  drawn(page, 300);
+  changed(book, page);
+  arrive();
+  await read;
+  await saved(book, page);
+  assert.deepEqual(
+    xs(page).sort((a, b) => a - b),
+    [0, 200, 300],
+    'the line drawn during the save stays on the page',
+  );
+  assert.deepEqual(
+    stored(store).sort((a, b) => a - b),
+    [0, 200, 300],
+    'and is stored',
+  );
+});
+
+test('the first line drawn on an opened scrap while two reads of its page overlap stays, and is saved', async () => {
+  const store = (globalThis.store = storeOf());
+  store.add({ ink: [line(0)] });
+  const page = { id: 1, w: 800, focus: 1, origins: new Map([[1, { x: 0, y: 0 }]]) },
+    book = bookOf(page);
+  book.view.place = () => page.ink.forEach(el => (el.g ??= page.focus));
+  await readPage(book, page);
+  // (the store changes twice while nothing is drawn here yet: the second read waits on the first, on its way as the pen
+  // draws)
+  store.groups.set(1, { ...store.groups.get(1), updated: 99 });
+  const load = store.loadGroups;
+  let arrive;
+  store.loadGroups = () => new Promise(done => (arrive = () => done(load())));
+  const first = readAgain(book, page);
+  await new Promise(setImmediate);
+  store.loadGroups = load;
+  const second = readAgain(book, page);
+  drawn(page, 200);
+  changed(book, page);
+  arrive();
+  await first;
+  await second;
+  await saved(book, page);
+  assert.deepEqual(
+    xs(page).sort((a, b) => a - b),
+    [0, 200],
+    'the line stays on the page',
+  );
+  assert.deepEqual(
+    stored(store).sort((a, b) => a - b),
+    [0, 200],
+    'and is stored',
+  );
 });

@@ -14,10 +14,10 @@ import * as bookpicture from './ink/bookpicture.ts';
 import * as slips from './ink/bookslips.ts';
 import * as notebook from './notebook.ts';
 import * as groups from './notebookgroups.ts';
-import * as notebookplaces from './notebookplaces.ts';
 import * as sending from './notebooksend.ts';
 import * as rounds from './notebookrounds.ts';
 import * as answers from './ink/bookanswer.ts';
+import * as assign from './ink/bookassign.ts';
 import { db } from './db.ts';
 import { timeZone } from './company.ts';
 import { reply } from './uploads.ts';
@@ -110,8 +110,8 @@ const room = routes({
   [`POST ${API}/groups/move`]: onPage(byGroup, moveGroup),
   [`POST ${API}/groups/resize`]: onPage(byGroup, (b, on) => groups.resizeGroup(b, on.who)),
   [`POST ${API}/groups/split`]: onPage(byGroup, (b, on) => groups.splitGroup(b, on.who)),
-  // (a sketch page's units pinned where the guest's screen laid them.)
-  [`POST ${API}/groups/place`]: onPage(byPage, (b, on) => notebookplaces.placeGroups(b, on.who)),
+  // (their Answer on a scrap handed to them: ink/bookassign.ts.)
+  [`POST ${API}/groups/answer`]: onPage(byGroup, (b, on) => assign.answerGroup(b, on.who)),
   [`POST ${API}/groups/reply`]: onPage(bySlip('answer'), (b, on) => sending.replyTo(b, on.who, on.stillOpen), ANSWERS),
   [`POST ${API}/replies/delete`]: onPage(byGroup, (b, on) => sending.deleteReply(b, on.who), ANSWERS),
   [`POST ${API}/answers/form`]: onPage(bySlip('id'), (b, on) => answers.answerForm(b, on.who), ANSWERS),
@@ -138,12 +138,16 @@ async function voiceNote({ req, res }: RouteRequest) {
   return answer(res, await voice(`notebook:${name}`, req, true, stillIn));
 }
 
+// (and a call's guest's, on the call's page, as their group writes there: onCallPage.)
 function uploadPicture({ req, res, url }: RouteRequest) {
   const name = nameOf(req),
-    member = notebooks.pageMember(Number(url.searchParams.get('page')), name);
-  if (!member) return answer(res, 404);
-  const stillIn = () => stillSignedIn(req, name) && !!notebooks.pageMember(member.page, name);
-  return pictures.uploadPicture(req, res, members.whoOf(member), stillIn, `${API}/pictures`);
+    page = Number(url.searchParams.get('page')),
+    member = notebooks.pageMember(page, name),
+    call = member ? undefined : callguests.onCallPage(page, name);
+  if (!member && !call) return answer(res, 404);
+  const stillIn = () =>
+    stillSignedIn(req, name) && !!(member ? notebooks.pageMember(page, name) : callguests.onCallPage(page, name));
+  return pictures.uploadPicture(req, res, member ? members.whoOf(member) : call!.who, stillIn, `${API}/pictures`);
 }
 
 // A write by the signed-in guest: its JSON body read first (at most max), then the guest asked again (their session

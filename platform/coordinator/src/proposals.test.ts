@@ -130,30 +130,26 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
   );
 });
 
-test("a running owner hears a proposal in its session; its owner or the CEO drops it, and the proposer's running job hears why", async () => {
+test("a proposal reaches its owner's planning job while the owner is at work, never the work session alone; its owner or the CEO drops it, and the proposer's running job hears why", async () => {
   levels();
   const wren = await h.start({ agent: 'wren', title: 'The first world', engine: 'claude' });
   const bolt = await h.start({ agent: 'bolt', title: 'Level art', engine: 'claude', thread: 'game/levels' });
   const made = await h.agent('proposals', bolt.token, { title: 'A second world', brief: 'Snow.' });
   assert.equal(made.status, 200);
-  assert.deepEqual(queuedWork(), [], 'no planning job: wren is at work');
-  const told = db.prepare('select recipient, job, text from messages').get() as any;
-  assert.deepEqual(
-    { ...told },
-    {
-      recipient: 'wren',
-      job: wren.id,
-      text: `Proposal #${made.body.id} from bolt for game: "A second world". Accept it into your plan or drop it (hq inbox ${made.body.id}).`,
-    },
-  );
-  db.exec('delete from messages');
+  const [planning, ...none] = queuedWork();
+  assert.deepEqual([planning.agent, planning.title, none], ['wren', 'Sort new proposals into the plan', []]);
+  const heard = db.prepare('select heard_by from proposals where id = ?').get(made.body.id) as { heard_by: number };
+  assert.equal(heard.heard_by, planning.id, 'its planning job holds it, not the session busy with its own task');
+  assert.equal((db.prepare('select count(*) n from messages').get() as { n: number }).n, 0);
+  // the session sees it all the same, and may decide it
+  assert.match((await h.hq(wren, 'inbox')).out, /A second world \(from bolt, for game, wren's to decide/);
   assert.equal((await h.agent('proposals/drop', bolt.token, { id: made.body.id, why: 'mine' })).status, 400);
   const dropped = await h.hq(wren, 'inbox', 'drop', String(made.body.id), 'The board wants one world first');
   assert.equal(dropped.code, 0, dropped.out);
   assert.match(dropped.out, /Its proposer heard why\./);
-  const heard = db.prepare('select recipient, job, text from messages').all() as any[];
+  const told = db.prepare('select recipient, job, text from messages').all() as any[];
   assert.deepEqual(
-    heard.map(m => ({ ...m })),
+    told.map(m => ({ ...m })),
     [
       {
         recipient: 'bolt',
@@ -169,29 +165,28 @@ test("a running owner hears a proposal in its session; its owner or the CEO drop
   assert.equal((await h.agent('proposals/drop', juno.token, { id: other.body.id, why: 'Later' })).status, 200);
 });
 
-test("a proposal told to a running session that ends without deciding it reaches its owner again at the next sweep; one decided there doesn't", async () => {
+test('a proposal a work session held from before goes to a planning job at the next sweep, while the session still runs', async () => {
   levels();
   const proposals = await import('./proposals.ts');
   const bolt = await h.start({ agent: 'bolt', title: 'Level art', engine: 'claude', thread: 'game/levels' });
-  // decided in the session: nothing follows its end
-  const first = await h.start({ agent: 'wren', title: 'The first world', engine: 'claude' });
-  const decided = await h.agent('proposals', bolt.token, { title: 'A second world', brief: 'Snow.' });
-  assert.deepEqual(queuedWork(), [], 'no planning job: wren is at work');
-  assert.equal((await h.hq(first, 'inbox', 'drop', String(decided.body.id), 'One world first')).code, 0);
-  assert.equal((await h.finish(first)).status, 200);
-  proposals.sweep();
-  assert.deepEqual(queuedWork(), []);
-  // left open: the sweep tells wren again once the session ends, not while it runs
-  const second = await h.start({ agent: 'wren', title: 'The second world', engine: 'claude' });
-  const left = await h.agent('proposals', bolt.token, { title: 'A third world', brief: 'Sand.' });
-  proposals.sweep();
-  assert.deepEqual(queuedWork(), [], 'nothing follows while the session runs');
-  assert.equal((await h.finish(second)).status, 200);
+  const wren = await h.start({ agent: 'wren', title: 'The first world', engine: 'claude' });
+  const made = await h.agent('proposals', bolt.token, { title: 'A second world', brief: 'Snow.' });
+  // as tell gave it to a running session before: held there, its notice with it, and no planning job
+  const [first] = queuedWork();
+  db.prepare("update jobs set status = 'cancelled' where id = ?").run(first.id);
+  db.prepare('update proposals set heard_by = ? where id = ?').run(wren.id, made.body.id);
+  const messages = await import('./messages.ts');
+  messages.notice('wren', 'Proposal from bolt', wren.id, made.body.id);
   proposals.sweep();
   const [planning, ...none] = queuedWork();
   assert.deepEqual([planning.agent, planning.title, none], ['wren', 'Sort new proposals into the plan', []]);
-  const heard = db.prepare('select heard_by from proposals where id = ?').get(left.body.id) as { heard_by: number };
+  const heard = db.prepare('select heard_by from proposals where id = ?').get(made.body.id) as { heard_by: number };
   assert.equal(heard.heard_by, planning.id);
+  assert.equal(h.job(wren.id).status, 'running');
+  const notice = db.prepare('select lapsed from messages where held = ?').get(made.body.id) as {
+    lapsed: string | null;
+  };
+  assert.ok(notice.lapsed, 'its notice withdrawn');
   proposals.sweep();
   assert.equal(queuedWork().length, 1, 'once');
 });
@@ -219,20 +214,6 @@ test('a proposal is refused for someone who takes no work, a thread that is not 
     assert.equal(refused.status, 400);
     assert.match(refused.body.error, why);
   }
-});
-
-test("a proposal whose owner can't be told is refused, and nothing of it is kept", async () => {
-  levels();
-  const wren = await h.start({ agent: 'wren', title: 'The first world', engine: 'claude' });
-  const bolt = await h.start({ agent: 'bolt', title: 'Level art', engine: 'claude', thread: 'game/levels' });
-  const messages = await import('./messages.ts');
-  for (let i = 0; i < messages.PER_HOUR; i++)
-    messages.send({ agent: 'bolt', job: bolt.id }, 'wren', `Note ${i}`, wren.id);
-  const refused = await h.agent('proposals', bolt.token, { title: 'A second world', brief: 'Snow.' });
-  assert.equal(refused.status, 429);
-  assert.equal((db.prepare('select count(*) n from proposals').get() as { n: number }).n, 0);
-  assert.equal((db.prepare('select count(*) n from messages').get() as { n: number }).n, messages.PER_HOUR);
-  assert.deepEqual(queuedWork(), []);
 });
 
 test("the owner's one planning job takes what arrives while it runs, on any engine; what it never saw gets the next one once it ends", async () => {
@@ -401,14 +382,37 @@ test("an owner's two projects get a planning job each, and a pause on one holds 
   assert.equal((db.prepare("select count(*) n from messages where recipient = 'wren'").get() as { n: number }).n, 0);
 });
 
+// Review findings on a deliverable with a deadline, by an author of game's
+const windowedFindings = async (prs: number[]) => {
+  const windows = await import('./windows.ts');
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('game/levels')!, { deadline, aim: deadline }, 'juno');
+  const proposals = await import('./proposals.ts');
+  for (const pr of prs) {
+    const author = h.queue({ agent: 'bolt', title: `Level ${pr}`, thread: 'game/levels' });
+    h.storedPr(pr, author, 'open', ['levels.ts'], { round: 1 });
+    proposals.deliverFindings({
+      pr,
+      round: 1,
+      branch: `job/${author}`,
+      agent: 'bolt',
+      decision: 'changes',
+      summary: 'The level needs fixes',
+      findings: [{ id: pr, domain: 'ui', files: ['levels.ts'], issue: 'No exit', task: 'Add an exit' }],
+    });
+  }
+};
+const sorting = () => queuedWork().filter(j => j.title === 'Sort new proposals into the plan');
+
+// (findings with a deadline are the only items whose owner's session is sent a line: tell)
 test('a project handed on is all or nothing: a notice refused part way publishes none of it', async () => {
   levels();
   const juno = await h.start({ agent: 'juno', title: 'The follow-through check', engine: 'claude' });
   const bolt = await h.start({ agent: 'bolt', title: 'Level art', engine: 'claude', thread: 'game/levels' });
   const moss = await h.start({ agent: 'moss', title: 'The shop', engine: 'claude' });
-  for (const title of ['A second world', 'A third world'])
-    assert.equal((await h.agent('proposals', bolt.token, { title, brief: 'More.' })).status, 200);
-  const [planning] = queuedWork();
+  await windowedFindings([91, 92]);
+  const [planning, ...none] = sorting();
+  assert.deepEqual([planning.agent, none], ['wren', []]);
   const messages = await import('./messages.ts');
   for (let i = 1; i < messages.PER_HOUR; i++)
     messages.send({ agent: 'juno', job: juno.id }, 'bolt', `Note ${i}`, bolt.id);
@@ -428,8 +432,87 @@ test('a project handed on is all or nothing: a notice refused part way publishes
   );
   assert.equal(projects.findProject('game')?.owner, 'wren');
   assert.equal((db.prepare('select count(*) n from messages where recipient = ?').get('moss') as { n: number }).n, 0);
-  assert.equal(h.job(planning.id).status, 'queued', "wren's planning job stays");
+  assert.deepEqual(
+    sorting().map(j => [j.id, j.agent]),
+    [[planning.id, 'wren']],
+    "wren's planning job stays, and moss has none",
+  );
   assert.ok(moss);
+});
+
+test("review findings for an owner's other project get that project's planning job, which lists them, while the owner works and its sort for another project has run", async () => {
+  levels();
+  const juno = await h.start({ agent: 'juno', title: 'The follow-through check' });
+  await project(juno, 'tools', 'wren');
+  const kit = await h.start({ agent: 'kit', title: 'Ads' });
+  await h.agent('proposals', kit.token, { title: 'A boss rush', brief: 'All bosses.', project: 'game' });
+  const [game] = sorting();
+  const sorted = await h.claim(h.job(game.id).engine);
+  assert.equal(sorted?.id, game.id);
+  assert.equal((await h.finish(sorted!)).status, 200);
+  const work = await h.start({ agent: 'wren', title: 'The test fixes', engine: 'claude', thread: 'game/levels' });
+  projects.createThread({ project: 'tools', name: 'Shared infra', goal: 'Tidy', slug: 'infra' });
+  const author = h.queue({ agent: 'bolt', title: 'Tidy the infra', thread: 'tools/infra' });
+  h.storedPr(93, author, 'open', ['infra.ts'], { round: 1 });
+  const proposals = await import('./proposals.ts');
+  // from Quill's ruling, as review.ts delivers it
+  const quill = await h.start({ agent: 'quill', title: 'Rule on PR #93' });
+  proposals.deliverFindings(
+    {
+      pr: 93,
+      round: 1,
+      branch: `job/${author}`,
+      agent: 'bolt',
+      decision: 'changes',
+      summary: 'Check the touch-ups',
+      findings: [],
+      touchups: 'Check the touch-ups',
+    },
+    { agent: 'quill', job: quill.id },
+  );
+  const [tools, ...none] = sorting();
+  assert.deepEqual([tools.agent, tools.thread, none], ['wren', `tools/job-${tools.id}`, []]);
+  const item = db.prepare("select heard_by from proposals where title like '%PR #93%'").get() as { heard_by: number };
+  assert.equal(item.heard_by, tools.id, "tools' planning job holds it, not the work session");
+  assert.equal((db.prepare("select count(*) n from messages where recipient = 'wren'").get() as { n: number }).n, 0);
+  assert.match((await h.hq(work, 'inbox')).out, /^#findings:93 /m, "it's in wren's inbox");
+  const running = await h.claim(h.job(tools.id).engine);
+  assert.equal(running?.id, tools.id);
+  assert.match((await h.hq(running!, 'inbox')).out, /^#findings:93 /m, 'and in the planning job that sorts it');
+  // a second while it runs: the same job takes it, no other
+  const second = h.queue({ agent: 'bolt', title: 'Tidy the scripts', thread: 'tools/infra' });
+  h.storedPr(94, second, 'open', ['scripts.ts'], { round: 1 });
+  proposals.deliverFindings({
+    pr: 94,
+    round: 1,
+    branch: `job/${second}`,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'Check the touch-ups',
+    findings: [],
+    touchups: 'Check the touch-ups',
+  });
+  assert.deepEqual(sorting(), [], 'no second planning job while it runs');
+  assert.match((await h.hq(running!, 'inbox')).out, /^#findings:94 /m);
+});
+
+test("review findings with a deadline reach the owner's running session at once, and its planning job too", async () => {
+  levels();
+  const wren = await h.start({ agent: 'wren', title: 'The first world', engine: 'claude' });
+  await windowedFindings([95]);
+  const [planning, ...none] = sorting();
+  assert.deepEqual([planning.agent, none], ['wren', []]);
+  const item = db.prepare("select id, heard_by from proposals where title like '%PR #95%'").get() as {
+    id: number;
+    heard_by: number;
+  };
+  assert.equal(item.heard_by, planning.id);
+  const told = db.prepare('select recipient, job, held, text from messages').all() as any[];
+  assert.deepEqual(
+    told.map(m => [m.recipient, m.job, m.held]),
+    [['wren', wren.id, item.id]],
+  );
+  assert.match(told[0].text, /^Review findings:95 from bolt for game: .*\(hq inbox findings:95\)\.$/);
 });
 
 test('a review bundle its owner left open gets their next planning job when it grows', async () => {

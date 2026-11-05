@@ -8,6 +8,7 @@ import { harness } from './harness.ts';
 
 const h = await harness('oversight');
 const { redact } = await import('./secrets.ts');
+const { age } = await import('../../worker/hq/report.ts');
 const REPORTS = `${h.dataDir}/status`;
 
 const overseer = (path: string, key: string) => h.send(`/api/overseer/${path}`, { authorization: `Bearer ${key}` });
@@ -110,11 +111,27 @@ test('an agent reads the reports with hq report: the newest, one of a time, what
   report('2026-10-17T10:10:00Z', SECOND);
   const newest = await h.hq(job, 'report');
   assert.equal(newest.code, 0, newest.out);
-  assert.equal(newest.out, `(the report of 2026-10-17T10:10:00Z)\n${SECOND}`);
+  // (its first line says how long ago it was written, so an old report never reads as live.)
+  assert.equal(newest.out, `(the report of 2026-10-17T10:10:00Z, ${age('2026-10-17T10:10:00Z')})\n${SECOND}`);
   assert.equal(
     (await h.hq(job, 'report', '--at', '2026-10-17T10:05Z')).out,
-    `(the report of 2026-10-17T10:00:00Z)\n${FIRST}`,
+    `(the report of 2026-10-17T10:00:00Z, ${age('2026-10-17T10:00:00Z')})\n${FIRST}`,
     'the newest at or before --at',
+  );
+  const written = Date.parse('2026-11-04T22:47:20Z');
+  assert.deepEqual(
+    [0, 59_999, 34 * 60_000 + 5_000, 119 * 60_000, 125 * 60_000, 50 * 3_600_000].map(ms =>
+      age('2026-11-04T22:47:20Z', written + ms),
+    ),
+    [
+      'written under a minute ago',
+      'written under a minute ago',
+      'written 34 min ago',
+      'written 119 min ago',
+      'written 2 h 5 min ago',
+      'written 2 days ago',
+    ],
+    "the report's age, in minutes, hours or days",
   );
   const changed = (await h.hq(job, 'report', '--since', '2026-10-17T10:05:00Z')).out;
   assert.match(changed, /^@@ -\d+,3 \+\d+,3 @@ == work$/m);

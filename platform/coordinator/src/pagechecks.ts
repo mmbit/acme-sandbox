@@ -2,7 +2,7 @@
 // with why: a page is kept whole or not at all.
 import * as pictures from './pictures.ts';
 import { inOneStep } from './db.ts';
-import { MAX_SCRAPS } from './pagescraps.ts';
+import { LINE_ID, MAX_SCRAPS } from './pagescraps.ts';
 import { noKeys } from '../../../shared/review/anchor.js';
 import { TEXT_MAX } from '../../hq/shell/ink/notebookparts.js';
 import { LINE } from '../../hq/shell/ink/bookinkmath.js';
@@ -96,7 +96,7 @@ export function inkOf(v: unknown): Stroke[] | Refused {
     if (!stroke)
       return [
         400,
-        'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, cut?, points: [[x, y, pressure, t], ...] }',
+        'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, cut?, points: [[x, y, pressure, t], ...], id? }',
       ];
     points += stroke.points.length;
     if (points > MAX_POINTS) return [413, FULL, 'pageFull'];
@@ -107,9 +107,10 @@ export function inkOf(v: unknown): Stroke[] | Refused {
 // The words typed on a page as HQ sent them: [{ x, y, w, text, color }], x and y the box's top-left and w the width
 // its words wrap at, in the page's px; every one checked, or the refusal. A box of no words is never kept (HQ drops
 // it), so it's refused here. undefined: none sent (a sketch's save), the page's kept as they are. id: a typed line's own,
-// which it keeps through edits, joins and splits (notebookscraps.ts typedNote)
-export type Typed = { x: number; y: number; w: number; text: string; color: string; id?: string };
-export const LINE_ID = /^[0-9a-f]{12}$/;
+// which it keeps through edits, joins and splits (notebookscraps.ts typedNote). voice: a voice note's words, written on a
+// slip of their own (HQ's bookheard.js, bookrender.ts)
+export type Typed = { x: number; y: number; w: number; text: string; color: string; id?: string; voice?: true };
+export { LINE_ID };
 export function textsOf(v: unknown): Typed[] | Refused | undefined {
   if (v === undefined) return undefined;
   const why = [400, 'texts are a list of { x, y, w, text, color: "#rrggbb" }, x and y on the page'] as Refused;
@@ -126,9 +127,19 @@ export function textsOf(v: unknown): Typed[] | Refused | undefined {
     if (t.text.includes('\0')) return [400, "a typed note can't hold a NUL character", 'noteCharacter'];
     if ([...t.text].length > TEXT_MAX) return [400, `a typed note is at most ${TEXT_MAX} characters`, 'noteLong'];
     if (t.id !== undefined && !(typeof t.id === 'string' && LINE_ID.test(t.id))) return why;
+    if (t.voice !== undefined && t.voice !== true) return why;
     const round = (n: number) => Math.round(n * 100) / 100;
-    const id = t.id === undefined ? {} : { id: t.id as string };
-    texts.push({ x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase(), ...id });
+    const id = t.id === undefined ? {} : { id: t.id as string },
+      voice = t.voice ? { voice: true as const } : {};
+    texts.push({
+      x: round(t.x),
+      y: round(t.y),
+      w: round(t.w),
+      text: t.text,
+      color: t.color.toLowerCase(),
+      ...id,
+      ...voice,
+    });
   }
   return texts;
 }
@@ -142,10 +153,21 @@ function strokeOf(s: any) {
   // (the eraser's pieces of one see-through stroke share a number, so they're filled as one: inkshape.js fills.
   if (s.cut !== undefined && !(Number.isInteger(s.cut) && s.cut > 0 && s.cut < 2 ** 31)) return null;
   const cut = s.cut === undefined ? {} : { cut: s.cut as number };
+  // (its own id, which HQ keeps through a move or a resize, bookedit.js newId)
+  if (s.id !== undefined && !(typeof s.id === 'string' && LINE_ID.test(s.id))) return null;
+  const id = s.id === undefined ? {} : { id: s.id as string };
   const alpha = s.alpha === undefined ? {} : { alpha: s.alpha };
   // (a filled shape: its line and its inside, ink.js.)
   const fill = s.fill ? { fill: true as const } : {};
-  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, ...cut, points: s.points as number[][] };
+  return {
+    color: s.color.toLowerCase(),
+    size: s.size,
+    ...alpha,
+    ...fill,
+    ...cut,
+    points: s.points as number[][],
+    ...id,
+  };
 }
 // A data URL's picture, read by its bytes and stripped as an upload is (pictures.ts), or the refusal
 export function dataUrlPicture(v: unknown): Refused | { type: string; clean: Buffer } {

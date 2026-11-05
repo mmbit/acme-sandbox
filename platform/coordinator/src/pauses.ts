@@ -214,7 +214,8 @@ export const anyOpen = () =>
 export function untilJobs() {
   const until = `select distinct ${redraws.current('u.job')} job from pauses p join pause_until u on u.pause = p.id
     join jobs prior on prior.id = u.job where ${jobs.pauseHolds('p')} and not ${jobs.merged('prior')}`;
-  return (db.prepare(redraws.query(until)).all() as { job: number }[]).map(row => row.job);
+  // (kept prepared: each claim's plan reads it.)
+  return (prepared(redraws.query(until)).all() as { job: number }[]).map(row => row.job);
 }
 
 // The open pause on exactly this project or thread (hq item link <item> pause:<id>), or why there's none

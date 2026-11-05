@@ -2,7 +2,7 @@
 // with none of a browser's lag. The shell is told where the paper is and the ink in use while the pen or the
 // highlighter is picked on an open book; with any other tool, in the overview, folded or on a locked page, the Pencil
 // is the page's as in a browser. Each stroke it drew comes back here and is played as the pen's own pointer events, so the book takes it
-// exactly as one drawn on the page (a scratch-out, ink over words, a tap on a box of words, a step for Undo).
+// exactly as one drawn on the page (ink over words, a tap on a box of words, a step for Undo).
 // In a browser there's no shell: bookpages.js never loads this.
 import { isTap } from '/__review/tap.js';
 import { shut } from './booksave.js';

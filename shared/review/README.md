@@ -104,8 +104,10 @@ alone, so the imports form no circle.
   tail is never kept in the stroke: the line that goes dry is only where the pen went. `ink.test.js` checks the
   pixels: the tail reaches the last predicted point and ends there, and after the next sample the screen is the line
   alone.
-- **It ends where the pen lifts:** the lift adds no point of its own. The line ends where it was drawn as the pen came
-  up, never where the browser says it went up a few frames later (that point makes a hook on every line). `ink.test.js` lifts 11 px off the line's end and gets the same stroke.
+- **It ends where the pen lifts:** the lift adds no point of its own. The line ends where the pen last was as it came
+  up, caught up from its smoothing (which leaves each point a little short of the pen), never where the browser says
+  it went up a few frames later (that point makes a hook on every line). `ink.test.js` lifts 11 px off the line's end
+  and gets the line on to the pen's last sample.
 - **A pen starts it:** drawn across a page while review mode rests, a pen opens it right there, the line from where it
   touched, and the page doesn't scroll under it. A pen's tap stays the page's own. Once a pen has drawn on a note, only
   the pen draws (a palm resting on the screen doesn't); a finger still taps and scrolls.

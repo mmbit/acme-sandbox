@@ -37,6 +37,16 @@ NOTE_WORDS = {
     # (a mark on the call's notes page, by whoever drew it there: the board, from any screen, or its guest.)
     'marked': "({who} drew #{n} on the call's notes page{saying}",
     'mark': ': the picture is that mark as it stands on the page.)',
+    # (ink on the agent's own scrap or version there: it points while they talk, and goes once the agent's turn is
+    # done.)
+    'pointed': "({who} drew on your #{on} on the call's notes page{saying}",
+    'pointed version': "({who} drew on your version “{version}” of #{on} on the call's notes page{saying}",
+    'pointer': ': the picture is it with that ink over it.',
+    'pointer full': ": its picture didn't fit, the call has had all the pictures it can hold.",
+    'points': (' That ink points, as they would with a finger while they talk: it goes from the page once this turn of '
+               'yours is done. What it settles (a choice circled, something crossed out) goes in your own notes if '
+               "it's worth keeping (change_note, write_down). If they don't look done with it, let it be for now "
+               '(say_nothing): what they add comes with their next turn.)'),
     # (a guest's words as a JSON string, which can't close its quote or start a line of its own that reads as the
     # board's.)
     'quoted': ', saying {words}',
@@ -98,6 +108,15 @@ def note_said(entry):
 """
     note = entry['note']
     saying = NOTE_WORDS['saying'].format(words=note['words']) if note['words'] else ''
+    if note.get('pointer'):  # (on the agent's own scrap or version.)
+        on, board = note['pointer'], note['who'] == 'Board'
+        who = 'The board' if board else note['who']
+        if not board and note['words']:
+            saying = NOTE_WORDS['quoted'].format(words=json.dumps(note['words'], ensure_ascii=False))
+        said = NOTE_WORDS['pointed version' if on['version'] else 'pointed'].format(who=who, saying=saying, **on)
+        end = 'pointer full' if note.get('full') else 'pointer' if entry['data'] else None
+        said += (NOTE_WORDS[end] if end else '.') + NOTE_WORDS['points']
+        return said if board else said + NOTE_WORDS['theirs'].format(who=who)
     if note.get('who'):  # (a mark on the call's notes page, with who drew it.)
         end = 'full' if note.get('full') else 'mark' if entry['data'] else 'bare'
         if note['who'] == 'Board':

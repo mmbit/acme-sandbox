@@ -4,9 +4,9 @@
 // - At its left the overview (on a page only: the overview shows all the pages already, a page opens by its tile), at
 //   its right the dots. New page folds into the dots menu. Undo and Redo are a pill of their own left of the bar
 //   (bookui.js).
-// - The dots menu: Rename page (its title written where it shows, booktitle.js), Tear off and send (booktear.js) and
-//   Archive this page (into the overview's archived pages, bookshelf.js). Then Preferences for this device
-//   (bookprefs.js).
+// - The dots menu: Rename page (its title written where it shows, booktitle.js), Tear off and send (booktear.js),
+//   Archive this page (into the overview's archived pages, bookshelf.js) and Give a copy… (to a guest, bookgive.js).
+//   Then Preferences for this device (bookprefs.js).
 // The page's name is its title, fixed on the view (bookviewhead.js), and its control's label. The board's page goes by
 // tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: the tools go, Undo and Redo with
 // them, and on a sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
@@ -19,6 +19,7 @@ import { nameOf } from './bookhead.js';
 import { shut } from './booksave.js';
 import { editTitle } from './booktitle.js';
 import { mountForYou } from './bookforyou.js';
+import { giveKey } from './bookgive.js';
 import { indexesIn } from './notebookchapters.js';
 import { scope, word } from './bookscope.js';
 
@@ -43,11 +44,12 @@ export function mountControls(book, act) {
   }
   island('book').prepend(cog);
   const archive = scope ? null : archiveKey(act),
+    give = scope ? null : giveKey(book),
     rename = renameKey(book);
   // (the asks still open on the page, counted by its title; in a guest's book, the scraps handed to them.)
   const forYou = mountForYou(book);
   const send = scope ? sendKey(act) : null,
-    locked = scope ? null : lockLine(act);
+    locked = scope ? null : lockLine(book, act);
   return {
     update() {
       const far = act.level() !== 'page',
@@ -60,6 +62,7 @@ export function mountControls(book, act) {
       historyKeys(book, page, still);
       book.tear?.();
       if (archive) archive.hidden = far || !page;
+      give?.(far, page);
       rename(far, page);
       book.head.update(); // (the view's title, after a turn or a rename.)
       before.disabled = mate(book, -1) < 0;
@@ -134,7 +137,11 @@ function pageButtons(book, act) {
 // comes with the lift itself may go.)
 const TAP_CLICK_MS = 1000;
 function arrowKey(label, svg, go) {
-  const b = button({ icon: svg, label });
+  return onEveryTap(button({ icon: svg, label }), go);
+}
+// A key that answers every tap: a finger's or the Pencil's on its lift on the key (iPad Safari makes no click of some),
+// a mouse's or the keyboard's on its click, never both.: shared
+export function onEveryTap(b, go) {
   let pressing = null,
     turnedAt = -Infinity;
   b.addEventListener('pointerdown', e => {
@@ -145,8 +152,8 @@ function arrowKey(label, svg, go) {
     if (e.pointerId !== pressing) return;
     pressing = null;
     const r = b.getBoundingClientRect(),
-      onArrow = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    if (!onArrow || b.disabled) return;
+      onKey = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!onKey || b.disabled) return;
     turnedAt = e.timeStamp;
     go();
   });
@@ -185,13 +192,12 @@ function archiveKey(act) {
   return archive;
 }
 // The board's page sent, or else read-only (a call's notes page till its follow-up hands it out): locked, the tools
-// unseen in their room (bookshare.css). Read-only, a lock in their place and "Locked"; sent, nothing, the SENT stamp on
-// the page says it. A sketch page's tools give way to Duplicate, lit as the one
-// to press: the board carries on from a page it sent on its copy. The tools'
-// island goes where neither shows. Returns locked(the page shown when locked, or false).
-function lockLine(act) {
+// unseen in their room (bookshare.css). Read-only, the view's head says "Locked" under the title, fixed as it is while
+// the page scrolls (bookviewhead.js); sent, nothing, the SENT stamp on the page
+// says it. A sketch page's tools give way to Duplicate, lit as the one to press: the board carries on from a page it
+// sent on its copy. The tools' island goes where it doesn't show. Returns locked(the page shown when locked, or false).
+function lockLine(book, act) {
   const line = island('tools').closest('.bk-strip'),
-    lock = document.createElement('p'),
     copy = button({
       icon: icon('duplicate'),
       text: word('duplicate'),
@@ -199,16 +205,13 @@ function lockLine(act) {
       keys: word('duplicatePageHint'),
       onClick: () => act.duplicate(),
     });
-  lock.className = 'bk-locked';
-  lock.innerHTML = `${icon('lock')}<span>Locked</span>`;
-  lock.setAttribute('role', 'status');
   copy.classList.add('bk-duplicate');
-  line.append(lock, copy);
+  line.append(copy);
   return page => {
     line.toggleAttribute('data-locked', !!page);
-    lock.hidden = !page || !!(page.sent || page.sending);
+    book.head.locked(!!page && !(page.sent || page.sending));
     copy.hidden = !page || page.chapter !== 'sketch';
-    line.hidden = !!page && lock.hidden && copy.hidden;
+    line.hidden = !!page && copy.hidden;
   };
 }
 

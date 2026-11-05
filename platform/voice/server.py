@@ -37,10 +37,11 @@ from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, marks_lost, note
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
 from callnotes import (CHANGE_WORDS, DRAW_WORDS, MARK_WORDS, PAGE_WORDS, TITLE_WORDS_SAID, TRY_WORDS, WRITE_DOWN_WORDS,
                        CallNotes)
-from callnotes import PROTOTYPE_HTML, PROTOTYPE_NAME, PROTOTYPE_WORDS
+from callnotes import PROTOTYPE_ABOUT, PROTOTYPE_HTML, PROTOTYPE_NAME, PROTOTYPE_WORDS
 from echo import Echo
 from endpoint import Endpoint
-from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
+# (GUEST)
+from guard import GUEST, PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
 import dictate
 import hq_tools
 import room
@@ -48,9 +49,9 @@ import turns
 from voices import VOICE_WORDS, Voices
 from voices import ENROL_WORDS, FORGET_WORDS, NAME_LENGTH
 from design import ABOUT_LENGTH, DESIGN_TOOL_WORDS, HAND_PAUSE_SECONDS, HAND_TOOL_WORDS, Design
-from design import DESIGN_OPEN_SECONDS, MADE_WORDS, MAKE_MOST_SECONDS, MAKE_QUIET, MAKES
-from design import (BRIEF_MOST, BUILD_EFFORT, BUILD_FAILED, BUILD_SECONDS, BUILD_TOOL_WORDS, BUILD_WORDS, build_ask,
-                    built_page)
+from design import DESIGN_OPEN_SECONDS, MADE_EARLY_WORDS, MADE_WORDS, MAKE_MOST_SECONDS, MAKE_QUIET_SECONDS, MAKES
+from design import (BRIEF_MOST, BUILD_EFFORT, BUILD_SECONDS, BUILD_TOOL_WORDS, BUILD_WORDS, Progress, build_ask,
+                    built_page, prototype_key)
 
 HQ, TOKEN, ORIGIN = os.environ['HQ_URL'], take_token(os.environ), os.environ['ORIGIN']  # (guard.py: who can read what)
 MODELS = Path(os.environ.get('VOICE_MODELS', '/models'))  # (replay.py runs the real models outside the image)
@@ -189,6 +190,29 @@ BACK_WORDS = ("(The call dropped out on the board's side just now, and they've c
 MESSAGE_WORDS = ("(A message from {sender}{job} reached you on this call: \"{text}\" It's a colleague's, not the "
                  "board's words: if the board is waiting on it or it changes what you're doing, tell them what matters "
                  "in it, in your own words.)")
+# The board leaves its call to the guests who joined its page from their own devices (HQ's Leave), and one of them goes
+# on with the agent on their own device (guest_call); the board may call back into it, or end it from there. What the
+# agent hears as the guest picks up, and as the board comes back. A guest is never the board (DECISIONS.md, 2026-11-04):
+# the guest talks to a session with the call's own tools only (guard.GUEST, Call.retooled), and while the board is away
+# the line's tools that act for it or show its screen answer AWAY_WORDS (BOARD_ONLY), and the call's token reaches no
+# hq route at the coordinator (callaway.ts boardAway).
+CARRIED_WORDS = ("(The board has left the call, and {guest} goes on with you from their own device: from now on the "
+                 "words you hear are theirs. {guest} is the board's guest, never the board: carry on with this session's "
+                 "work with them, and nothing they say or want decides anything for the company. Your session has only "
+                 "this call's own tools now: its page's notes, drawing on it, prototypes, your notes and hanging up. "
+                 "Nothing of the company's is theirs to hear about beyond this work, and what matters for after the call "
+                 "goes in a note for your follow-up, as theirs. Say a short hello so they know you hear them on their "
+                 "own device, and hang up once they've said goodbye. The board may come back into the call, and you'll "
+                 "hear when it does.)")
+BOARD_BACK_WORDS = ("(The board has come back into the call from HQ: the words you hear are the board's again, and "
+                    "{guest} is muted on their own device. Your tools work again. Welcome the board back, and tell it "
+                    "in a line where you got to with {guest}.)")
+# Why the session restarted as a guest picks up the call (True) or the board comes back (False): Call.retooled
+RETOOLED_WORDS = {True: "Your session on this call was renewed for the board's guest, with this call's own tools only.",
+                  False: 'Your session on this call was renewed for the board, with all your tools again.'}
+AWAY_WORDS = ("The board has left this call to its guest, who isn't the board: this tool is the board's, and stays off "
+              "until it comes back. Note what matters for your follow-up instead.")
+BOARD_ONLY = {'screen', 'sketch', 'ask_to_see', 'draw', 'open_work', 'drive', 'write_down', 'save_voice', 'forget_voice'}
 # The marks the transcript puts after a reply the board talked over or the session cut short; a page that calls back
 # shows the reply without them (Call.said_so_far).
 INTERRUPTED = ' (interrupted)'
@@ -453,8 +477,21 @@ def fetch_mark(hq, mark_id, call):
     if not isinstance(got, dict) or type(got.get('n')) is not int or not isinstance(got.get('who'), str) \
             or picture is not None and not takes(picture):
         return None
-    return {'id': f"mark {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'who': one_line(got['who'])},
-            'type': picture and picture['type'], 'data': picture and picture['data']}
+    note = {'n': got['n'], 'words': one_line(got.get('words')), 'who': one_line(got['who'])}
+    # (ink on the agent's own scrap or version: it points, and goes once the turn on it is done.)
+    on = got.get('pointer')
+    pointer = isinstance(on, dict) and type(on.get('on')) is int and isinstance(got.get('updated'), str)
+    if pointer:
+        note['pointer'] = {'on': on['on'], 'version': one_line(on.get('version')) or None}
+    return {'id': f"mark {got['n']}", 'note': note, 'type': picture and picture['type'], 'data': picture and picture['data'],
+            **({'pointer': (got['n'], got['updated'])} if pointer else {})}
+
+
+def clear_pointer(hq, pointer, call):
+    """The agent's turn on a pointer (n, updated: fetch_mark's) is done: its ink goes from the call's page, unless more
+    was drawn on it since (the coordinator's ink/callpointers.ts)."""
+    n, updated = pointer
+    hq('POST', 'pointed', {'id': n, 'call': call, 'updated': updated})
 
 
 def picture_as(picture, kind):
@@ -518,7 +555,11 @@ async def screen_asked(reader, writer):
                          'design_session': call.design_tool, 'raise_hand': call.hand_tool}[kind]
         # (made once the room is done.)
         tool = functools.partial(call.made, tool) if call and kind in MAKES else tool
-        answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
+        # (the board left the call to its guest: CARRIED_WORDS.)
+        if call and call.left and kind in BOARD_ONLY:
+            answer = {'error': AWAY_WORDS}
+        else:
+            answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
         print(f'{kind} tool: {err!r}', flush=True)
         answer = {'error': f"{ASKED_WORDS.get(kind, SCREEN_WORDS)['failed']} ({type(err).__name__})."}
@@ -648,6 +689,9 @@ class Agent:
         # limited) sends no request and gets no rate_limit_event, only the error
         self.resets = 0
         self.closed = False  # the call ended (close()): no session starts after it
+        # a guest carries the call the board left, by their name ('' for the board): the session has guard.GUEST's tools
+        # (Call.retooled), and the coordinator briefs it for the guest (callguestbrief.ts guestPrompt).
+        self.guest = ''
 
     async def start(self):
         if self.closed:
@@ -656,7 +700,8 @@ class Agent:
         # on it, and keeps whether it's a walk-through on the call's row: walk)
         asked = {'agent': self.agent, 'lang': self.lang, 'request': self.request, 'token': self.token, 'phone': self.phone,
                  **({'callout': self.callout} if self.callout else {}),
-                 **({'walk': True} if self.walk and not self.token else {})}
+                 **({'walk': True} if self.walk and not self.token else {}),
+                 **({'guest': self.guest} if self.guest else {})}
         ctx = await asyncio.to_thread(self.wiring.hq, 'POST', 'call-context', asked)
         if self.closed:  # (hung up while the coordinator answered: Call.end handed the token over already)
             return
@@ -682,10 +727,11 @@ class Agent:
             env = agent_env(os.environ, HQ, signs, self.token, self.agent, self.screen, self.tz, work=paths.work,
                             cli_config=paths.cli_config)
             # It can read the company's files (main, read only) and hand work on with hq; nothing else (guard.TOOLS).
+            # (a guest carrying the call: guard.GUEST.)
             self.proc = await self.wiring.start_cli(
                 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
                 '--include-partial-messages', '--model', model, '--effort', effort, '--session-id', session,
-                *(PARTNER if partner else TOOLS),
+                *(PARTNER if partner else GUEST if self.guest else TOOLS),
                 '--system-prompt', prompt, cwd=paths.repo if paths.repo.is_dir() else paths.work, env=env, pass_fds=(signs,),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 limit=1 << 22)
@@ -1143,6 +1189,16 @@ def unhesitating(text, lang='en'):
     with the commas around them (one stays where it sat between two), and a sentence that started with one starting with
     the next word ("Uh, keep it simple." is "Keep it simple."). Only hesitation: nothing left, and it's the words as
     heard."""
+    return without_hesitation(text, lang) or text
+
+
+def hesitant(text, lang='en'):
+    """Only hesitation ("Ehm.", "Uh, um"): a hum, whose voiceprint is unlike the same person's words."""
+    return not any(c.isalnum() for c in without_hesitation(text, lang))
+
+
+def without_hesitation(text, lang):
+    """The words without their hesitation (unhesitating), or nothing."""
     # (drawn out too: "Uhh", "Ummm", "Eer", but never into a word: "err" stays; capitalised only on its first letter, so
     # an acronym such as "ER" stays)
     sounds = '|'.join(f"[{w[0]}{w[0].upper()}]{w[0]}*{w[1:]}{'' if w.endswith('r') else '+'}"
@@ -1152,8 +1208,7 @@ def unhesitating(text, lang='en'):
     out = re.sub(opening, lambda m: m[1].upper(), text)
     # (between two commas or dashes, the first stays: "Wait, um, what?" is "Wait, what?", "Wait — um — what" "Wait — what")
     within = rf"(,|\s[—–-])?(?:\s+{sound}(,|\s[—–-])?)+"
-    out = re.sub(within, lambda m: m[1] if m[1] and m[2] else '', out).strip()
-    return out or text
+    return re.sub(within, lambda m: m[1] if m[1] and m[2] else '', out).strip()
 
 
 def listener():
@@ -1254,6 +1309,8 @@ class Call:
         # When the call was last in use: words heard, the board's pen, a reply or a build at work (watch_live); and how
         # its own route closes its connection when the watch ends it.
         self.active, self.close_line = self.signal, None
+        # How HQ's call screen route lets a quiet connection go and holds the call for the board's return (watch_live).
+        self.drop_line = None
         self.writing = threading.Lock()  # a transcript write, from its check of ended to its last byte (end() runs in a thread)
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
@@ -1261,6 +1318,9 @@ class Call:
         # The board's notes the agent has had in a turn not yet done (HQ's ids): HQ takes their ink off the board's screen
         # once one is (scribbled).
         self.scribbles = []
+        # And the pointers on its own scraps and versions it has had ((n, updated): fetch_mark's), whose ink the
+        # coordinator takes off the page once the turn is done; pointed: every one it took.
+        self.pointers, self.pointed = [], set()
         self.picture_bytes = 0  # what the session has seen and what waits for it, as base64 (SESSION_BYTES)
         # the pictures the session has seen (shared ones and notes), by their numbers: a compacted session is sent them
         # again (compact), a restarted one has none of them
@@ -1287,6 +1347,13 @@ class Call:
         # back: the board called back into the call, which the agent hasn't heard yet (came_back)
         self.screen['on'], self.away, self.back = False, False, False
         self.messages = []  # (colleagues' messages for the agent's next message: messaged.)
+        # The board left the call to its guests (leave), and the guest whose own device carries it now, by the name they
+        # joined under, or None until one picks up (carried).
+        self.left, self.carrier = False, None
+        # Who carries the call changed (carried, board_back): the next turn starts a session with their tools
+        # (retooled).
+        self.retool = False
+        self.telling = threading.Lock()  # (the coordinator told whether the board is away, one word at a time: board_away)
         self.drawing = Drawing(self)
         # The agent driving a piece of work on the board's screen (driving.py)
         self.driving = Driving(self)
@@ -1295,8 +1362,9 @@ class Call:
         # A design session, and the agent's raised hand (design.py).
         self.design, self.hand_waits = Design(self.send_event), None
         # Prototypes built in the background (build): each page saved on the call by its name, the last one (the next
-        # version builds on it), and the builders at work.
-        self.prototypes, self.builders = {}, set()
+        # version builds on it), and the builders at work, and the names they build (one at a time under a name). Both
+        # by the name as the store compares it (prototype_key).
+        self.prototypes, self.builders, self.building = {}, set(), set()
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
         # (the AI line and the transcript line) whole in each of its languages (care_first), and a reply in another
@@ -1465,11 +1533,19 @@ class Call:
 
     async def scribbled(self):
         """The agent's turn is done, not talked over: the board's notes it had go from the board's screen (HQ's
-        callnotes.js), so it circles afresh. Nothing of them is in the notebook unless the agent made a note of one
-        (the board, call 161). A turn the board talked over keeps them for the next."""
+        callnotes.js), so it circles afresh, and so does the pointer ink it had on the call's page. Nothing of them is
+        in the notebook unless the agent made a note of one (the board, call 161). A turn the board talked over keeps
+        them for the next."""
         done, self.scribbles = self.scribbles, []
         for note_id in done:
             await self.tell_drawn('note', note_id, 'done')
+        # (and the pointers on the call's page go from it.)
+        pointers, self.pointers = self.pointers, []
+        for pointer in pointers:
+            try:
+                await asyncio.to_thread(clear_pointer, self.wiring.hq, pointer, self.brain.call)
+            except Exception as err:
+                print(f'call: {self.agent} could not clear pointer {pointer[0]}: {err}', flush=True)
 
     def open(self, greeting, at=None):
         """A call out: the other side has picked up and said its first words (greeting), or nothing for a while: the
@@ -1914,8 +1990,70 @@ class Call:
         old page's pen goes with it: a lift it never sent kept the line waiting for a drawing nobody makes."""
         self.back, self.live_at = True, None
         self.ping, self.late, self.pen = None, 0.0, None
+        if self.left:  # (it had left the call to its guest.)
+            return self.board_back()
         self.write(f'({self.them} dropped out of the call and called back in.)')
         self.nudge()
+
+    # ---- the board leaves its call to its guests.
+    def board_left(self):
+        """The board left the call to the guests on its page (HQ's Leave): the line holds the call for one of them to
+        go on with it on their own device (guest_call), and the coordinator hears it's away (callguests.ts: their ticket,
+        and no hq route for the call's token until it's back). The agent hears of it once a guest picks up."""
+        self.left = True
+        self.write(f'({self.them} left the call to its guests.)')
+        self.board_away()
+
+    def carried(self, guest):
+        """A guest's own device carries the call now (guest_call): their words are labelled with their name (labelled),
+        and the agent hears it (CARRIED_WORDS) with their first words, or in a turn of its own once the line is quiet.
+        Their page counts its own clock: the board's ping baseline goes, as at a call back."""
+        self.carrier, self.speaker = guest, None
+        self.ping, self.late, self.pen, self.live_at = None, 0.0, None, None
+        self.write(f'({guest} goes on with the call from their own device.)')
+        self.messages.append(CARRIED_WORDS.format(guest=guest))
+        self.retool = True
+        self.nudge()
+
+    def board_back(self):
+        """The board called back into the call it left (app_call): its device carries it again, the guest's goes quiet
+        (closed 4002), and the agent hears it in place of BACK_WORDS."""
+        guest = self.carrier or 'the guest'
+        self.left, self.carrier, self.speaker, self.back = False, None, None, False
+        self.write(f'({self.them} came back into the call.)')
+        self.messages.append(BOARD_BACK_WORDS.format(guest=guest))
+        self.retool = True
+        self.board_away()
+        self.nudge()
+
+    async def retooled(self, lines):
+        """A fresh session with the tools of whoever carries the call now, before their turn (restart keeps the call so
+        far): a guest's has guard.GUEST's and a briefing that names them, the board's has guard.TOOLS and its own
+        briefing again. Not when the board came back before the guest's first turn: the session never changed."""
+        self.retool = False
+        if self.brain.guest == (self.carrier or ''):
+            return
+        self.brain.guest = self.carrier or ''
+        await self.restart(lines, why=RETOOLED_WORDS[bool(self.brain.guest)])
+
+    def board_away(self):
+        """The coordinator hears whether the board is away (callguests.ts call-away), in a thread, a few tries over a
+        busy moment. The line's own word decides who carries the call (guest_call checks left); the coordinator's
+        gives a guest their ticket and refuses the call token's hq routes while the board is away. One word at a time
+        (telling), each try the line's word as it is then: a word held up over a stall never lands after a later one,
+        so the board's quick leave and return leaves the coordinator where the line is."""
+        def tell():
+            with self.telling:
+                for attempt in range(3):
+                    away = self.left
+                    try:
+                        return self.wiring.hq('POST', 'call-away', {'agent': self.agent, 'token': self.brain.token,
+                                                                    'away': away})
+                    except Exception as err:
+                        why = err
+                    time.sleep(1 + attempt)
+                print(f'call: {self.agent}: HQ not told the board is {"away" if away else "back"} ({why!r})', flush=True)
+        asyncio.get_running_loop().run_in_executor(None, tell)
 
     def messaged(self, messages):
         """Colleagues' messages for the agent, from HQ: in the transcript as they come, and with the agent's next message
@@ -2114,6 +2252,10 @@ class Call:
             # (a note's ink, for HQ to take off once the turn is done: scribbled.)
             if 'ink' in picture and picture['id'] not in self.held and picture['ink'] not in self.scribbles:
                 self.scribbles.append(picture['ink'])
+            # (a pointer's, by the change it is.)
+            if picture.get('pointer') and picture['pointer'] not in self.pointed:
+                self.pointed.add(picture['pointer'])
+                self.pointers.append(picture['pointer'])
             # (a note's picture too, which HQ hears nothing of. A mark's newer picture takes the place of its older one.)
             if picture['data'] and (picture['id'] not in self.held or str(picture['id']).startswith('mark ')):
                 self.held.pop(picture['id'], None)
@@ -2232,9 +2374,8 @@ class Call:
 
     def screen_shown(self, state):
         """HQ's page says the board's screen is 'shown', 'paused' or 'off', as that changes and each time the line picks
-        up: the line knows it at once, not only from a screen-turn that answered in time (call #258: a turn whose
-        screen-turn didn't left the agent saying it saw nothing, the screen shown for 19 s). The next screen-turn that
-        answers says it again."""
+        up: the line knows it at once, not only from a screen-turn that answered in time (one can fail or come late
+        while a share is on). The next screen-turn that answers says it again."""
         self.screen['on'], self.screen['paused'] = state != 'off', state == 'paused'
 
     def screen_sent(self, look):
@@ -2324,8 +2465,9 @@ class Call:
             last['back'] = True
             self.lines, self.times = self.lines[:last['n']], self.times[:last['n']]
             if last['text']:  # (pictures shown with nothing said have no words to take back)
-                # (named by voice already, it keeps its names: labelled)
-                self.draft.insert(0, ('\n' if self.voices and self.voices.many else '') + last['text'])
+                # (named by voice already, or by the guest carrying the call, it keeps its names: labelled.
+                # carrier)
+                self.draft.insert(0, ('\n' if self.carrier or (self.voices and self.voices.many) else '') + last['text'])
                 self.draft_at = last.get('at') or self.draft_at  # (said when they were first said)
             self.taken_back_message = unhesitating(last['text'], self.lang)
             # (shown without its "um"s; back: HQ's transcript writes it over the turn's line, which the reply had closed.
@@ -2361,7 +2503,9 @@ class Call:
             numbers = ', '.join(f"#{picture['id']}" for picture in shared)
             self.write(f"Board: (shared {'picture' if len(shared) == 1 else 'pictures'} {numbers} on screen)")
         for note in notes:
-            if note['note'].get('who'):  # (a mark on the call's notes page.)
+            if note['note'].get('pointer'):  # (on the agent's own there.)
+                self.write(f"{note['note']['who']}: (drew on #{note['note']['pointer']['on']} on the call's notes page)")
+            elif note['note'].get('who'):  # (a mark on the call's notes page.)
                 self.write(f"{note['note']['who']}: (drew #{note['note']['n']} on the call's notes page)")
             else:
                 self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
@@ -2405,6 +2549,9 @@ class Call:
             # the line couldn't answer last time, and the worker has since put a seat with room here: a fresh session on it
             if self.noticed and self.brain.moved():
                 await self.restart(earlier)
+            # (a guest picked up the call the board left, or the board came back.)
+            if self.retool:
+                await self.retooled(earlier)
             # (the screen's words go in front, its picture after the shared ones, its line before the caller's words)
             look = await self.screen_turn()
             if self.crowded(look):  # (the shared pictures the session had go again)
@@ -2699,14 +2846,19 @@ class Call:
     def heard_lines(self, text):
         """The other side's words as the transcript's lines: the board's, the partner's, or in a room (or the board's
         room, once it has heard a second voice) each speaker's."""
-        return text.split('\n') if self.speakers or (self.voices and self.voices.many) else [f'{self.them}: {text}']
+        # (carrier)
+        many = self.speakers or self.carrier or (self.voices and self.voices.many)
+        return text.split('\n') if many else [f'{self.them}: {text}']
 
     def labelled(self, text, samples, voiced=None):
         """A piece of what the line heard, for the draft: in a room it starts on a new line with its speaker's name when
         the speaker changes (the one loudest over its samples and the VAD's pause after them); on the board's call the
-        same once it has heard a second voice (voices.py: voiced, the piece's voiceprint)."""
-        if self.voices:
-            name = self.voices.place(voiced, samples / RATE)
+        same once it has heard a second voice (voices.py: voiced, the piece's voiceprint). On a call the board left to a
+        guest, the guest's own device carries it: what it hears is theirs (carried)."""
+        if self.carrier:
+            name = self.carrier
+        elif self.voices:
+            name = self.voices.place(None if hesitant(text, self.lang) else voiced, samples / RATE)
             if not self.voices.many:
                 self.speaker = name
                 return text
@@ -2737,6 +2889,11 @@ class Call:
         agent hears the session's words in the tool's answer."""
         if self.ended:
             return {'error': DESIGN_TOOL_WORDS['gone']}
+        if (asked.get('design_session') or {}).get('off') is True:
+            if not await self.design.stop():
+                return {'ok': DESIGN_TOOL_WORDS['not on']}
+            print(f'call: {self.agent} made the call an ordinary one again', flush=True)
+            return {'ok': DESIGN_TOOL_WORDS['off']}
         if not self.design.start():
             return {'ok': DESIGN_TOOL_WORDS['already']}
         print(f'call: {self.agent} made the call a design session', flush=True)
@@ -2788,31 +2945,41 @@ class Call:
                 self.turn = asyncio.create_task(self.answer('', self.turn))
                 return
 
-    # ---- prototypes, built in the background from a brief (design.py BUILD_WORDS).
     async def made(self, tool, asked):
         """One of the agent's asks that makes something (design.py MAKES), once the room is done in a design session
-        (done), or its words that it wasn't made."""
-        return await tool(asked) if await self.done() else {'error': MADE_WORDS}
+        (room_done), or its words that it wasn't made; made at MAKE_MOST_SECONDS with the room still not quiet, the
+        agent hears so with its answer (MADE_EARLY_WORDS)."""
+        done = await self.room_done()
+        if not done:
+            return {'error': MADE_WORDS}
+        answer = await tool(asked)
+        if done == 'early' and 'error' not in answer:
+            # (a picture's answer has its words in 'line', the others in 'ok': hq_tools.py shown, said)
+            key = 'line' if {'line', 'picture', 'pictures'} & set(answer) else 'ok'
+            answer[key] = ' '.join(w for w in (answer.get(key), MADE_EARLY_WORDS) if w)
+        return answer
 
-    async def done(self):
-        """Whether the people in a design session are done (design.py MAKE_QUIET): quiet long enough since their last
-        words, nothing heard still to answer or on its way, the pen at rest. False once they talk on and the turn is
-        taken back (cut_in), or the call ends. Not a session: done at once."""
+    async def room_done(self):
+        """Whether the people in a design session are done (design.py MAKE_QUIET_SECONDS): 'quiet' once it's been quiet
+        long enough since their last words, with nothing heard still to answer or on its way and the pen at rest, or
+        'early' once MAKE_MOST_SECONDS have gone by without that; None once they talk on and the turn is taken back
+        (cut_in), or the call ends. Not a session: 'quiet' at once."""
         if not self.design.on:
-            return True
+            return 'quiet'
         stop, until = self.speaking, self.wiring.monotonic() + MAKE_MOST_SECONDS
         while not (stop and stop.is_set()) and not self.ended:
             # (from the last sound, as hum counts it)
-            quiet = self.quiet * WINDOW + PAUSE >= MAKE_QUIET['done' if self.sounded_finished else 'open']
+            quiet = self.quiet * WINDOW + PAUSE >= MAKE_QUIET_SECONDS['done' if self.sounded_finished else 'open']
             if quiet and not (self.draft or self.waiting or self.over or self.behind() or self.inking()):
-                return True
+                return 'quiet'
             if self.wiring.monotonic() >= until:
                 print(f'call: {self.agent} made something after {MAKE_MOST_SECONDS:.0f} s, the room never quiet',
                       flush=True)
-                return True
+                return 'early'
             await asyncio.sleep(0.1)
-        return False
+        return None
 
+    # ---- prototypes, built in the background from a brief (design.py BUILD_WORDS).
     async def prototype_tool(self, asked):
         """The agent's prototype tool: a page of its own (html) saved at once (CallNotes), or a brief a builder takes in
         the background (build) while the agent goes on."""
@@ -2820,46 +2987,60 @@ class Call:
         if not isinstance(given, dict) or 'brief' not in given:
             got = await self.page.prototype_tool(asked)
             if 'error' not in got and isinstance(given, dict):
-                self.prototypes[one_line(given['name'])] = given['html'].strip()
+                self.prototypes[prototype_key(one_line(given['name']))] = given['html'].strip()
             return got
         name = one_line(given['name']) if isinstance(given.get('name'), str) else ''
         brief = given['brief'].strip() if isinstance(given['brief'], str) else ''
-        if set(given) - {'name', 'brief'} or not 0 < len(name) <= PROTOTYPE_NAME or not 0 < len(brief) <= BRIEF_MOST:
+        # (what a next version changes, said in a line on its slip)
+        about = one_line(given.get('about', '')) if isinstance(given.get('about', ''), str) else None
+        if set(given) - {'name', 'brief', 'about'} or not 0 < len(name) <= PROTOTYPE_NAME or \
+                not 0 < len(brief) <= BRIEF_MOST or about is None or len(about) > PROTOTYPE_ABOUT:
             return {'error': BUILD_TOOL_WORDS['shape']}
         if refusal := self.page.refused(PROTOTYPE_WORDS):
             return {'error': refusal}
-        builder = asyncio.create_task(self.build(name, brief))
+        # (taken here, not when the builder starts: a second brief under the name may come before it has)
+        if (key := prototype_key(name)) in self.building:
+            return {'error': BUILD_TOOL_WORDS['building'].format(name=name)}
+        self.building.add(key)
+        builder = asyncio.create_task(self.build(name, brief, about))
         self.builders.add(builder)
         builder.add_done_callback(self.builders.discard)
+        builder.add_done_callback(lambda _: self.building.discard(key))
         print(f'call: {self.agent} had a prototype built in the background', flush=True)
         return {'ok': BUILD_TOOL_WORDS['started']}
 
-    async def build(self, name, brief):
+    async def build(self, name, brief, about=''):
         """A prototype built from the agent's brief while the call goes on: the CLI once, with no tools, at BUILD_EFFORT,
-        on the call's seat (the next version of one the call has builds on its page). Its page is saved as the agent's
-        would be, and the agent's hand goes up for it (design.py built); one that fails, the agent hears why."""
+        on the call's seat (the next version of one the call has builds on its page, about: what it changes). Its page
+        is saved as the agent's would be, and the agent's hand goes up for it (design.py built); for one that fails
+        too, with why. One at a time under a name (building): the next builds on the one it makes."""
         start = self.wiring.monotonic()
         try:
-            result = await self.builder(build_ask(name, brief, self.lang, self.prototypes.get(name)))
+            result = await self.builder(build_ask(name, brief, self.lang, self.prototypes.get(prototype_key(name))))
             if not (page := built_page(result)):
                 raise ValueError('no whole page in its answer')
-            got = await self.page.prototype_tool({'prototype': {'name': name, 'html': page[0]}})
+            got = await self.page.prototype_tool({'prototype': {'name': name, 'html': page[0],
+                                                                **({'about': about} if about else {})}})
             if 'error' in got:
                 raise ValueError(got['error'])
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            print(f'call: {self.agent}: a prototype built in the background failed ({err!r})'[:300], flush=True)
-            if not self.ended:
-                self.design.due = '\n'.join(filter(None, (self.design.due, BUILD_FAILED.format(name=name, why=err))))
+            # (always a reason, though an error may have no words of its own: a TimeoutError has none.)
+            why = str(err).strip() or f'{type(err).__name__}, with no words of its own'
+            print(f'call: {self.agent}: a prototype built in the background failed after '
+                  f'{self.wiring.monotonic() - start:.0f} s: {why}'[:400], flush=True)
+            if not self.ended and await self.design.built(name[:ABOUT_LENGTH], f'{name}: {why}', failed=True):
+                self.wait_for_moment()
             return
-        self.prototypes[name] = page[0]
+        self.prototypes[prototype_key(name)] = page[0]
         print(f'call: {self.agent}: a prototype built in the background after {self.wiring.monotonic() - start:.0f} s',
               flush=True)
         if self.ended:
             return
         shown = f"{name} v{got['version']}" if type(got.get('version')) is int else name
-        if await self.design.built(shown[:ABOUT_LENGTH], f'{shown}: {page[1]}' if page[1] else shown):
+        said = f'{shown} (what changed: {about})' if about else shown
+        if await self.design.built(shown[:ABOUT_LENGTH], f'{said}: {page[1]}' if page[1] else said):
             self.wait_for_moment()
 
     async def builder(self, ask):
@@ -2871,21 +3052,52 @@ class Call:
             env = agent_env(os.environ, HQ, signs, '', self.agent, None, self.brain.tz, work=paths.work,
                             cli_config=paths.cli_config)
             proc = await self.wiring.start_cli(
-                'claude', '-p', '--output-format', 'json', '--model', MODEL, '--effort', BUILD_EFFORT, '--tools', '',
+                'claude', '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+                '--model', MODEL, '--effort', BUILD_EFFORT, '--tools', '',
                 '--strict-mcp-config', '--setting-sources', 'user', '--permission-mode', 'dontAsk',
                 '--no-session-persistence', '--system-prompt', BUILD_WORDS, cwd=paths.work, env=env, pass_fds=(signs,),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 limit=1 << 24)
         finally:
             os.close(signs)
+        return await self.builder_answer(proc, ask)
+
+    async def builder_answer(self, proc, ask):
+        """The builder's CLI (proc) asked ask: its result text, read from its stream as it comes (design.py Progress),
+        or why not: its error, or how far it got by BUILD_SECONDS."""
+        progress, result, said = Progress(self.wiring.monotonic()), {}, []
+
+        async def read():
+            nonlocal result
+            proc.stdin.write(ask.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+            while line := await proc.stdout.readline():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict):
+                    progress.seen(event, self.wiring.monotonic())
+                    result = event if event.get('type') == 'result' else result
+
+        async def errors():  # (its last words on stderr, for a CLI that ends with no result)
+            while line := await proc.stderr.readline():
+                if words := line.decode(errors='replace').strip():
+                    said[:] = [words[:200]]
+
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(ask.encode()), BUILD_SECONDS)
+            await asyncio.wait_for(asyncio.gather(read(), errors(), proc.wait()), BUILD_SECONDS)
+        except TimeoutError:
+            raise RuntimeError(f'not done after {BUILD_SECONDS / 60:.0f} minutes, so the line stopped it: '
+                               f'{progress.said(self.wiring.monotonic())}') from None
         finally:
             if proc.returncode is None:  # (given up on, or the call ended: cancelled)
                 proc.kill()
-        result = json.loads(out or b'{}') if out.strip().startswith(b'{') else {}
         if proc.returncode or result.get('is_error') or not isinstance(result.get('result'), str):
-            raise RuntimeError(f"the builder ended with {proc.returncode}: {str(result.get('result') or '')[:200]}")
+            words = str(result.get('result') or '').strip()[:200] or (said[0] if said else 'no words')
+            raise RuntimeError(f'the builder ended with {proc.returncode}: {words}')
+        print(f'call: {self.agent}: its builder answered: {progress.said(self.wiring.monotonic())}', flush=True)
         return result['result']
 
     async def enrol_tool(self, asked):
@@ -2938,11 +3150,15 @@ class Call:
 
     def noted(self, tool_input):
         """The agent's note (NOTE_TOOL), kept in order with the call, even once the transcript isn't. One hq_tools.py
-        refuses isn't kept either."""
+        refuses isn't kept either. On a call with the board it's a line of the transcript, the agent's and unsaid: its
+        follow-up works from the transcript."""
         what = str(tool_input.get('what', '')).strip()
         if hq_tools.plain(what):
             return
-        self.notes.append(what)
+        if self.callout:
+            self.notes.append(what)
+        else:
+            self.write(f'({self.agent.capitalize()}, a note for the follow-up, not said: {what})')
         self.keep()
 
     async def object(self, stop, turn):
@@ -3028,8 +3244,7 @@ async def hand_over_held(paths, hq, every=HELD_EVERY):
 
 # Every LINES_EVERY seconds: each call's transcript so far goes to HQ as it grows (call-lines), so what was said is in HQ
 # even if the call never ends cleanly, and the CEO reads a call still going on; HQ answers with the colleagues' messages
-# for the call, which its agent hears (Call.messaged). (A call that's over is hand_over_held's.) (call #257's transcript stayed on the line, its call open in HQ with no lines, and a colleague's word
-# never reached the call)
+# for the call, which its agent hears (Call.messaged). (A call that's over is hand_over_held's.)
 LINES_EVERY = 15
 
 
@@ -3038,7 +3253,7 @@ async def kept_in_hq(wiring):
     while True:
         await asyncio.sleep(LINES_EVERY)
         for name, messages in await asyncio.to_thread(keep_in_hq, wiring, sent):
-            if call := next((e['call'] for e in CALLS.values() if e['call'].file.name == name), None):
+            if call := next((c for c in LIVE if c.file.name == name), None):
                 call.messaged(messages)
 
 
@@ -3075,7 +3290,7 @@ def keep_in_hq(wiring, sent):
 # within HOLD seconds and carries on, and a page that reloaded or left calls back into it ('back': came_back). Hanging
 # up says so ('bye'); otherwise the call ends once HOLD runs out. HOLD is long enough for the board to close a browser
 # that froze, open HQ again and dial: a new dial to an agent whose call is still on comes back into it (held), whichever
-# key dialled. (it was 30 s, and a frozen iPad took the board longer)
+# key dialled.
 HOLD = 600
 CALLS = {}  # call id -> {'call', 'line', 'timer'}
 
@@ -3105,7 +3320,10 @@ class Line:
 # is in use. Every LIVE_EVERY seconds the line touches each live call's file (so its age is how long the call has been
 # neither), except:
 # - a call whose line sent nothing (its audio, HQ's pings) for LIVE_QUIET seconds: a connection that hung or a page that
-#   froze. The line ends it and closes its connection (close_line).
+#   froze. A phone call or a room is over: the line ends it and closes its connection (close_line). HQ's call is
+#   dropped, not over: the line closes the quiet connection (drop_line), and the call is held for HOLD as at any drop,
+#   so the page that wakes or a new dial comes back into it. A held call stays live (it's away, not quiet), so a deploy
+#   doesn't cut a call the board is on its way back to.
 # - a call with nothing on it for LIVE_IDLE seconds: no words heard, no pen on the board's screen, no reply or build of
 #   the agent's at work. A page left open, or a room whose mixer sends only silence, stays on, but its file ages and the
 #   next deploy goes ahead, ending it (the line hands its transcript over when it starts again). A word or a stroke
@@ -3124,7 +3342,7 @@ async def watch_live(every=LIVE_EVERY):
             if call.turn and not call.turn.done() or call.builders:  # (the agent at work)
                 call.active = now
             quiet, idle = now - call.signal, now - call.active
-            if quiet < LIVE_QUIET:
+            if quiet < LIVE_QUIET or call.away:  # (away: held, hang_up_later ends it)
                 if idle < LIVE_IDLE:
                     try:
                         # (never made again: its end may just have taken it)
@@ -3134,6 +3352,12 @@ async def watch_live(every=LIVE_EVERY):
                 elif idle < LIVE_IDLE + every:  # (said on the pass that finds it idle)
                     print(f'call: {call.agent}: nothing on the call for {idle:.0f} s, a deploy no longer waits for it',
                           flush=True)
+                continue
+            if call.drop_line:
+                print(f'call: {call.agent}: nothing from HQ for {quiet:.0f} s, the line holds the call for its return',
+                      flush=True)
+                call.away = True  # (from now: once, while its connection closes)
+                asyncio.create_task(call.drop_line())  # (not awaited, as close_line)
                 continue
             print(f'call: {call.agent}: nothing from its line for {quiet:.0f} s, the line ends the call', flush=True)
             try:
@@ -3253,14 +3477,13 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             e['timer'].cancel()
             e['timer'] = None
         old, e['line'].ws = e['line'].ws, ws
+        # (a guest's device carrying the call the board left hears the board is back: 4002.
         if old is not ws:
-            asyncio.create_task(old.close())
+            asyncio.create_task(old.close(4002, 'board') if e['call'].left else old.close())
         call, line = e['call'], e['line']
         call.reconnected()
         if back:  # (the board called again: HQ's page is a new one)
             call.came_back()
-        if first.get('design') is True and call.design.start():  # (dialled with the Design session key)
-            print(f'call: {call.agent} is a design session', flush=True)
         print(f'call: {call.agent} {"called back in" if back else "reconnected"}', flush=True)
     else:
         t0 = time.monotonic()
@@ -3285,24 +3508,19 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
                 await asyncio.to_thread(call.end)
                 await line.ws.close(4000, 'gone')
 
-        async def close_line():
-            """The line's watch ended the call (watch_live): HQ's page, if it's still there, hears it's gone."""
-            if (e := CALLS.get(cid)) and e['call'] is call:
-                CALLS.pop(cid)
-                if e['timer']:
-                    e['timer'].cancel()
-            await line.ws.close(4000, 'gone')
+        async def drop_line():
+            """The line's watch heard nothing from HQ's page (watch_live): it froze, or its connection hung. That
+            connection closes as a drop (not 4000: a page that wakes reconnects), and the call waits for HOLD (the
+            finally below)."""
+            await line.ws.close(1001, 'quiet')
         # walk: HQ calls about a card's work to walk the board through it
         request = int(first.get('request') or 0)
         walk = first.get('walk') is True and request > 0
         call = make_call(lambda x: line.send(pcm(x)), lambda e: line.send(json.dumps(e)),
                          lambda: line.send(json.dumps({'type': 'clear'})), agent, lang, request, hang_up=hang_up,
                          walk=walk, wiring=wiring)
-        call.close_line = close_line
+        call.drop_line = drop_line
         CALLS[cid] = {'call': call, 'line': line, 'timer': None}
-        if first.get('design') is True:  # (HQ's Design session key.)
-            call.design.start()
-            print(f'call: {agent} is a design session', flush=True)
         try:
             await call.start()
             await call.ringing()  # (its hello comes with the pick-up)
@@ -3320,6 +3538,9 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
         picked_up = {'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}
         if back:
             picked_up['said'] = call.said_so_far()
+            # (the guests on its page: HQ asks again whether to leave it to them.)
+            if call.voices and call.voices.guests:
+                picked_up['guests'] = call.voices.guests
         await ws.send(json.dumps(picked_up))
         await call.retell()  # (what happened to its pictures while HQ was away)
         if not resumed:
@@ -3353,6 +3574,11 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             # (the board added a guest, in the room with it: the agent hears of them with its next message.)
             elif kind == 'guest' and isinstance(e.get('name'), str) and call.voices:
                 call.voices.joined(e['name'])
+            # (the board left the call to the guests on its page: one goes on with it on their own device, guest_call.
+            # The call is held for them as at a drop.)
+            elif kind == 'leave' and call.voices and call.voices.guests:
+                call.board_left()
+                break
             elif kind == 'hand':  # (the board tapped the agent's raised hand.)
                 call.hand_tapped()
             elif kind == 'screen' and e.get('state') in ('shown', 'paused', 'off'):
@@ -3484,6 +3710,73 @@ async def care_call(ws, send, clear, ticket, call_sid, deployment, make_call, wi
     return call, limit
 
 
+# ---- a guest goes on with the call the board left (app_call 'leave'): the guest room's call bar on their own device
+# (platform/hq/shell/ink/bookguestcall.js), admitted with a one-time ticket the coordinator gives their scan's session
+# while the board is away (callguests.ts). The audio both ways as HQ's call screen sends it; the page says 'bye' as it
+# hangs up. Closes: 4000 the call is over or isn't theirs to carry, 4001 another guest's device took it, 4002 the board
+# came back into it.
+async def guest_admitted(ws, wiring):
+    """The held call a guest's first message is a ticket for, and their name: (cid, name), or None."""
+    try:
+        first = json.loads(await asyncio.wait_for(ws.recv(), 10))
+        ticket = str(first.get('ticket') or '')[:200] if isinstance(first, dict) else ''
+        got = await asyncio.to_thread(wiring.hq, 'POST', 'guest-ticket', {'ticket': ticket}) if ticket else None
+    except Exception:  # (a ticket refused, used or late: HTTPError 404; or no first message)
+        return None
+    on = got.get('call') if isinstance(got, dict) else None
+    guest = str(got.get('name') or '').strip()[:70] if isinstance(got, dict) else ''
+    # (only a call the board has left: while it's on, its own device carries it)
+    cid = next((k for k, e in CALLS.items() if on and e['call'].brain.call == on and e['call'].left
+                and not e['call'].ended), None)
+    return (cid, guest) if cid and guest else None
+
+
+async def guest_call(ws, wiring=Wiring()):
+    if ws.request.headers.get('Origin') != ORIGIN:  # (the guest room is on HQ's own host)
+        return await ws.close(1008, 'origin')
+    if not (admitted := await guest_admitted(ws, wiring)):
+        return await ws.close(4000, 'gone')
+    cid, guest = admitted
+    e = CALLS[cid]
+    if e['timer']:
+        e['timer'].cancel()
+        e['timer'] = None
+    call, line = e['call'], e['line']
+    old, line.ws = line.ws, ws
+    if old is not ws:  # (the board's is closed already; another guest's hands it over)
+        asyncio.create_task(old.close(4001, 'moved'))
+    call.reconnected()
+    call.carried(guest)
+    print(f'call: {call.agent}: a guest carries the call the board left', flush=True)
+    bye = False
+    try:
+        await ws.send(json.dumps({'type': 'call', 'id': cid}))
+        async for m in ws:
+            if line.ws is not ws:
+                break
+            if isinstance(m, bytes):
+                pcm16 = np.frombuffer(m, '<i2').astype(np.float32) / 32768
+                mic, voice = np.split(pcm16, 2) if len(pcm16) == 2 * FRAME else (pcm16, None)
+                await call.hear(mic, voice)
+                continue
+            kind = json.loads(m).get('type')
+            if kind == 'interrupt' and call.speaking and not call.speaking.is_set():
+                await call.interrupt()
+            elif kind == 'bye':
+                bye = True
+                break
+    except ConnectionClosed:
+        pass
+    finally:
+        if line.ws is ws and cid in CALLS:  # (else the board or another guest has it)
+            if bye:
+                CALLS.pop(cid)
+                await asyncio.to_thread(call.end)
+            else:
+                CALLS[cid]['timer'] = asyncio.create_task(hang_up_later(cid))
+                call.away = True
+
+
 def language(lang):
     """A call's language: one the line speaks, else English."""
     return lang if lang in ('en', 'nl', 'de') else 'en'
@@ -3510,6 +3803,8 @@ async def route(ws, make_call=Call, wiring=Wiring()):
         return await phone_call(ws, make_call, wiring)
     if path == '/voice/join':
         return await room_call(ws, make_call, wiring)
+    if path == '/voice/guest':
+        return await guest_call(ws, wiring)
     # review mode's notes, from the coordinator only (dictate.py).
     if path.split('?')[0] == '/voice/dictate':  # (its clock the line's)
         return await dictate.dictation(ws, TOKEN, listener, transcribe, unhesitating, monotonic=wiring.monotonic)

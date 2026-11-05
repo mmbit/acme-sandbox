@@ -88,6 +88,7 @@ test('a call has its row from its start, what it writes down lands there, and it
   assert.match(f.prompt, /as its window, the board's own time with its date and no zone: `--by <when>`/);
   // a time in its reply: the plan's one time, no margin of its own, doubt with its reason (call 256)
   assert.match(f.prompt, /new work, with its dependencies and `--by` the board's time when it named one\. Give the board one plain time: the plan's time to tell the board[^\n]*never put a second, later time beside it\. A real reason to think it may run long is said as that reason/);
+  assert.doesNotMatch(f.prompt, /your page/, "only the CEO's follow-up starts with its page");
 });
 
 test("Juno's call gets a work follow-up too; the reply it sets appears in the intercom and rides along with the next turn, its report doesn't", async () => {
@@ -98,6 +99,8 @@ test("Juno's call gets a work follow-up too; the reply it sets appears in the in
   const f = job(callRow(c.id).job);
   assert.deepEqual([f.agent, f.kind, f.call], ['juno', 'work', c.id]);
   assert.match(f.prompt, /hq reply/);
+  // whatever a later call, check or follow-up must still know goes on its page first
+  assert.match(f.prompt, /Before anything else, your page: whatever from this call a later call, check or follow-up must still know, for whatever reason, goes on it now[^\n]*\nWork through it in this order\./);
   assert.equal((await history()).thinking, 'notes', 'HQ shows the notes are coming while the follow-up works');
   const t = await claim(f.id);
   const it = await agent('item', t, { kind: 'question', owner: 'juno', goal: 'g', what: 'How the day is going', lines: '1', ...quote('Board: How is the day going?') });

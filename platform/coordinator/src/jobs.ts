@@ -12,7 +12,7 @@ import * as redraws from './redraws.ts';
 import { lastPlayed } from './forecast.ts';
 import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
 import { measuredMb, plannerCapacity, pauseBudget } from './room.ts';
-import { taskUrgent } from './urgency.ts';
+import { checksFirst, taskUrgent } from './urgency.ts';
 import {
   db,
   inOneStep,
@@ -74,6 +74,7 @@ import * as documents from './documents.ts';
 import * as zips from './zips.ts';
 import * as pictures from './pictures.ts'; // the board's pictures with a card's answer
 import { ended as chatEnded, hear, parked } from './chat.ts';
+import { padBriefing } from './pad.ts';
 import { isIntercom, isQuickRun, QUICK_EFFORT, quickRunStarted, quickRunTurn } from './quickruns.ts';
 import { jobEnded } from './messages.ts';
 import { oneLine } from './agreements.ts';
@@ -1577,7 +1578,7 @@ export function claim(
   const moved = moveToSeat(job, seat, engine, cli);
   atWork(job);
   quickRunStarted(job);
-  return claimed(job, token, moved, inThread);
+  return claimed(job, seat, token, moved, inThread);
 }
 
 function requeueAbandoned() {
@@ -1773,7 +1774,13 @@ function moveToSeat(job: Job, seat: string, engine: string, cli: string) {
 }
 
 // What the worker gets for a claimed job: the job, its token, its agent and the company it works for.
-function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<typeof threadorder.claimed>) {
+function claimed(
+  job: Job,
+  seat: string,
+  token: string,
+  moved: boolean,
+  inThread: ReturnType<typeof threadorder.claimed>,
+) {
   // The model it runs on is its own runner's (modelOf): the board's pick can differ from where the job is by now.
   const found = findAgent(job.agent),
     fallback = found?.fallback;
@@ -1784,20 +1791,6 @@ function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<t
       agent: job.agent,
       text: `Job #${job.id} runs on ${fallback.name}: its own model's seats are out or at their limit`,
     });
-  const n = names(),
-    mail = infra(); // the company it works for: what it's called, and what its agents commit as
-  const company = {
-    name: n.name,
-    phone: n.phone,
-    newsletter: n.newsletter,
-    intercom: n.intercom,
-    agentEmailDomain: mail.AGENT_EMAIL_DOMAIN,
-    agentsEmail: mail.AGENTS_EMAIL,
-    language: languageName(), // what the board reads and hears in (language.ts.)
-    timeZone: timeZone(), // and the clock its times are on
-    stylePrompt: stylePrompt(),
-    lighter: models.lighterChoices(job.engine).map(({ id, name }) => ({ id, name })),
-  };
   const quickRun = quickRunTurn(job);
   // (title: as agents read it, a review step's with its step and round: nameOf.)
   // (archiving: the agent's open pull request that already moves its older profile lines, for the worker's oversized())
@@ -1809,11 +1802,31 @@ function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<t
     ...(quickRun && { quickReply: true, quickReplyUntil: quickRun.until }),
     // (the title as its prompts say it: with its focus, company.ts titleOf)
     agentInfo: a && { ...a, role: titleOf(a) },
-    company,
+    company: companyOf(job.engine),
     ...(job.kind === 'work' || isIntercom(job) ? { inFlight: inFlight(job), archiving: archiving(job.agent) } : {}),
-    ...carryOver(job), // (resumes or closingReports)
+    // (the CEO's page and how to keep it, in every run of the CEO's, as fresh as the claim: pad.ts padBriefing.
+    ...(job.agent === ceo() && { page: padBriefing() }),
+    ...carryOver(job, seat),
     ...(inThread && { inThread }),
     ...(found && a && lightRun(job, a.model, found.model)),
+  };
+}
+
+// The company it works for: what it's called, and what its agents commit as.
+function companyOf(engine: string) {
+  const n = names(),
+    mail = infra();
+  return {
+    name: n.name,
+    phone: n.phone,
+    newsletter: n.newsletter,
+    intercom: n.intercom,
+    agentEmailDomain: mail.AGENT_EMAIL_DOMAIN,
+    agentsEmail: mail.AGENTS_EMAIL,
+    language: languageName(), // what the board reads and hears in (language.ts.)
+    timeZone: timeZone(), // and the clock its times are on
+    stylePrompt: stylePrompt(),
+    lighter: models.lighterChoices(engine).map(({ id, name }) => ({ id, name })),
   };
 }
 
@@ -2315,11 +2328,16 @@ function roomVictims(
 // reined: its job is past its share of HQ's time (reins.ts). The beat still keeps the run's lease and tells a stop, a
 // suspension, a pause and a room yield (makesRoom's replay of the claims is kept for every run's beat, not this job's
 // own); its downtime-window check, which places the job in the played plan, waits for a beat within the share:
-// `reined`, and the worker keeps the window yield it heard last
+// `reined`, and the worker keeps the window yield it heard last.
+// first: the job's checks go first on the worker, while its work is urgent (urgency.ts checksFirst).
 export function heartbeat(
   id: number,
   o: { util?: number; probe?: boolean; reined?: boolean } & Partial<InTheWay> = {},
 ) {
+  const reply = beat(id, o);
+  return checksFirst(id) ? { ...reply, first: true } : reply;
+}
+function beat(id: number, o: { util?: number; probe?: boolean; reined?: boolean } & Partial<InTheWay>) {
   db.prepare("update jobs set heartbeat = ? where id = ? and status = 'running'").run(now(), id);
   const job = db
     .prepare(

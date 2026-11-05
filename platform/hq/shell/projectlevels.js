@@ -87,7 +87,8 @@ function home(board, work, projectsOf, groupRows, groupDone) {
     .join('');
   return `${keys.head({ title: 'Projects', keys: listKeys(board) })}${page(board.page)}<div class="pj-level pj-home"><div class="pj-grid pj-businesses${work.businesses.length ? '' : ' pj-plain pj-sortable'}">${tiles}</div><div class="pj-grid pj-loose">${loose}</div></div>`;
 }
-// The CEO's page, at the top: the plan it runs the company by, kept in its own words, one tap to read whole.
+// The CEO's page, at the top: its memory, the plan it runs the company by and what must last, in its own words, one tap
+// to read whole
 const page = p =>
   p
     ? `<details class="pj-page"><summary class="pj-key">${icon('app-projects')}<span>The CEO's page</span></summary><p>${esc(p.text)}</p></details>`

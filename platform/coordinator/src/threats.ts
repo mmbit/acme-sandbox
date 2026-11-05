@@ -17,6 +17,7 @@ import { ORIGIN } from './matching.ts';
 import { age, duration, waitWords } from '../../worker/hq/waits.ts';
 import { heldThrough, throughWords } from './boardheld.ts';
 import { movedWords, prMoved, threadMoved } from './moved.ts';
+import { externalId } from './reviewinbox.ts';
 
 const MINUTE_MS = 60_000,
   HOUR_MS = 60 * MINUTE_MS,
@@ -312,7 +313,8 @@ const findOpen = (id: string) =>
   db.prepare("select id, name, project from threads where id = ? and status = 'open'").get(id) as
     Pick<OpenThread, 'id' | 'name' | 'project'> | undefined;
 
-// Each owner whose proposals have waited over RECENT_MS since they reached them.
+// Each owner whose proposals (review findings too) have waited over RECENT_MS since they reached them, each by the id hq
+// inbox takes.
 function inboxes(now: number) {
   const waiting = db
     .prepare(
@@ -323,7 +325,7 @@ function inboxes(now: number) {
   const byOwner = Map.groupBy(waiting, p => ownerOf(p));
   return [...byOwner].map(([owner, ps]) => {
     const whose = owner === ceo() ? 'Your' : `${owner}'s`;
-    const which = ps.map(p => `#${p.id}`).join(', ');
+    const which = ps.map(p => `#${externalId(p.id)}`).join(', ');
     return `${whose} inbox has ${plural(ps.length, 'proposal')} waiting, the oldest ${age(now - Date.parse(ps[0].since))}: ${which}`;
   });
 }

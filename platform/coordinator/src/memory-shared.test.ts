@@ -58,8 +58,7 @@ test("A board call is every agent's: search finds its words and its summary, and
   assert.match((await h.hq(juno, 'search', 'kakapodesk')).out, new RegExp(`\n  hq call ${c.id}  \\[call\\]\n`));
   // still the agent's own history only: Juno's lists no call of Kit's
   assert.deepEqual((await agent('history', juno.token)).body.calls, []);
-  // a call still going on is nobody's yet but the CEO's, as far as the voice line has kept it in HQ (call-lines: job
-  // #24358, call #257's lines stayed on the line)
+  // a call still going on is nobody's yet but the CEO's, as far as the voice line has kept it in HQ (call-lines.
   const live = (await voice('call-context?agent=kit')).body, bolt = await at('bolt');
   assert.equal((await agent(`call?id=${live.call}`, bolt.token)).status, 404);
   assert.equal((await voice('call-lines', { agent: 'kit', token: 'not its token', lines: ['Board: no'] })).status, 404);

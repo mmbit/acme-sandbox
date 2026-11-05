@@ -197,6 +197,19 @@ TOOLS += [
                    f'brief. At most {ADD:,} characters'},
          'goal': GOALS}}},
 ]
+# The CEO's page (hq pad add on a call: the coordinator's pad.ts addToPad), its memory across its work: what the board
+# settles is on it before the call ends, for a check or job that runs before the follow-up, which folds it in.
+PAGE_AGAIN = ("{} Give page the same words again to be sure: words already at the page's end aren't added twice.")
+TOOLS += [
+    {'name': 'page', 'description': "The CEO's only: write on your page (hq pad, in your briefing), your memory across "
+     'all your work, the moment the board settles something a later job, check or call must know, so it holds at once '
+     "and not only after this call's follow-up. Your words go at the end of the page as it is now; the follow-up "
+     "folds them in when it rewrites the page whole. It's on the page only when this answers so.",
+     'inputSchema': {'type': 'object', 'required': ['words'], 'additionalProperties': False, 'properties': {
+         'words': {'type': 'string', 'minLength': 1, 'maxLength': ADD,
+                   'description': 'what to remember, in your own words, as short as the page keeps everything: '
+                   f'what was settled and what it changes. At most {ADD:,} characters'}}}},
+]
 # The board's settled word to work already under way (hq say on a call: call.ts reach), for real need only, as often as
 # the board's word needs: each goes on the call's list, so the follow-up
 # doesn't send it again.
@@ -269,6 +282,17 @@ TOOLS += [
                    'description': "the project's or deliverable's name, or a few words; leave it out for what's going on "
                    'right now'},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
+    {'name': 'activity', 'description': "What a job or a colleague is doing right now: its recent activity as the "
+     "board sees it on the agent's card in HQ, oldest first, each line with its time (UTC) and who: its statuses, each "
+     'step (its kind and the file or host it names: a command\'s own words and what it says between steps are the '
+     "board's alone), the messages it sent. By a job's number (its lead and team members) or an agent's id (its jobs' "
+     'lines and also the messages sent to it); since: only what came after (30m, 2h or an ISO time). Activity up to '
+     "5 November 2026, before HQ kept each line's job, is the board's alone. Use it when the board asks what someone "
+     'is doing, or before you say a job is stuck or done: eta shows the plan, this the work.',
+     'inputSchema': {'type': 'object', 'required': ['of'], 'additionalProperties': False, 'properties': {
+         'of': {'type': 'string', 'minLength': 1, 'maxLength': 40,
+                'description': "a job's number (24845) or an agent's id (juno)"},
+         'since': {'type': 'string', 'maxLength': 40, 'description': '30m, 2h or an ISO time like 2026-11-05T08:00Z'}}}},
     {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and whole task agent times split into work, shared reviews and fixes. Size.time covers the work split only. The raw whole.cost token split and feature_cost feedback totals accompany the times. The forecast adds review and fix rounds once per deliverable. Queue and other waits are excluded. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500, 'description': 'the scope of work to compare'},
@@ -299,7 +323,10 @@ FROM = {'type': 'integer', 'minimum': 1, 'description': 'the line to start from,
 OFFSET = {'type': 'integer', 'minimum': 0, 'description': 'with from, the characters into that line to start at, when '
           'an answer said the rest starts with an offset (a line longer than a page)'}
 TOOLS += [
-    {'name': 'report', 'description': "The server's status report, live, as your jobs read it with hq report: "
+    # (each answer starts with the report's time and age: one written every 10 minutes can miss its writes, and an old
+    # one must never read as live.)
+    {'name': 'report', 'description': "The server's status report, as your jobs read it with hq report, written every "
+     "10 minutes: each answer starts with when it was written and how long ago, and nothing newer is in it. "
      'containers and deploys, memory and disk, seats and usage, the open and recent jobs and pull requests with '
      "reviews' findings, what waits on the board, calls, mail counts, errors and each service's last log lines. Use "
      "it before you tell the board you can't see or haven't checked something. With no section, the list of its "
@@ -513,7 +540,8 @@ TOOLS += [
      "appears in the board's Notebook as you write it, as the board watches. Nothing written down goes to anyone by "
      "itself: the call's follow-up reads it with the whole call and hands it out (one about work under way, given as "
      'job, has reached that work already). So never also queue a job for it, unless it has to start on the call: then '
-     'give the job its item.',
+     "give the job its item. The notes are about the call's subject: something to be done outside it (a fault in our "
+     "own tools on a call about a product) goes on the call's list alone, with page false.",
      'inputSchema': {'type': 'object', 'required': ['words', 'goal'], 'additionalProperties': False,
                      'properties': {
          'from': {'type': 'string', 'description': "for a picture: 'note 3', or a moment of the shown screen: 'now', "
@@ -536,7 +564,10 @@ TOOLS += [
                  'can wait while the call is still on'},
          'deliverable': {'type': 'string', 'pattern': DELIVERABLE.pattern, 'description': 'with job, for a job you '
                          'queued on this call in no deliverable: the open deliverable it serves (<project>/<slug>), '
-                         'which it goes on, with the time'}}}},
+                         'which it goes on, with the time'},
+         'page': {'type': 'boolean', 'description': "false: on the call's list alone, not in its notes, for what's "
+                  "outside the notes' subject (no picture then). Deleting a note of yours from the notes drops its "
+                  'item, so this is the way to keep one off them'}}}},
     {'name': 'title_notes', 'description': "Give the call's notes a short title, once it's clear what the call is "
      'about ("Shop page prices"), and again if that changes: a title, not a summary. The Notebook puts the call\'s date '
      'and time in front of it ("28 Oct, 22:55, Shop page prices"), so give the topic alone.',
@@ -602,10 +633,18 @@ TOOLS += [
 TOOLS += [
     {'name': 'draw_picture', 'description': "Draw a picture into the call's notes: a diagram, a chart, a sketch of how "
      'something fits together, whenever the board asks to see something drawn or a drawing says it better than words. '
+     # (a note of what was said)
+     'It is also how you note what was said, so someone reading the notes later understands it without the call: '
+     'each idea or point a small sketch of it beside full sentences saying what was said and by whom, and why, their '
+     "vision in their own terms rather than keywords (a little shop page with the price circled, and beside it: \"Sam "
+     'wants the price seen first: customers asked twice last week, so it moves up next to the photo, as big as the '
+     'title."). One drawing per idea, and a second right after it when its words need more room. When you organise the '
+     'notes again, draw the new ones in place of the old (change_note deletes them), never a second list beside them. '
      'Write it as one SVG, <svg viewBox="0 0 640 480">…</svg>: 640 wide and about as tall or less. The notes show it '
-     'at about half that size, so keep words few and at font-size 28 or more, about 0.55 of the font-size wide a '
-     "letter. The notes draw it in the company's own look, so give no colours, line widths or fonts: every shape is "
-     "an outline in one ink, its words in the company's type. A class says more: accent fills the one shape the "
+     'at about half that size, so keep words at font-size 28 or more, about 0.55 of the font-size wide a letter, each '
+     "line a <tspan> of its own (SVG doesn't wrap). The notes draw it in the company's own look, so give no colours, "
+     "line widths or fonts: every shape is an outline in one ink, its words in the company's type. A class says more: "
+     "accent fills the one shape the "
      'picture is about (one a picture), shade fills a shape with dots (never under words), arrow puts an arrowhead at '
      'the end of a line or path, thin draws a line at half weight, and muted makes words quieter. It goes at the end '
      'of the notes as a picture the board can draw on, as the board watches, and asks for nothing: what the team must '
@@ -625,7 +664,10 @@ TOOLS += [
      'Give a brief (what to build, what each part does, how it should feel) and a builder makes it in the background '
      'while you go on: it takes a few minutes, to make it good, and your hand goes up when it has landed. That is '
      'the usual way: one where every tap does something you see, with motion and a little life, beats a quick thin one. '
-     'A next version builds on the last one under its name: say what to change. Write the page yourself (html) only '
+     'A next version builds on the last one under its name: say what to change, and the change in a line (about). '
+     # (one version per round of feedback.)
+     'One per round of feedback, not per remark: gather what they say about it, and once they have had their say '
+     '(they move on, or ask for it), brief all of it at once. Write the page yourself (html) only '
      'for something you can show in a few lines, like a single slider; then it shows within seconds. Write one whole '
      'HTML page with everything inline (CSS, script, SVG, data URLs): nothing from outside the page loads. Make it '
      "fit an iPad in either orientation, with big touch targets. Never a customer's details or anything of HQ's. A "
@@ -642,7 +684,8 @@ TOOLS += [
          'html': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_HTML,
                   'description': 'the whole page, from <!doctype html> to </html>, everything inline (or brief instead)'},
          'about': {'type': 'string', 'maxLength': PROTOTYPE_ABOUT,
-                   'description': 'what this version changes, one plain line (for a v2 and after)'}}}},
+                   'description': 'what this version changes, one plain line (for a v2 and after, with a brief or '
+                   'html)'}}}},
 ]
 
 # Several people in the board's room, told apart by their voices (voices.py).
@@ -674,8 +717,10 @@ TOOLS += [
 TOOLS += [
     {'name': 'design_session', 'description': 'Make this call a design session, when someone asks for one (a '
      "brainstorm, sketching ideas together): the board's screen opens a free sketch page for it in the Notebook, and "
-     'the answer tells you how to take part. Not needed when the call started as one: you were told so then.',
-     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
+     'the answer tells you how to take part. off: true makes it an ordinary call again, when they ask for that (the '
+     "page stays as it is). HQ has one call key: this is the board's only way in and out of a session.",
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+         'off': {'type': 'boolean', 'description': 'true: end the design session, the call goes on as an ordinary one'}}}},
     {'name': 'raise_hand', 'description': 'In a design session: raise your hand when you have something worth adding '
      '(an idea, something overlooked, a prototype to offer or announce, a sketch to check) and they are talking, '
      'instead of talking over them. They see a raised hand and hear a soft beep; the line gives you your moment at a '
@@ -697,11 +742,29 @@ TOOLS += [
      'for your answer that you\'re on it.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
 ]
+# A note for the call's follow-up, never said: every word of a reply is spoken, so what the agent writes for after the
+# call (what happened, why, what it means for the work) needs a place of its own. The line reads it from the reply's
+# stream (server.py Call.noted) and puts it in the transcript the follow-up works from, as the agent's, unsaid.
+TOOLS += [
+    {'name': 'note', 'description': "Note something for your follow-up after the call, never for the board's ears: "
+     'what happened, why, what it means for the work. It goes in the transcript your follow-up reads, marked as '
+     "yours and not said. Everything you write in a reply is read aloud, in any language, so a note to yourself goes "
+     'here and never in your words. What the board must hear, say; what is to be done, write_down.',
+     'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
+         'what': {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
+                  'description': f'one plain line in your own words, at most {WHAT} characters'}}}},
+]
+# A guest carrying the call the board left to them (server.py Call.carried): the call's own work with them, its page's
+# notes, drawings and prototypes, the agent's notes and its hang-up. Nothing that looks up the company's files, work or
+# people, and nothing that acts for the board, so a guest's words can't steer either (house rule 9, charter rule 7).
+GUEST_TOOLS = [t for t in TOOLS if t['name'] in ('change_note', 'draw_picture', 'hang_up', 'mark_notes', 'note',
+                                                   'prototype', 'read_notes', 'say_nothing', 'title_notes', 'try')]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
 # no_transcript says the company's fixed words itself and keeps no transcript from then on, only the notes. A note and a
 # hang_up come after the words (nothing is heard while the model writes a step).
 NOTE_ANSWER = "Noted. Don't say again what you've already said in this reply."
+BOARD_NOTE_ANSWER = "Noted for your follow-up, unsaid. Don't read it out."
 NO_TRANSCRIPT_ANSWER = ('Understood: no transcript is kept from here, only your notes. The line has already told them '
                         "so in fixed words: don't say it again, go on with the call.")
 PARTNER_HANG_UP_ANSWER = ('The line hangs up once your goodbye has finished playing. If they speak before then, the '
@@ -804,7 +867,7 @@ class Waits:
         return all(ok for _, (ok, _) in came), '\n\n'.join(lines)
 
 
-LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate')
+LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate', 'activity')  # (activity)
 
 
 def look(waits, name, a):
@@ -814,6 +877,13 @@ def look(waits, name, a):
     if name == 'eta' and 'extra_seat' in a and extra not in ('5x', '20x'):
         return False, 'extra_seat takes 5x or 20x'
     query = a.get('query', '')
+    if name == 'activity':
+        of, since = a.get('of'), a.get('since', '')
+        if not isinstance(of, str) or not re.fullmatch(r'#?[0-9]{1,9}|[a-z][a-z0-9-]{0,31}', of):
+            return False, "of is a job's number, like 24845, or an agent's id, like juno"
+        if not isinstance(since, str) or (since and not re.fullmatch(r'[0-9]{1,4}[mh]|[0-9][0-9:TZ.+ -]{3,29}', since)):
+            return False, 'since is 30m, 2h or an ISO time like 2026-11-05T08:00Z'
+        return looked(waits, name, ['hq', 'activity', of.lstrip('#'), *(['--since', since] if since else [])])
     if name == 'call':
         cid = a.get('id')
         if type(cid) is not int or cid < 1:
@@ -929,8 +999,13 @@ def hq(waits, name, a):
         return True, HANG_UP_ANSWER
     if name == 'say_nothing':
         return True, SAY_NOTHING_ANSWER
+    if name == 'note':  # (read from the stream: server.py Call.noted.)
+        refused = plain(str(a.get('what', '')).strip())
+        return (False, refused) if refused else (True, BOARD_NOTE_ANSWER)
     if name == 'reach':
         return reach(waits, a)
+    if name == 'page':
+        return page(waits, a)
     if name == 'manage':
         return manage(waits, a.get('command'))
     if name == 'write_down':
@@ -978,7 +1053,8 @@ def write_down_by_phone(waits, a):
     if refused := note_refusal(a):
         return False, refused
     words, goal = str(a['words']).strip(), str(a['goal']).strip()
-    return item_on_list(waits, ['item', 'add', 'task', a.get('owner') or '', words], words, goal, a)
+    off = ['--off-page'] if a.get('page') is False else []  # (off_page)
+    return item_on_list(waits, ['item', 'add', 'task', *off, a.get('owner') or '', words], words, goal, a)
 
 
 def item_on_list(waits, args, what, goal, a):
@@ -1041,7 +1117,15 @@ def job(waits, a):
     r = run(waits, ['job', *(['--after', str(after)] if after else []), agent, title, '-', *flags, '--goal', '-'],
             on_stdin(goal, brief))
     ok, text = answered(r, 'No job was queued', 'the job may or may not be queued', by='hq job')
-    return ok, f"{text}\nNot started yet: it's on {agent}'s list, and nobody is on it until it runs." if ok else text
+    return ok, f'{text}\n{not_started(agent, now)}' if ok else text
+
+
+def not_started(agent, now):
+    """What the job tool adds about a job it queued: one started now runs as a seat takes it (eta shows it), not once
+    the call ends."""
+    if now:
+        return 'Not started yet: it starts as soon as a seat takes it, and eta shows it running.'
+    return f"Not started yet: it's on {agent}'s list, and nobody is on it until it runs."
 
 
 def deliverable_refusal(deliverable, drawn):
@@ -1117,6 +1201,17 @@ def reach(waits, a):
         return False, refused
     reply = run(waits, ['say', agent, '-', '--job', str(n), '--what', what, '--goal', '-'], on_stdin(goal, words))
     return answered(reply, 'Nothing was sent', 'it may or may not have gone')
+
+
+def page(waits, a):
+    """page: hq pad add -, the words on stdin."""
+    words = str(a.get('words', '')).strip()
+    if not words:
+        return False, 'page needs the words to add'
+    if len(words) > ADD:
+        return False, f'too long ({len(words):,} > {ADD:,}): the page stays short, as everything you do reads it'
+    return answered(run(waits, ['pad', 'add', '-'], words), 'The page is as it was', "it may or may not be on the page",
+                    PAGE_AGAIN, by='hq pad add')
 
 
 def manage(waits, command):
@@ -1251,6 +1346,7 @@ def drive(a):
 def write_down_in_hq(a):
     """(ok, content) of the write_down tool on the board's call in HQ: the voice line's answer on its socket once the
     note is written in (or why not). On the phone it's hq's (write_down_by_phone)."""
+    a = {k: v for k, v in a.items() if k != 'page'}  # (page false went to hq: off_page)
     if refused := note_refusal(a):
         return False, [{'type': 'text', 'text': refused}]
     if not (asked := note_asked(a)):
@@ -1299,7 +1395,9 @@ def prototype(a):
     """(ok, content) of the prototype tool: its picture as the board sees it, and its line; or, from a brief, the line's
     word that a builder has it."""
     if 'brief' in a:
-        if set(a) - {'name', 'brief'} or not all(isinstance(a.get(k), str) for k in ('name', 'brief')):
+        # (about beside a brief: what its version changes.)
+        if set(a) - {'name', 'brief', 'about'} or not all(isinstance(a.get(k), str) for k in ('name', 'brief')) or \
+                not isinstance(a.get('about', ''), str):
             return False, [{'type': 'text', 'text': BUILD_TOOL_WORDS['shape']}]
         return page_said({'prototype': a}, PROTOTYPE_WORDS)
     if not (asked := prototype_asked(a)):
@@ -1354,9 +1452,11 @@ def forget_voice(a):
 
 def design_session(a):
     """(ok, content) of the design_session tool: the voice line's answer on its socket."""
-    if a or not SCREEN_SOCKET or not SCREEN_KEY:
-        return False, [{'type': 'text', 'text': 'design_session takes nothing.' if a else 'The call has ended.'}]
-    return said(line_asked({'design_session': {}}))
+    if set(a) - {'off'} or not isinstance(a.get('off', False), bool):  # (off)
+        return False, [{'type': 'text', 'text': 'design_session takes nothing, or off: true.'}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': 'The call has ended.'}]
+    return said(line_asked({'design_session': a}))
 
 
 def raise_hand(a):
@@ -1426,11 +1526,17 @@ LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_wo
               'design_session': design_session, 'raise_hand': raise_hand}
 
 
+def off_page(name, a):
+    """write_down with page false: on the call's list alone, as on the phone, the board's call in HQ too (hq's:
+    write_down_by_phone)."""
+    return name == 'write_down' and a.get('page') is False
+
+
 def line_answers(name, offered):
     """Whether the voice line answers a tool on its socket, in words or a picture: one of LINE_TOOLS on the board's
-    call, write_down only on its call in HQ, which has notes (on the phone it's hq's: write_down_by_phone)."""
+    call or a guest's carrying it (GUEST_TOOLS), write_down only on its call in HQ, which has notes (on the phone it's hq's: write_down_by_phone)."""
     in_hq = bool(SCREEN_SOCKET and SCREEN_KEY)
-    return name in LINE_TOOLS and offered is TOOLS and (name != 'write_down' or in_hq)
+    return name in LINE_TOOLS and offered is not PARTNER_TOOLS and (name != 'write_down' or in_hq)
 
 
 def answer(msg, waits, offered=TOOLS):
@@ -1448,18 +1554,18 @@ def answer(msg, waits, offered=TOOLS):
         p = msg.get('params', {})
         name, arguments = p.get('name'), p.get('arguments') or {}
         # Its own content: a picture and its line, or the line's words
-        if name == 'screen' or line_answers(name, offered):
+        if name == 'screen' or (line_answers(name, offered) and not off_page(name, arguments)):
             ok, content = {'screen': screen, **LINE_TOOLS}[name](arguments)
             return {'jsonrpc': '2.0', 'id': mid, 'result': {'content': content, 'isError': not ok}}
         if offered is PARTNER_TOOLS:
             ok, text = partner(name, arguments)
         elif name == 'waiting':
             ok, text = waits.waiting()
-        elif name in ('hang_up', 'say_nothing'):  # (say_nothing)
+        elif name in ('hang_up', 'say_nothing', 'note'):  # (say_nothing; note)
             ok, text = hq(waits, name, arguments)
         else:
             ok, text = waits.awaited(name, arguments)
-        aloud = [] if offered is PARTNER_TOOLS or name in ('hang_up', 'say_nothing') else [{'type': 'text', 'text': ALOUD}]
+        aloud = [] if offered is PARTNER_TOOLS or name in ('hang_up', 'say_nothing', 'note') else [{'type': 'text', 'text': ALOUD}]
         result = {'content': [{'type': 'text', 'text': text}, *aloud], 'isError': not ok}
     elif method == 'ping':
         result = {}
@@ -1469,7 +1575,8 @@ def answer(msg, waits, offered=TOOLS):
 
 
 if __name__ == '__main__':
-    tool_set = PARTNER_TOOLS if sys.argv[1:] == ['partner'] else TOOLS
+    # (guest)
+    tool_set = {'partner': PARTNER_TOOLS, 'guest': GUEST_TOOLS}.get(sys.argv[1] if sys.argv[1:] else '', TOOLS)
     waits = Waits(HQ_ENV)
     for line in sys.stdin:
         msg = None

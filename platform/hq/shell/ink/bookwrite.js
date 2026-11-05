@@ -9,6 +9,7 @@ import { changed, shut } from './booksave.js';
 import { scrapAt } from './bookscrap.js';
 import { isTap, wandered } from '/__review/tap.js';
 import { followPress } from './bookpress.js';
+import { newId } from './bookedit.js';
 
 // The book's ink until the tools say otherwise: Night, at review mode's pen size
 export const INK = { color: '#2a2352', size: INKS[0].size };
@@ -19,10 +20,10 @@ export const INK = { color: '#2a2352', size: INKS[0].size };
 // reply's) is the field's: the Pencil writes into it with Scribble. The Pencil or a finger on something on the page (a
 // box of words, an answer's slip, a scrap's photo or its words) waits: a quick tap there is a click on it, never a dot
 // of ink, and once it moves its line starts where it touched (a stroke starts anywhere: README, Our scraps). On bare paper it inks at once, so a dotted i keeps its dot.
+// The grid takes no ink: a press there by anything is a tap if it lifts where it came down (gridPress).
 export function drawable(book, e, table) {
   if (e === book.waited) {
     book.waited = null;
-    book.assign?.inking(e); // (a ring round a scrap and a line out of it: bookassign.js)
     return true;
   }
   // (a note's words kept from Scribble for the pen take its strokes as ink; a read refused, over the page, is tapped to try again)
@@ -30,22 +31,36 @@ export function drawable(book, e, table) {
   // is the field's)
   const field = e.pointerType === 'mouse' ? 'textarea:not([data-pen])' : `textarea:not([data-pen], ${RESTING})`;
   if (e.target.closest?.(`${field}, input, [contenteditable], button, .bk-lost`)) return false;
-  // (a finger writes too, where it doesn't move the page: bookpan.js.)
-  const writes =
-    e.pointerType === 'pen' ||
-    (e.pointerType === 'mouse' && e.button === 0) ||
-    (e.pointerType === 'touch' && !book.input?.fingerPans?.());
-  if (!writes || table.panning(e) || !e.isPrimary) return false;
+  const mouse = e.pointerType === 'mouse';
+  if (!e.isPrimary || (mouse && (e.button !== 0 || table.panning(e)))) return false;
   const hit = at(book, e.clientX, e.clientY);
+  if (!hit) return false;
+  // (the grid takes no ink: a tap there opens a scrap or makes one, a ring and a line are bookgridgesture.js's. Every
+  // press is followed, a finger's that pans the grid too, and acts only if it lifts where it came down.
+  if (!hit.view.page.focus) return gridPress(book, e, hit);
+  // (a finger writes too, where it doesn't move the page: bookpan.js.)
+  const writes = e.pointerType === 'pen' || mouse || (e.pointerType === 'touch' && !book.input?.fingerPans?.());
+  if (!writes || table.panning(e)) return false;
   // (a page not read yet, or locked (sent, or read-only), takes no tool's press: asked here before any tool is, so none
   // can draw, move or type on it and a new one can't miss it.)
-  if (!hit || !hit.view.page.ink || shut(hit.view.page) || book.tools?.press(e)) return false;
+  if (!hit.view.page.ink || shut(hit.view.page) || book.tools?.press(e)) return false;
   table.stop();
   book.target = hit.i;
   book.inking = book.tools?.ink() ?? INK;
   if (e.pointerType !== 'mouse' && onSomething(e, hit)) return waitFor(book, e);
-  book.assign?.inking(e);
   return true;
+}
+// A press on the grid: lifted where it came down, however long it was held, it's a tap (bookscrapopen.js tapped). On
+// a page not read yet it's held, and tapped once the page is read (its read's own, never one of its own: a read
+// refused shows over the page, tapped to try again).
+function gridPress(book, down, hit) {
+  let far = false;
+  const tap = () => hit.view.page.ink && book.scrap?.tapped(hit.view, hit.x, hit.y);
+  followPress(down, {
+    move: m => (far ||= wandered(down, m)),
+    up: u => !far && u.type !== 'pointercancel' && (hit.view.page.ink ? tap() : hit.view.reading?.then(tap)),
+  });
+  return false;
 }
 const onSomething = (e, hit) =>
   !!e.target.closest?.(`.bk-typed, .answer-slip, ${RESTING}`) || scrapAt(hit.view.page.scraps, [hit.x, hit.y]) >= 0;
@@ -100,18 +115,8 @@ export function dried(book, stroke, hooks) {
     ...stroke,
     size: book.inking.size,
     points: stroke.points.map(([x, y, p, t]) => [round(x / s + pan.x), round(y / s + pan.y), p, t]),
+    id: newId(), // (its own: bookedit.js)
   };
-  // Only the pen edits content. A highlighter, a pencil or a brush always leaves ink. (no line over words reads or
-  // strikes them: they stay ink; the tools say which line may)
-  if (book.tools?.gestures() ?? true) {
-    // A stroke that circled a scrap and was carried out of it is the gesture's (bookassign.js), never a scratch-out of
-    // what it circled, however often it went round: lifted on the list it opened, it handed the scrap over or moved
-    // it, and leaves no ink; lifted off any, it's ink.
-    const gesture = book.assign?.claim();
-    if (gesture === 'used') return book.ink.clear();
-    // A scratch-out deletes its group without keeping the gesture as ink.
-    if (!gesture && book.groups?.scratch(v, line)) return book.ink.clear();
-  }
   // (into the unit it starts on, else the board's drawing it comes near, else a new unit of its own: bookunits.js.
   page.blank = false;
   line.g = inkUnit(page, line);
@@ -128,7 +133,7 @@ export function dried(book, stroke, hooks) {
   v.addInk(line);
   changed(book, page);
 }
-// A stroke undone: it goes, and the growth it made; its page comes into view if it's out of it
+// A stroke undone: it goes, and the growth it made (out of sight, Undo slid there first: bookedit.js)
 function unstroke(book, hooks, page, stroke) {
   const n = page.ink.lastIndexOf(stroke);
   // (one already gone, rubbed out or its unit deleted by someone else, takes nothing else with it)
@@ -146,7 +151,6 @@ function inkChanged(book, hooks, page, stroke) {
   if (i >= 0) {
     hooks.lay();
     book.views[i].redraw(boxOf(stroke));
-    hooks.inView(i, boxOf(stroke));
   }
   changed(book, page);
 }

@@ -19,6 +19,7 @@ export const BOARD_EXTRAS = {
   // a call's recording played back (its replayer's own page: server.ts REPLAY_CSP)
   '/shared/watchalong/player.js': 'shared/watchalong/player.js',
   '/shared/watchalong/scrubber.js': 'shared/watchalong/scrubber.js',
+  '/shared/watchalong/rebuilt.js': 'shared/watchalong/rebuilt.js',
   '/shared/watchalong/replay.html': 'shared/watchalong/replay.html',
   '/shared/watchalong/replay.js': 'shared/watchalong/replay.js',
 };
@@ -32,6 +33,9 @@ export const RECORDER_MODULES = [
   'toplayer.js',
   'media.js',
   'frames.js',
+  'routepictures.js',
+  'sender.js',
+  'fonthosts.js',
 ];
 
 // Anyone's on HQ's host: a call's join link records its walk-through with the watch-along too

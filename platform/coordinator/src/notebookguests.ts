@@ -201,7 +201,7 @@ export function listGroups(b: any, name?: string) {
   };
 }
 
-// A copy handed to a guest (ink/bookassign.ts) still waiting for them to write on it
+// A copy handed to a guest (ink/bookassign.ts) still waiting for their Answer
 export const waitsFor = (group: number) =>
   !!db.prepare('select 1 from notebook_assigns where copy = ? and answered = 0').get(group);
 

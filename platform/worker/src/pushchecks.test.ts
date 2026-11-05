@@ -170,6 +170,56 @@ test("a check sent to a lent machine first: a verdict there is the check's, and 
   rmSync(dir, { recursive: true });
 });
 
+test("each launch asks again whether a lent machine's helper is there: one that ran here with no room goes to a helper that's back, and a launch here waits for its place, one taken on too", async () => {
+  const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+  const said: string[] = [];
+  const asked: boolean[] = [];
+  let helperThere = false;
+  const places: string[] = [];
+  const tests = (here: string, there: string): CheckSpec => ({
+    ...stand(dir, 'tests', here),
+    here: (f, fresh) => (places.push(fresh ? 'fresh' : 'taken on'), f()),
+    lent: {
+      launch: stand(dir, 'tests-lent', there).launch,
+      present: async () => (asked.push(helperThere), helperThere),
+    },
+  });
+  // no helper at first: it runs here, in its place, and the shares stop it for room; by then a helper is back
+  const roomless = 'touch "$1/ran-here"; echo "The tests could not run: no room"; exit 4';
+  const waiting = { ...options(dir, said), roomy: async () => void (helperThere = true) };
+  const report = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [tests(roomless, 'echo "clean (on attic)"')], waiting);
+  assert.deepEqual(report.tests, { passed: true, report: 'clean (on attic)' });
+  assert.equal(launches(dir), 'tests\ntests-lent\n');
+  assert.deepEqual(asked, [false, true], 'asked before each launch');
+  assert.deepEqual(places, ['fresh'], 'only the launch here waited for its place');
+  // a lent launch with no verdict runs here, without asking again; a launch here the record has holds its place
+  rmSync(`${dir}/launches`);
+  asked.length = places.length = 0;
+  const handedBack = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [tests('echo clean', 'echo lost; exit 2')], waiting);
+  assert.deepEqual(handedBack.tests, { passed: true, report: 'clean' });
+  assert.equal(launches(dir), 'tests-lent\ntests\n');
+  assert.deepEqual(asked, [true]);
+  assert.deepEqual(places, ['fresh']);
+  rmSync(`${dir}/launches`);
+  places.length = 0;
+  const running = stand(dir, 'tests', 'sleep 0.3; echo clean').launch();
+  const takenOn = await (
+    await workerProcess()
+  ).runChecks(
+    8,
+    { body: pushed(), spent: {}, runs: { tests: { launched: running, began: Date.now(), stopped: [] } } },
+    [tests('echo again', 'echo there')],
+    waiting,
+  );
+  assert.deepEqual(takenOn.tests, { passed: true, report: 'clean' });
+  assert.deepEqual(places, ['taken on']);
+  rmSync(dir, { recursive: true });
+});
+
 test('a check that lost HQ (exit 3) waits until HQ answers and runs again on the same commit, never counted; three in a row, and the next counts', async () => {
   const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
   // unreached on its first launch, passing on its second

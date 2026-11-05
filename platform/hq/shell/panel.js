@@ -12,6 +12,7 @@ import { prose } from './prose.js';
 import { icon } from './icons.js';
 import { rightNow, readFresh, wireSteps, initRightNow } from './rightnow.js';
 import { engineMark } from './engine.js';
+import { stepKey, keepRead } from './steplog.js';
 
 const $ = s => document.querySelector(s);
 let current = null;
@@ -101,7 +102,10 @@ export function openAgent(A, quiet = false) {
   const logs = A.logs
     .slice(-30)
     .reverse()
-    .map(l => `<li><time>${timeOf(l.ts)}</time><div class="lt-${esc(l.type)} prose">${prose(l.text)}</div></li>`)
+    .map(
+      l =>
+        `<li data-k="${esc(stepKey(l))}"><time>${timeOf(l.ts)}</time><div class="lt-${esc(l.type)} prose">${prose(l.text)}</div></li>`,
+    )
     .join('');
   const tool = (name, what, state = 'open') =>
     `<li><button data-tool="${name}"><b>${esc(cap(names[name]))}</b> ${what} <em>${state}</em></button></li>`;
@@ -159,10 +163,13 @@ function saidHtml(id) {
     ? `<section class="said"><h3>Said in the meeting · ${esc(timeOf(Date.parse(said.at)))}</h3><div class="prose">${prose(said.text)}</div></section>`
     : '';
 }
-// (a redraw while the board picks a model would close its list)
+// (a redraw while the board picks a model would close its list.) Scrolled down into Recent activity, the line read
+// stays where it is as lines come in at its top.
 export function refreshAgent(id) {
   if (current?.kind !== 'agent' || current.ref !== id || body.querySelector('.models select:focus')) return;
-  openAgent(world.agents.get(id), true);
+  const redraw = () => openAgent(world.agents.get(id), true);
+  if (body.scrollTop) keepRead(body, redraw);
+  else redraw();
 }
 
 // ---- an agent's model

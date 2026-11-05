@@ -41,6 +41,9 @@ export const archiveNotebook = (dev, id, archived) => ask(dev, '/api/notebooks/a
 export const createPage = (dev, notebook) => ask(dev, '/api/notebooks/pages/create', null, { notebook });
 // A sketch page's copy to carry on from, at the notebook's end (notebookduplicate.ts.)
 export const duplicatePage = (dev, id) => ask(dev, '/api/notebooks/pages/duplicate', null, { id });
+// A page's copy given to a guest in their own notebook (whom: { to } someone invited, or { person: { name, email } }) →
+// { name, page, link }: their shelf's link (notebookgive.ts.)
+export const givePage = (dev, id, whom) => ask(dev, '/api/notebooks/pages/give', null, { id, ...whom });
 export const orderPages = (dev, notebook, pages) => ask(dev, '/api/notebooks/pages/order', null, { notebook, pages });
 export const archivePage = (dev, id, archived) => ask(dev, '/api/notebooks/pages/archive', null, { id, archived });
 // { gone }: the notebook's blank pages but the one shown let go (notebooktidy.ts.)
@@ -63,24 +66,24 @@ export const unwrapRound = (dev, id) => ask(dev, '/api/notebooks/round/unwrap', 
 
 // { page, notebook, title, groups }, each group with its box and its children (answers and replies)
 export const loadGroups = (dev, page) => ask(dev, '/api/notebooks/pages/groups', { page });
-// parts: { ink, texts, pictures } as the store keeps them
+// parts: { ink, texts, pictures } as the store keeps them, and after (a unit's id, or 'start'), empty: true for a new
+// scrap with nothing on it yet
 export const createGroup = (dev, page, parts) => ask(dev, '/api/notebooks/groups/create', null, { page, ...parts });
 // since: the group's updated as this screen read it; one changed since is refused (409)
 export const editGroup = (dev, id, since, parts) =>
   ask(dev, '/api/notebooks/groups/edit', null, { id, since, ...parts });
-// A sketch page's units placed where they have no place yet ([{ id, x, y }], the page's px) → the groups named, each at
-// the place the store keeps
-export const placeGroups = async (dev, page, places) =>
-  (await ask(dev, '/api/notebooks/groups/place', null, { page, places })).groups;
 // To the page's end, or right after unit after there ('start': its first).
 export const moveGroup = (dev, id, page, after) => ask(dev, '/api/notebooks/groups/move', null, { id, page, after });
 // since: as edit's, so a screen deletes only what it has seen.
 export const deleteGroup = (dev, id, since) => ask(dev, '/api/notebooks/groups/delete', null, { id, since });
 export const restoreGroup = (dev, id) => ask(dev, '/api/notebooks/groups/restore', null, { id });
-// Whom a scrap of an Asks page can be handed to, the guests: { recent, everyone }, each { to, name, kind } (bookassign.js)
-export const loadPeople = dev => ask(dev, '/api/notebooks/people');
+// Whom a scrap on a page can be handed to, the guests invited to its book or its project: { recent, everyone }, each
+// { to, name, kind, initial, colour } (bookassign.js).: page
+export const loadPeople = (dev, page) => ask(dev, '/api/notebooks/people', page == null ? null : { page });
 // A group handed to a guest (their to) → { group, to }; it stays where it is, wearing their tag
 export const assignGroup = (dev, id, to) => ask(dev, '/api/notebooks/groups/assign', null, { id, to });
+// The person's Answer on their copy of a scrap handed to them, the one thing that reads it answered → { group }
+export const answerGroup = (dev, id) => ask(dev, '/api/notebooks/groups/answer', null, { id });
 // A reply under an agent's answer (a slip's id) → { id, parent }; taken back in its seconds
 export const reply = (dev, answer, words) => ask(dev, '/api/notebooks/groups/reply', null, { answer, words });
 export const deleteReply = (dev, id) => ask(dev, '/api/notebooks/replies/delete', null, { id });

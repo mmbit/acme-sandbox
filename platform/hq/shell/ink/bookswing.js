@@ -82,7 +82,8 @@ let shade,
 //   landed(dx): open, the edge moved dx by a resize, shut(), edge: { start, move(dx), end(dx, v) } the cover's edge's
 //   drag, pulled(dx, v): a reduced-motion pull let go, → whether it ends open,
 //   moving(on): the book lifted to swing, or come to rest, so HQ's scene holds still under it rather than share the
-//   book's frames with a building it mostly hides }
+//   book's frames with a building it mostly hides, edgeShuts(): a finger's swipe from the page's left edge shuts it
+// }
 export function mountSwing(rootEl, partsOf, hostOf) {
   root = rootEl;
   parts = partsOf;
@@ -341,7 +342,8 @@ function resize(dt) {
 
 // The pull tab's press (tab true): a tap (its click, bookhandle.js), a lift, or (open, pulled left first) a resize.
 // Held, it lifts a little. The page's left edge's (tab false): only a finger's swipe right of the book open at rest, a
-// lift to close it; anything else there is nothing.
+// lift to close it (never in a call guest's room: host.edgeShuts); anything else
+// there is nothing.
 function grip(node, { tab }) {
   let kind = null,
     reach0 = 0;
@@ -356,7 +358,8 @@ function grip(node, { tab }) {
   // (the page's edge takes no press: a finger's on it is read on the leaf, the Pencil and the mouse write there, the
   // page letting go of the finger's as the leaf takes it.)
   follow(tab ? node : parts.leaf, {
-    takes: e => tab || (e.pointerType === 'touch' && !e.target.closest?.('.bk-rail') && within(node, e)),
+    takes: e =>
+      tab || (host.edgeShuts() && e.pointerType === 'touch' && !e.target.closest?.('.bk-rail') && within(node, e)),
     start(dx) {
       const shutAtStart = !mode && document.documentElement.dataset.book === 'folded';
       if (!tab && (mode || shutAtStart || dx < 0)) return void (kind = null);

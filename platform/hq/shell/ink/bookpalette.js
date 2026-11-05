@@ -35,8 +35,8 @@ export const TOOLS = [
 ];
 const INKS = ['pen', 'highlighter'];
 // The pen's nibs, in its card's first row before the marker: each its own widths (bookinkmath.js WIDTHS), the
-// pencil's see-through. Only the pen's own line is a gesture (a scratch-out, a circle carried out to assign): the
-// pencil's hatching and the brush's back and forth are drawing.
+// pencil's see-through. Only the pen's own line is a gesture (the grid's circle and line): the pencil's hatching and
+// the brush's back and forth are drawing.
 const NIBS = {
   pen: { word: 'toolPen' },
   pencil: { word: 'toolPencil', alpha: PENCIL_ALPHA },

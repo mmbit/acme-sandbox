@@ -470,6 +470,46 @@ test("--for names the agent's own unstarted work in the deliverable, placed by t
   assert.equal(h.jobs.replacementOf(act.id), theirs);
 });
 
+// An urgent continuation starts within minutes, before anyone could put it in the stopped task's place
+test("a continuation already under way takes the stopped task's place; its brief and engine stay as they ran", async () => {
+  const { act, later, thread } = await runningTask('chime', 'pixels');
+  const earlier = h.queue({ agent: 'chime', title: 'Done before it started', thread });
+  db.prepare("update jobs set status = 'done', created = '2000-01-01', started = '2000-01-01' where id = ?").run(
+    earlier,
+  );
+  const going = h.queue({ agent: 'chime', title: 'Act on the card, finished tonight', thread });
+  db.prepare("update jobs set status = 'running', started = ? where id = ?").run(new Date().toISOString(), going);
+  const brief = () => db.prepare('select prompt, engine, model, engine_only from jobs where id = ?').get(going);
+  const was = { ...brief() };
+  const stopped = await h.hq(act, 'stop', String(act.id), 'Its continuation is under way');
+  assert.equal(stopped.code, 0, stopped.out);
+  assert.match(stopped.out, new RegExp(`#${going} takes its place`));
+  assert.equal(h.jobs.replacementOf(act.id), going);
+  assert.deepEqual({ ...brief() }, was, 'it read its brief already');
+  await h.finish(act, { status: 'stopped', result: 'Stopped by chime' });
+  assert.deepEqual(await heldBy(later), [`after #${going} in its deliverable`]);
+  // done already, after the stop ended: --for, never work from before the stopped task started
+  const next = await runningTask();
+  assert.equal((await h.hq(next.act, 'stop', String(next.act.id), 'Wait')).code, 0);
+  await h.finish(next.act, { status: 'stopped', result: 'Stopped by chime' });
+  const old = h.queue({ agent: 'chime', title: 'Before it', thread: next.thread }),
+    done = h.queue({ agent: 'chime', title: 'Its continuation', thread: next.thread });
+  db.prepare("update jobs set status = 'done', created = '2000-01-01', started = '2000-01-01' where id = ?").run(old);
+  db.prepare("update jobs set status = 'done', started = ?, finished = ? where id = ?").run(
+    new Date().toISOString(),
+    new Date().toISOString(),
+    done,
+  );
+  const chime = await h.start({ agent: 'chime', title: 'Sort the round' });
+  const refused = await h.hq(chime, 'stop', String(next.act.id), 'Its redo', '--for', String(old));
+  assert.notEqual(refused.code, 0, refused.out);
+  assert.equal(h.jobs.replacementOf(next.act.id), null);
+  const placed = await h.hq(chime, 'stop', String(next.act.id), 'Its redo', '--for', String(done));
+  assert.equal(placed.code, 0, placed.out);
+  assert.equal(h.jobs.replacementOf(next.act.id), done);
+  assert.deepEqual(await heldBy(next.later), [], 'the stopped task holds it no longer');
+});
+
 test("the CEO gives a card's wait to a job of the agent who filed it; nobody else's", async () => {
   const { act } = await runningTask();
   const card = await h.ask(act);

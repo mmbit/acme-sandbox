@@ -459,3 +459,44 @@ test('a pictured stroke is drawn over the screen until a canvas picture after it
   mirrors.feed(9, [frame(start + 500, red)]);
   assert.ok(!(await blueAt(await mirrors.now(9, { long: 400 }))), 'a picture after it holds it: not drawn again');
 });
+
+// A picture of the page's own route comes in the recording once it has loaded on the page (routepictures.js), often a
+// batch after the element showing it: the replay asked for it then, and failed.
+test('a carried picture that comes after the element showing it is shown once it comes', { skip }, async () => {
+  const sharp = createRequire(COORDINATOR)('sharp') as Sharp;
+  const green = await sharp({ create: { width: 200, height: 150, channels: 3, background: '#00ff00' } })
+    .png()
+    .toBuffer();
+  const start = Date.now();
+  const address = `${SHOP}/api/notebooks/pictures?file=1-g-0a1b2c3d.png&v=2`;
+  const style = 'position: absolute; left: 0; top: 0; width: 200px; height: 150px; z-index: 1';
+  const greenAt = async (picture: { bytes: Buffer } | undefined) => {
+    const data = await sharp(picture!.bytes).raw().toBuffer();
+    const [r, g, b] = data.subarray((75 * 400 + 100) * 3, (75 * 400 + 100) * 3 + 3);
+    return g > 200 && r < 60 && b < 60;
+  };
+  await mirrors.open(10, page(start), NONE);
+  mirrors.feed(10, [
+    {
+      type: 3,
+      timestamp: start + 10,
+      data: {
+        source: 0,
+        texts: [],
+        attributes: [],
+        removes: [],
+        adds: [{ parentId: 4, nextId: null, node: element(11, 'img', { src: address, style }) }],
+      },
+    },
+  ]);
+  assert.ok(!(await greenAt(await mirrors.now(10, { long: 400 }))), 'not shown before it comes');
+  assert.ok(asked.includes(address), 'it was asked for, and refused');
+  mirrors.feed(10, [
+    {
+      type: 5,
+      timestamp: start + 1200,
+      data: { tag: 'picture', payload: { address, type: 'image/png', base64: green.toString('base64') } },
+    },
+  ]);
+  assert.ok(await greenAt(await mirrors.now(10, { long: 400 })), 'shown once it comes');
+});

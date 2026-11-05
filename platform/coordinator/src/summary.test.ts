@@ -680,13 +680,27 @@ test("the owners' plans: a thread held by a need that misses, an inbox and a mee
   const older = await propose();
   at(HOUR);
   const old = await propose();
+  // review findings count with them, by the id hq inbox takes
+  const author = h.queue({ agent: 'kit', title: 'The importer' });
+  h.storedPr(77, author, 'open', ['importer.ts'], { round: 1 });
+  (await import('./proposals.ts')).deliverFindings({
+    pr: 77,
+    round: 1,
+    branch: `job/${author}`,
+    agent: 'kit',
+    decision: 'changes',
+    summary: 'Two fixes',
+    findings: [],
+  });
   const asked = await ask();
   at(2 * HOUR + 40 * MIN);
   await ask();
   at(2 * HOUR + 50 * MIN);
   await propose();
   at(3 * HOUR);
-  assert.deepEqual(threatsNaming('inbox'), [`Your inbox has 2 proposals waiting, the oldest 3 h: #${older}, #${old}`]);
+  assert.deepEqual(threatsNaming('inbox'), [
+    `Your inbox has 3 proposals waiting, the oldest 3 h: #${older}, #${old}, #findings:77`,
+  ]);
   assert.deepEqual(threatsNaming('meeting ask'), [
     `meeting ask #${asked} from moss with kit, bolt, open 2 h with no meeting set: The shop launch`,
   ]);

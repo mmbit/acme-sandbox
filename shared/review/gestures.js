@@ -1,24 +1,8 @@
-// Gestures told from a line's points: a ring marks what's inside it (pencil.js), a scribble scratches out (HQ's book).
+// Gestures told from a line's points: a ring marks what's inside it (pencil.js). No scribble deletes anything: it's ink
+// (HQ's book).
 import { boxOfLines } from './mark.js';
 import { under } from './layer.js';
 
-// A scribble: a line going back and forth over itself, far longer than the box it fills
-export function scribbled(points) {
-  if (points.length < 8) return false;
-  let length = 0,
-    turns = 0,
-    dir = 0;
-  for (let i = 1; i < points.length; i++) {
-    const dx = points[i][0] - points[i - 1][0],
-      dy = points[i][1] - points[i - 1][1];
-    length += Math.hypot(dx, dy);
-    const d = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 2 * Math.sign(dy);
-    if (d && dir && d === -dir) turns++;
-    if (d) dir = d;
-  }
-  const b = boxOfLines([{ points }]);
-  return turns >= 4 && length > 3.5 * Math.max(b.w, b.h, 1);
-}
 // A ring: a line that comes back near where it started, round something bigger than a dot
 export function ringed(points) {
   if (points.length < 8) return false;

@@ -104,8 +104,8 @@ async function turnTo(pages, page) {
   const { notebook } = await loadGroups(pages.dev, page);
   return notebook === book.notebook ? pages.made(page) : pages.find({ page, notebook });
 }
-// A unit's place and what hangs under it (bookunits.js places both, beside it on a sketch page: sketchcanvas.js), each
-// its box in the page's px, the unit's first (bookforyou.js rings each)
+// A unit's place and what hangs under it (bookunits.js places both), each its box in the page's px, the unit's first
+// (bookforyou.js rings each).
 export function boxesOf(v, id) {
   const p = v.page.places?.find(q => q.id === id),
     under = v.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${id}"]`);
@@ -119,38 +119,6 @@ export function reachOf(v, id) {
   const boxes = boxesOf(v, id);
   return boxes.length ? boxRound(boxes) : null;
 }
-// Where a unit with no place yet goes on a canvas the board is looking at (bookarrive.js: an agent's, come from the
-// store): the first clear paper w × h (page px) in the part of the page the board sees, left to right and down, clear
-// of everything else on the page and what hangs under it; where none is, the first clear below it, as near as can be.
-// So the board sees it land where it looks, or a short way down, and once pinned there no later lay moves it (call
-// #262: the masonry's place under everything, far out of sight, kept the card from the board for half a minute).
-// → its place { x, y }.
-export function spotInSight(v, id, w, h) {
-  const paper = seenPaper(),
-    s = book.scale,
-    { x, y } = placeOf(book),
-    seen = { x0: x + ROOM / s, y0: y + ROOM / s, x1: x + (paper.w - ROOM) / s };
-  const taken = (v.page.places ?? []).filter(p => p.id !== id).flatMap(p => boxesOf(v, p.id));
-  for (const [kind, list] of Object.entries(LISTS))
-    for (const el of v.page[list] ?? []) {
-      if (el.g === id) continue;
-      const b = boxOf(kind, el);
-      taken.push({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 });
-    }
-  const clear = box =>
-      !taken.some(
-        b =>
-          box.x < b.x + b.w + GAP && b.x < box.x + box.w + GAP && box.y < b.y + b.h + GAP && b.y < box.y + box.h + GAP,
-      ),
-    // (under everything it's always clear)
-    end = Math.max(seen.y0, ...taken.map(b => b.y + b.h + GAP));
-  for (let top = seen.y0; top <= end; top += STEP)
-    for (let left = seen.x0; left === seen.x0 || left + w <= seen.x1; left += STEP)
-      if (clear({ x: left, y: top, w, h })) return { x: Math.round(left), y: Math.round(top) };
-  return { x: Math.round(seen.x0), y: Math.round(end) };
-}
-// (how far apart spotInSight tries places, page px)
-const STEP = 16;
 // Where the paper shows a group: zoomed out (never in past boardScale, the zoom the board chose) till it fits the paper
 // the board sees with a little room, and panned only as far as it must to show it there with that room, its top a
 // quarter down (less, if its foot would be hidden)

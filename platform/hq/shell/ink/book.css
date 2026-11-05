@@ -191,8 +191,8 @@
 /* the pull tab: sewn to the cover's outer edge (booklook.css draws it), hanging out of it over HQ's page and taking none
    of its width; shut, at the screen's edge. book.js puts it at the edge and moves it with the book. A dot when an
    answer waits to be read; a note that lands in the shut book shows its snip beside it for a moment (bookhandle.js).
-   It sticks out further than the bookmarks, a clear gap below them (bookmarks.css), and shut, far enough in from the
-   screen's edge that a drag from it is the tab's, not the iPad's own edge swipe (the board); a finger's size to the touch (::after, 44 px across at least). Which side of the edge it hangs is
+   It sticks out further than the bookmarks, a clear gap below them (bookmarks.css), and shut, flush with the screen's
+   edge, a whole tab's width (28 px) wide, so a drag from it is the tab's, not the iPad's own edge swipe (the board); a finger's size to the touch (::after, 44 px across at least). Which side of the edge it hangs is
    its margin, never its translate, whose lift is eased: eased, the tab flicked to the edge's other side and back as the
    book landed in a phone's spread. --bk-lip-w: its width, which its margin hangs it out by (one width). */
 #book .bk-lip {
@@ -213,11 +213,12 @@
 #book[data-mode='spread'] .bk-lip {
   margin-left: 0;
 }
-/* (upright, the cover's edge, 12 px, is past the screen's left: the tab folds in over the page from the screen's edge,
-   and its tap closes the book) */
+/* (upright, the cover's edge, 12 px, is past the screen's left: the tab hangs in over the page as far from the screen's
+   edge as on its side, 24 px, and its tap closes the book. Flush with the edge, iPadOS takes its touches in a split
+   screen's half, for the divider and Safari's Back) */
 @media (orientation: portrait) {
   #book[data-mode='spread'] .bk-lip {
-    margin-left: 12px;
+    margin-left: 36px;
   }
 }
 /* (a phone on its side: at its foot, the bookmarks at the top below HQ's keys, bookmarks.css; beside HQ's page

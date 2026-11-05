@@ -185,9 +185,10 @@ function reviewPush(pushed: reviewpushes.Push) {
   if (plantedReviewFiles(push, files)) return;
   const pinned = { ...push, sha };
   if (expedites(branch)) {
-    if (checksOwn(files))
+    const held = heldForReview(pr, sha, files);
+    if (held === 'checks')
       publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but it changes its own gates and tests: it merges after its review` });
-    else if (screens.owed(pr, sha) !== undefined)
+    else if (held === 'screens')
       publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but it changes what HQ shows the board: it merges after its look` });
     else if (checksPassed(pr, sha)) return void mergeExpedited(pr, () => reviewRound(pinned, { round, base, before }, files, links, pushedSince));
     else publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but its gates and tests didn't both pass on this push: it merges after its review` });
@@ -1434,7 +1435,16 @@ const checksPassed = (pr: number, sha: string) =>
 // An expedited merge stands on its push's gates and tests, which the worker runs from the pushed branch (shared/gates,
 // with the gates' config at the root): a pull request that changes those goes to its review before it merges, as any
 // other does.
-export const checksOwn = (files: string[]) => files.some(f => GATES_CONFIG.test(f));
+const checksOwn = (files: string[]) => files.some(f => GATES_CONFIG.test(f));
+// Why an expedited push waits for its review all the same, or undefined when its checks can merge it: it changes its
+// own gates and tests (checksOwn), or what HQ shows the board (screens.owed). The merge and the plan
+// (expeditedplan.ts) both ask it.
+type Hold = 'checks' | 'screens';
+export function heldForReview(pr: number, sha: string | null, files: string[]): Hold | undefined {
+  if (checksOwn(files)) return 'checks';
+  if (screens.owed(pr, sha) !== undefined) return 'screens';
+  return undefined;
+}
 async function mergeExpedited(n: number, review: () => void) {
   const pr = db.prepare('select * from prs where number = ?').get(n) as Pr;
   const m = await mergeAlone(pr, `Merge PR #${pr.number} expedited (its review follows)`, m => {
@@ -1486,9 +1496,10 @@ async function expeditePr(n: number) {
   if (!pr || !['open', 'stuck'].includes(pr.status) || !pr.sha) return `PR #${n} has no push to merge yet: its next push merges on its checks`;
   if (pr.gate_fails || pr.tests_incomplete || !checksPassed(n, pr.sha))
     return `PR #${n}'s last push didn't pass its gates and tests, so it isn't merged ahead of its review: a later push that passes them merges`;
-  if (checksOwn(JSON.parse(pr.files)))
+  const held = heldForReview(n, pr.sha, JSON.parse(pr.files));
+  if (held === 'checks')
     return `PR #${n} changes its own gates and tests (shared/gates or their config), so it merges after its review, not on them`;
-  if (screens.owed(n, pr.sha) !== undefined)
+  if (held === 'screens')
     return `PR #${n} changes what HQ shows the board, so it merges after its look, not on its checks`;
   if (deciding.has(n)) return `PR #${n} is being merged already: if it hasn't merged in a few minutes, run hq expedite again`;
   const merged = await mergeExpedited(n, () => {

@@ -1,15 +1,16 @@
 // book-check.mjs's stories of the one way to move things on a Notebook page (shell/ink/booktools.js, bookselect.js,
 // bookselectlift.js), the board's two cases on the played Notebook seeded as dev mode's (mock/notebook.json), on a
 // desktop with a mouse and on an iPad mini with the Pencil:
-//   - the pen draws across a scrap: the line lands on it (in the scrap's group), and the scrap stays where it was;
-//   - Select pressed on one line of a group picks the whole group (its frame round all of it), and every line of it,
-//     its frame with them, follows the pointer while it's held; let go, nothing jumps, and the store has every line
-//     moved by the same (in its unit's own px, the unit where the masonry put it), and every line shows on the page
-//     where it landed, past its unit's edge too.
+//   - the pen draws across a scrap opened by its card: the line lands on it (in the scrap's group), and its picture
+//     stays where it was;
+//   - in the group opened, Select pressed on one line picks the whole group (its frame round all of it), and every
+//     line of it, its frame with them, follows the pointer while it's held; let go, nothing jumps, and the store has
+//     every line moved by the same (in the scrap's own px), and every line shows on its sheet where it landed.
+// (An opened scrap has no edge to move past)
 import assert from 'node:assert/strict';
-import { inSight, onPaper, pen, tool } from './notebookscreen.mjs';
+import { inSight, onPaper, pen, tool, zoomOf } from './notebookscreen.mjs';
 import { open } from './notebook.mjs';
-import { DESKTOP, MINI, pixelsIn, pressAlong, until } from './kit.mjs';
+import { DESKTOP, MINI, closeScrap, openScrap, pixelsIn, pressAlong, until } from './kit.mjs';
 
 // the seed's newest page, its wave (four lines) and its big scrap (mock/notebook.json)
 const NEWEST = 3,
@@ -47,10 +48,11 @@ async function onDevice(browser, c, viewport, pencil) {
 async function drawsOnAScrap(page, play, pencil) {
   const was = group(play, SCRAP),
     ink = was.ink.length;
+  await opened(page, pencil, SCRAP);
   await tool(page, 'Pen');
   // (across the scrap's top, starting and ending on it)
   const s = was.pictures[0],
-    points = await inSight(page, NEWEST, SCRAP, [
+    points = await onPaper(page, [
       [s.x + 30, s.y + 16],
       [s.x + s.w / 2, s.y + 30],
       [s.x + s.w - 30, s.y + 22],
@@ -62,17 +64,19 @@ async function drawsOnAScrap(page, play, pencil) {
   }, 'the line saved on the scrap, in its group');
   assert.deepEqual(pick(now.pictures[0]), pick(s), 'the scrap stays where it was: the pen draws on it, never moves it');
   assert.equal(await page.locator('#book .bk-sel').count(), 0, 'nothing picked by the pen');
+  await closeScrap(page, tapper(page, pencil));
 }
 
 // ---- Select moves a group, live
 
 async function movesAGroup(page, play, pencil, c, name) {
-  const was = group(play, WAVE);
+  const was = group(play, WAVE),
+    sheet = await opened(page, pencil, WAVE);
   await tool(page, 'Select');
   // pressed on the wave's first line only
-  const [from] = await inSight(page, NEWEST, WAVE, [was.ink[0].points[1].slice(0, 2)]),
-    k = await scaleOf(page),
-    by = await dragBy(page, was),
+  const [from] = await onPaper(page, [was.ink[0].points[1].slice(0, 2)]),
+    k = await zoomOf(page),
+    by = await dragBy(page, was, sheet),
     // (the group's frame: on the units page its lines move inside their unit, which stays in its place.)
     clip = () => rectOf(page, '#book .bk-sel');
   const held = await press(page, from, pencil);
@@ -103,17 +107,14 @@ async function movesAGroup(page, play, pencil, c, name) {
     await held.up();
   }
   const moved = await landed(page, play, { was, by, k, clip, clipHeld: await clip() });
-  await shows(page, moved);
+  await shows(page, moved, sheet);
   await c.shot(`move-${name}-group-moved`, page);
 }
-// The drag, in screen px: to the left, the lines' left edge to halfway between their unit's left and the paper's, past
-// the unit's edge and still on the paper (a column drawn at its own size has only its margin left of it: masonry.js),
-// and 40 px down, each of its steps a drag (bookselectlift.js DRAG_PX).
-async function dragBy(page, was) {
-  const [[left]] = await onPaper(page, [[boxOf(was.ink).x0, 0]], WAVE),
-    unit = await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${WAVE}"]`).boundingBox(),
-    paper = await page.locator('#book .bk-page:not([hidden])').boundingBox();
-  return [(Math.max(0, paper.x) + unit.x) / 2 - left, 40];
+// The drag, in screen px: to the left, the lines' left edge to 40 px inside the sheet's, and 40 px down, each of its
+// steps a drag (bookselectlift.js DRAG_PX).
+async function dragBy(page, was, sheet) {
+  const [[left]] = await onPaper(page, [[boxOf(was.ink).x0, 0]]);
+  return [Math.min(-20, sheet.x + 40 - left), 40];
 }
 // Let go: the store has every line moved by the same, and the frame where it was let go (no jump)
 async function landed(page, play, { was, by, k, clip, clipHeld }) {
@@ -136,24 +137,17 @@ async function landed(page, play, { was, by, k, clip, clipHeld }) {
   );
   return moved;
 }
-// Let go, every line of the group shows on the page where it landed, past its unit's edge too (the unit's canvas
-// reaches its ink wherever it goes: bookpage.js): read on the screen once the lifted canvas is gone and nothing is
-// picked over them.
-async function shows(page, moved) {
+// Let go, every line of the group shows on its sheet where it landed: read on the screen once the lifted canvas is
+// gone and nothing is picked over them.
+async function shows(page, moved, sheet) {
   await until(async () => !(await page.locator('#book canvas.bk-sel-lifted').count()), 'the lifted canvas gone');
   await tool(page, 'Pen');
   await until(async () => !(await page.locator('#book .bk-sel').count()), 'nothing picked over the lines');
-  const lines = await Promise.all(moved.ink.map(s => onPaper(page, s.points, WAVE))),
-    box = boxOf(lines.map(points => ({ points }))),
-    unit = await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${WAVE}"]`).boundingBox();
+  const lines = await Promise.all(moved.ink.map(s => onPaper(page, s.points))),
+    box = boxOf(lines.map(points => ({ points })));
   assert.ok(
-    box.y0 < unit.y || box.x0 < unit.x || box.x1 > unit.x + unit.width,
-    `the lines moved past their unit's edge (lines ${frameWords(box)}, unit ${frameWords(unitBox(unit))})`,
-  );
-  const paper = await page.locator('#book .bk-page:not([hidden])').boundingBox();
-  assert.ok(
-    box.x0 > paper.x && box.x1 < paper.x + paper.width && box.y0 > Math.max(0, paper.y),
-    `the lines landed on the paper in sight (${frameWords(box)})`,
+    box.x0 > sheet.x && box.x1 < sheet.x + sheet.width && box.y0 > sheet.y,
+    `the lines landed on the sheet in sight (${frameWords(box)})`,
   );
   const ink = await inkIn(page, box);
   for (const [i, points] of lines.entries()) {
@@ -177,10 +171,22 @@ async function inkIn(page, box) {
     return false;
   };
 }
-const unitBox = ({ x, y, width, height }) => ({ x0: x, y0: y, x1: x + width, y1: y + height });
 const frameWords = b => [b.x0, b.y0, b.x1, b.y1].map(Math.round).join(', ');
 
 // ---- the pointer
+
+// What taps: the mouse's click, or the Pencil's tap as Safari sends it
+const tapper = (page, pencil) => ({
+  tap: pencil ? at => pressAlong(page, [at]) : ([x, y]) => page.mouse.click(x, y),
+});
+// A group on the seed's newest page slid into view, as the book shows a scrap ('book:scrap'), and opened by a tap on
+// its card once it's still there: its sheet's box on the screen.
+async function opened(page, pencil, id) {
+  await inSight(page, NEWEST, id, [[8, 8]]);
+  const { gid, sheet } = await openScrap(page, tapper(page, pencil), id);
+  assert.equal(gid, id, `scrap ${id} opened`);
+  return sheet;
+}
 
 // A press held at a point (the mouse's, or the Pencil's as Safari sends it), moved and let go step by step
 async function press(page, at, pencil) {
@@ -212,9 +218,3 @@ const rectOf = (page, selector) =>
     const r = document.querySelector(selector)?.getBoundingClientRect();
     return r ? { x: r.x, y: r.y } : null;
   }, selector);
-// The page's px on the screen
-const scaleOf = page =>
-  page.evaluate(() => {
-    const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
-    return shown.getBoundingClientRect().width / shown.offsetWidth;
-  });

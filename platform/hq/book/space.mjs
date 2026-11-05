@@ -1,14 +1,15 @@
-// book-check.mjs's stories of the paper's space on an iPad (shell/ink/bookpan.js, bookrow.js, ink.js's pen; Ink's
-// folder): two fingers never pan above or left of a page's corner, its title's, and pan down of it, never sideways
-//, the Pencil writing there, kept where it was written through a reload (the corner); a pinch out stops on the page at its corner, never in the overview; and
-// the freeze (a finger and the Pencil whose lifts never came, a text box open as the page turned) leaves the paper
-// answering: two fingers pan, two pinch, the Pencil writes. Fingers and the Pencil in either engine (hands.mjs), the
-// lifts that never came are events made without their ends.
+// book-check.mjs's stories of the paper's space on an iPad (shell/ink/bookpan.js, bookrow.js, bookscrapopen.js, ink.js's
+// pen; Ink's folder): two fingers never pan above or left of a page's corner, its title's, and there the Pencil's tap
+// opens a new scrap, it writes in it, and put back its card shows it, through a reload too; a pinch out stops on the
+// page at its fit, never in the overview; and the freeze (a finger and the Pencil whose lifts never came, a text box open
+// as its scrap was put back) leaves the paper answering: two fingers pan, two pinch, the Pencil writes. Fingers and the
+// Pencil in either engine (hands.mjs), the lifts that never came are events made without their ends. (A page of scraps
+// takes no ink of its own, and pans down only as far as its scraps go: a long page's pan down is fill.mjs's.)
 import assert from 'node:assert/strict';
 import { BLUE, freePage, paperBox, pick, savedWhere, tool } from './mouse.mjs';
-import { MINI, middleOf, shotPixels } from './kit.mjs';
+import { MINI, closeScrap, middleOf, openScrap, shotPixels } from './kit.mjs';
+import { SHOWN } from './notebookscreen.mjs';
 import { hands } from './hands.mjs';
-import { press } from './bar.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
 
 // how far a finger's pan or a pinch may land from where it was aimed (px): the pan's smoothing is none, its rounding one
@@ -17,10 +18,10 @@ const NEAR_PX = 3;
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, settled, shot, noErrorsIn, settle }
 export function spaceStories(c) {
   return {
-    "on an iPad: two fingers never pan past the page's corner, pan down and never sideways, the Pencil writes there, and it stays after a reload":
+    "on an iPad: two fingers never pan past the page's corner, the Pencil writes in a new scrap there, and it stays after a reload":
       browser => downAndRight(browser, c),
-    'on an iPad: a pinch out stops at the least zoom on the page, never the overview': browser => pinchOut(browser, c),
-    'on an iPad: lifts that never came and a text box open as the page turned leave pan, pinch and the Pencil working':
+    "on an iPad: a pinch out stops at the page's fit, never the overview": browser => pinchOut(browser, c),
+    'on an iPad: lifts that never came and a text box open as its scrap was put back leave pan, pinch and the Pencil working':
       browser => noFreeze(browser, c),
   };
 }
@@ -34,36 +35,35 @@ async function downAndRight(browser, c) {
     const { page, fingers, pen } = pad,
       from = await originAt(page),
       mid = middleOf(await paperBox(page));
-    // two fingers drag the page right and down: it holds at its corner, its title's (one finger draws); up and left, the
-    // paper shows what's down of it, never sideways (the board: a Notebook scrolls up and down.)
+    // two fingers drag the page right and down: it holds at its corner, its title's
     await pan(fingers, mid, [180, 140]);
     near(await originAt(page), from, [0, 0], "two fingers never pan above or left of the page's corner");
-    await pan(fingers, mid, [-180, -140]);
-    near(await originAt(page), from, [0, -140], 'two fingers pan down, never sideways');
     await tool(page, 'Pen').tap();
     await page.getByRole('menuitemradio', { name: 'Blue' }).tap();
     // (the card stays open over the paper beside the strip for a width too: Escape closes it.)
     await page.keyboard.press('Escape');
-    const origin = await originAt(page),
-      start = [origin.x + 320, origin.y + 420];
+    // the Pencil's tap there makes a new scrap and opens it, and it writes in it in blue
+    const tapper = { tap: at => pen([at]) },
+      { gid, sheet } = await openScrap(page, tapper, undefined, mid),
+      start = [sheet.x + 60, sheet.y + sheet.height / 2];
     await pen(Array.from({ length: 16 }, (_, i) => [start[0] + i * 8, start[1] + 3 * Math.sin(i / 2)]));
     await savedWhere(c, free.id, p => p.ink.length === 1);
-    // (kept in its unit's own px, the unit at its place on the sketch page)
-    const unit = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.find(g => g.ink.length),
-      written = unit.ink[0].points.map(([x, y]) => [x + unit.place.x, y + unit.place.y]);
-    assert.ok(
-      written.every(([x, y]) => Math.abs(x - 320) < 140 && Math.abs(y - 420) < 20),
-      `the ink down of the corner, where it was written: ${JSON.stringify(written[0])}`,
-    );
+    const groups = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups;
+    assert.equal(groups.find(g => g.ink.length)?.id, gid, 'the line saved in the scrap it was written in');
+    // put back, its card shows the line
+    await closeScrap(page, tapper);
+    const card = (on = page) => on.locator(`#book .bk-unit[data-unit="${gid}"]`).filter({ visible: true }).first();
+    assert.ok((await blueIn(page, await card().boundingBox())) > 20, "the blue line on the scrap's card");
     await c.shot('book-space-down-right', page);
     c.noErrorsIn(pad.errors);
     await pad.done();
-    // read again: the page opens where it was left, its ink where it was written
+    // read again: the page opens with the card, its line on it
     pad = await onPad(browser, c, { keep: true });
-    const again = await originAt(pad.page),
-      [px, py] = written[8],
-      at = [again.x + px, again.y + py];
-    assert.ok((await blueAround(pad.page, at)) > 20, `the blue line where it was written after a reload, at ${at}`);
+    await card(pad.page).waitFor();
+    assert.ok(
+      (await blueIn(pad.page, await card(pad.page).boundingBox())) > 20,
+      'the blue line on its card after a reload',
+    );
     c.noErrorsIn(pad.errors);
   } finally {
     await pad.done();
@@ -87,9 +87,11 @@ async function pinchOut(browser, c) {
           [x, y + 15],
         ],
       ];
+    const fit = await scaleOf(page);
     await fingers(...closing);
+    // (a page of scraps zooms out no further than its fit: masonry.js.)
     const least = await scaleOf(page);
-    assert.ok(least < 1, `zoomed out (${least})`);
+    assert.ok(least <= fit, `zoomed out no further than its fit (${fit} to ${least})`);
     assert.equal(await overview(page), false, 'still the page, no overview');
     // closed again: the zoom stays where it stopped
     await fingers(...closing);
@@ -115,36 +117,38 @@ async function noFreeze(browser, c) {
       [x, y] = middleOf(paper);
     // two fingers down whose lifts never come (a pinch the browser lost), and the Pencil's line Scribble took
     await liftsNeverCame(page, [x, y]);
-    // a text box opened with the Pencil, then the page turned with it still open, and back
+    // a new scrap opened by the Pencil's tap, a text box opened in it with the Pencil, the scrap put back with it still
+    // open, and opened again
+    const tapper = { tap: at => pen([at]) },
+      { gid, sheet } = await openScrap(page, tapper, undefined, [x, y]);
     await pick(page, 'Text', 'tap');
-    await pen([[x - 100, y + 120]]);
+    await pen([[sheet.x + 80, sheet.y + sheet.height / 2]]);
     await page.keyboard.type('half a thought');
-    await press(page, 'New page');
+    await closeScrap(page, tapper);
     await page.waitForTimeout(c.settle);
-    await page.locator('#book').getByRole('button', { name: 'The page before', exact: true }).tap();
-    await page.waitForTimeout(c.settle);
+    await openScrap(page, tapper, gid);
     // the paper answers: two fingers pan,
     const from = await originAt(page);
-    await pan(fingers, [x, y], [0, -50]);
-    near(await originAt(page), from, [0, -50], 'two fingers pan');
+    await pan(fingers, [x, y], [0, 50]);
+    near(await originAt(page), from, [0, 50], 'two fingers pan');
     // two fingers pinch,
     const scale = await scaleOf(page);
     await fingers(
       [
-        [x - 40, y],
-        [x + 40, y],
-      ],
-      [
         [x - 80, y],
         [x + 80, y],
       ],
+      [
+        [x - 40, y],
+        [x + 40, y],
+      ],
     );
     const pinched = await scaleOf(page);
-    assert.ok(Math.abs(pinched / scale - 2) < 0.05, `two fingers pinch: ${scale} to ${pinched}`);
+    assert.ok(Math.abs(pinched / scale - 0.5) < 0.05, `two fingers pinch: ${scale} to ${pinched}`);
     // and the Pencil writes
     const strokes = c.pages.find(p => p.id === free.id).ink.length;
     await pick(page, 'Pen', 'tap');
-    await pen(Array.from({ length: 16 }, (_, i) => [x - 120 + i * 10, y - 60 + 2 * Math.sin(i / 2)]));
+    await pen(Array.from({ length: 16 }, (_, i) => [x - 120 + i * 10, y + 150 + 2 * Math.sin(i / 2)]));
     await savedWhere(c, free.id, p => p.ink.length === strokes + 1);
     await c.shot('book-space-no-freeze', page);
     c.noErrorsIn(errors);
@@ -227,14 +231,14 @@ const pan = (fingers, [x, y], [dx, dy]) =>
 
 // ---- what the board sees
 
-// The origin of the page shown, on the screen
-const originAt = page => page.locator('#book .bk-page:not([hidden])').boundingBox();
+// The origin of the page shown (an opened scrap's while one is open), on the screen
+const originAt = page => page.locator(SHOWN).first().boundingBox();
 // The page's zoom, as the paper draws it
 const scaleOf = page =>
   page.evaluate(() => +document.querySelector('#book .bk-world').style.transform.match(/scale\(([\d.]+)\)/)[1]);
-// How many px of the blue ink there are round a point on the screen
-async function blueAround(page, [x, y], r = 8) {
-  const { data } = await shotPixels(page, { x: x - r, y: y - r, width: 2 * r, height: 2 * r });
+// How many px of the blue ink there are in a box on the screen ({ x, y, width, height })
+async function blueIn(page, box) {
+  const { data } = await shotPixels(page, box);
   let n = 0;
   for (let i = 0; i < data.length; i += 4)
     if (Math.abs(data[i] - BLUE[0]) + Math.abs(data[i + 1] - BLUE[1]) + Math.abs(data[i + 2] - BLUE[2]) < 60) n++;

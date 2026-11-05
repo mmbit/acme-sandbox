@@ -5,7 +5,7 @@ import * as jobs from './jobs.ts';
 import type * as pauses from './pauses.ts';
 import type * as threadorder from './threadorder.ts';
 import { wholeSeconds } from './arithmetic.ts';
-import { mergeWait } from './mergewait.ts';
+import type { mergeWaits } from './mergewait.ts';
 import type { Row } from './backlog.ts';
 import type { QueuedJob } from './eta.ts';
 
@@ -21,7 +21,7 @@ export type Context = {
   byPr: Map<number | null, Row[]>;
   holds: Map<string | null, ReturnType<typeof pauses.holding>>;
   inOrder: ReturnType<typeof threadorder.placing>['inOrder'];
-  branchTask: ReturnType<typeof threadorder.placing>['branchTask'];
+  mergeWait: ReturnType<typeof mergeWaits>;
 };
 
 // What a job waits for: its --after, its further waits and cards (jobs.ts READY), its wakes (hq job --when), and the
@@ -84,7 +84,7 @@ function waitForJobs(job: QueuedJob, row: Row, c: Context) {
 // A prerequisite's merge edge follows its branch's open PR. A finished task can follow its open deliverable's
 // remaining work on that branch first.
 function waitForBranch(job: QueuedJob, prior: number, c: Context) {
-  const target = mergeWait(prior, c.open, c.branchTask);
+  const target = c.mergeWait(prior);
   if (!target) return false;
   if ('job' in target) waitFor(job, target.job);
   else stall(job, `it waits for pull request #${target.pr}, whose work isn't open`);

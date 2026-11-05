@@ -7,7 +7,7 @@
 // board sees: the buttons' names, the controls' words. (the islands' checks and the blur)
 import assert from 'node:assert/strict';
 import { errorsOf, openPage, until } from '../../../shared/browser/browser.mjs';
-import { MINI, OVERVIEW } from './kit.mjs';
+import { MINI, OVERVIEW, closeScrap, openScrap } from './kit.mjs';
 import { blurred, islandsSeen, islandsUsable } from './islands.mjs';
 import { press } from './bar.mjs';
 
@@ -83,7 +83,8 @@ async function overview(browser, c) {
     // assertion under it is, and says what failed.)
     await far.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
     assert.ok(!(await far.isVisible()), 'a find opens its page');
-    assert.equal(await over.getAttribute('aria-pressed'), 'false');
+    // (the overview's key comes back with the bar.)
+    assert.ok(await over.isVisible(), 'the bar back, the overview key on it');
     assert.ok(await bar.getByRole('button', { name: /^The notebook's pages/ }).isVisible(), "the page's count back");
     assert.deepEqual(errors, []);
   } finally {
@@ -137,11 +138,16 @@ async function names(browser, c) {
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
     // written on, it keeps its name (once the new page has turned over.)
     await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
-    const desk = await page.locator('#book .bk-desk').boundingBox();
-    await page.mouse.move(desk.x + 120, desk.y + 200);
+    // (in a scrap made by a click on the blank page and opened: the grid takes no ink.)
+    const desk = await page.locator('#book .bk-desk:not(.bk-turn-picture *)').boundingBox(),
+      mouse = { tap: ([x, y]) => page.mouse.click(x, y) },
+      { sheet } = await openScrap(page, mouse, undefined, [desk.x + 120, desk.y + 200]),
+      [x, y] = [sheet.x + 80, sheet.y + sheet.height / 2];
+    await page.mouse.move(x, y);
     await page.mouse.down();
-    for (let i = 1; i <= 12; i++) await page.mouse.move(desk.x + 120 + i * 12, desk.y + 200 + 8 * Math.sin(i));
+    for (let i = 1; i <= 12; i++) await page.mouse.move(x + i * 12, y + 8 * Math.sin(i));
     await page.mouse.up();
+    await closeScrap(page, mouse);
     await page.waitForTimeout(c.settle);
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
     // the overview names them the same, the oldest first

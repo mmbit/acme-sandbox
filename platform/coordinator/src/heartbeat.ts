@@ -1,10 +1,11 @@
 // The CEO's heartbeat, its instructions: the hourly check's own text, the same for every company's CEO, then the
-// company's own words for it (org.yaml's followThrough.prompt, template/company/org.yaml) and last the CEO's page
-// (pad.ts), which the CEO rewrites itself. followthrough.ts queues the check with the summary after them.
+// company's own words for it (org.yaml's followThrough.prompt, template/company/org.yaml). followthrough.ts queues the
+// check with the summary after them; the CEO's page (pad.ts), which the CEO rewrites itself, comes with the check's claim
+// as with every job of the CEO's, as it is when the check starts.
+// (step 8's page write on the version it read)
 // (its messages say deliverable, the board's word for a thread)
 import { deliveredWords, followThroughWords } from './followthroughwords.ts';
 import { BOARD_WAITS } from './pausewake.ts';
-import { pad } from './pad.ts';
 // (the pause rule)
 import { PAUSE_FOR, RELATED_WORK, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 
@@ -137,9 +138,9 @@ message. A link whose HQ stopped taking our entries, or that unlinked us, is new
    happens next, and what if it doesn't work? Tell the Overseer ahead so it watches, and put a card to the board early
    when the Overseer can't act.
    When you can't see the fix, take it to the board on the desk phone.
-8. When something changed (a number, a bet, what you watch or do next), rewrite your page whole (\`hq pad write -\`, on
-   stdin), so the next hour starts where this one stopped. A time never lives on it: what must happen at a time is a
-   queued job or a deliverable's window, and the page names it.
+8. When something changed (a number, a bet, what you watch or do next), or a later check, call or follow-up must know
+   what you learned, rewrite your page whole on the version \`hq pad\` names as you read it right before
+   (\`hq pad write - --version <id>\`, on stdin), so the next hour starts where this one stopped.
 9. The verdict, last. On track only when everything the board waits for is with it and delivered as that says, or on
    its way to it in time on real state (a ready item the board has been shown, until it answers), every goal is fine on
    facts, and nothing in the summary needs you since the last check: \`hq followthrough
@@ -156,13 +157,9 @@ message. A link whose HQ stopped taking our entries, or that unlinked us, is new
 Keep it short: it runs up to every hour, so it spends little when all is on track.`;
 
 // The check's whole text: the foundation's, with org.yaml's followThrough.delivered (else the platform's own), then
-// org.yaml's followThrough.prompt (what the check is for to the company's board and how far it goes), then the CEO's page.
+// org.yaml's followThrough.prompt (what the check is for to the company's board and how far it goes).
 export function checkPrompt() {
   const own = followThroughWords();
-  const page = pad();
-  const pageText = page
-    ? `Your page (hq pad), as you wrote it at ${page.at.slice(0, 16).replace('T', ' ')} UTC:\n${page.text}`
-    : 'Your page (hq pad): none yet. Write it in this check (hq pad write -): your goals and why, the bets on each, what you watch and when you judge it, what you do next.';
   const delivered = `What the board asked for is open until it's delivered, and this check acts on it. Delivered means ${deliveredWords()}`;
-  return [OPENING, delivered, STEPS, ...(own ? [`Our own additions:\n${own}`] : []), pageText].join('\n\n');
+  return [OPENING, delivered, STEPS, ...(own ? [`Our own additions:\n${own}`] : [])].join('\n\n');
 }

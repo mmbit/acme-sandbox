@@ -1,18 +1,16 @@
 // book-check.mjs's story of the page to every edge (the Ink README, "The book's frame"; shell/ink/bookdesk.css,
 // bookview.js, bookrow.js), at realbook.mjs's sizes with their blur: an iPhone upright and an iPad on its side. On a
 // sketch page:
-//   - every point of the paper is the page's but where a control is, so a pen's line starts and is drawn in the blur's
-//     strip at the top, beside the tools' island up to the screen's right edge, and under the bar;
-//   - the page is one surface: zoomed out, the strip under the blur is the page whose dots zoom with it;
+//   - every point of the paper is the page's but where a control is;
 //   - the page's corner is its top-left: on a fresh page, panned as far up and left as it goes, at any zoom, the
 //     page's corner stays at the paper's left, set down just below the blur, where the view's title lies;
-//   - what's drawn above the corner stays in reach: panned up, the line drawn in the blur's strip comes below the
-//     blur, the page's corner lower.
+//   - the page is one surface: zoomed, the strip under the blur is the page whose dots zoom with it.
+// (A page of scraps takes no ink of its own, so nothing is drawn under the blur, beside the tools or under the bar:
+// ink is on an opened scrap, the Ink README's A page of scraps.)
 // Recorded with --shots.
 import assert from 'node:assert/strict';
-import { inkAt, middleOf, pressAlong, toChapter, until } from './kit.mjs';
+import { middleOf, toChapter, until } from './kit.mjs';
 import { SIZES, opened } from './realbook.mjs';
-import { islandsSeen } from './islands.mjs';
 
 // how near (screen px) a place counts as there
 const NEAR = 1.5;
@@ -20,9 +18,9 @@ const NEAR = 1.5;
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function edgeStories(c) {
   return {
-    'the page to every edge on an iPhone: drawn on under the blur, beside the tools and under the bar, one zooming surface, its corner the top-left':
+    "the page to every edge on an iPhone: the paper the page's or a control's, its corner the top-left, one zooming surface":
       browser => edges(browser, c, 'iphone'),
-    'the page to every edge on an iPad on its side: drawn on under the blur, beside the tools and under the bar, one zooming surface, its corner the top-left':
+    "the page to every edge on an iPad on its side: the paper the page's or a control's, its corner the top-left, one zooming surface":
       browser => edges(browser, c, 'ipad'),
   };
 }
@@ -37,11 +35,9 @@ async function edges(browser, c, name) {
     const missed = await p.evaluate(notPage);
     assert.deepEqual(missed, [], `${name}: every point of the paper is the page's or a control's`);
     await corner(p, name, size);
-    await drawnToEdges(p, name, size);
-    await c.shot(`edges-${name}-drawn`, p);
+    await c.shot(`edges-${name}-corner`, p);
     await oneSurface(p, name, size);
     await c.shot(`edges-${name}-zoomed`, p);
-    await aboveInReach(p, name, size);
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`edges-${name}-failed`, p);
@@ -51,42 +47,13 @@ async function edges(browser, c, name) {
   }
 }
 
-// A pen's lines started in the blur's strip, beside the tools (where the page used to end) and over to the screen's
-// right edge, and under the bar: each is ink on the page where it was drawn
-async function drawnToEdges(p, name, { width, height, sat = 0 }) {
-  const { tools, bar, desk } = await islandsSeen(p),
-    lines = {
-      "the blur's strip": [
-        [desk.left + 40, sat / 2],
-        [desk.left + 200, sat / 2],
-      ],
-      'beside the tools': [
-        [tools.left - 5, tools.top + 10],
-        [tools.left - 5, tools.bottom - 10],
-      ],
-      "over the tools to the screen's edge": [
-        [tools.left - 5, tools.top - 24],
-        [width - 2, tools.top - 24],
-      ],
-      'under the bar': [
-        [bar.left + 30, (bar.bottom + height) / 2],
-        [bar.left + 160, (bar.bottom + height) / 2],
-      ],
-    };
-  for (const [where, points] of Object.entries(lines)) {
-    const [[x0, y0], [x1, y1]] = points,
-      box = { x: Math.min(x0, x1) - 3, y: Math.min(y0, y1) - 3, w: Math.abs(x1 - x0) + 6, h: Math.abs(y1 - y0) + 6 };
-    await pressAlong(p, points);
-    await until(async () => (await p.evaluate(inkAt, box)) > 0, `${name}: a line drawn ${where}`, 10_000);
-  }
-}
-
-// Zoomed out about the page's middle (a trackpad's pinch), the strip under the blur is the page, its dots drawn to the zoom
+// Zoomed in about the page's middle (a trackpad's pinch), the strip under the blur is the page, its dots drawn to the
+// zoom. (In: a page of scraps zooms out no further than its fit, an iPad's 1.)
 async function oneSurface(p, name, { sat = 0 }) {
-  await wheel(p, await middleOfPage(p), { deltaY: 240, ctrlKey: true });
+  await wheel(p, await middleOfPage(p), { deltaY: -240, ctrlKey: true });
   const seen = await p.evaluate(surfaceAt, Math.max(1, sat / 2));
   assert.ok(seen.page, `${name}: the strip under the blur is the page (${seen.under})`);
-  assert.ok(seen.scale < 0.95, `${name}: the page zoomed out (${seen.scale})`);
+  assert.ok(seen.scale > 1.05, `${name}: the page zoomed in (${seen.scale})`);
   assert.ok(Math.abs(seen.dots - 22 * seen.scale) < 0.01, `${name}: the dots there zoom with it (${seen.dots} px)`);
 }
 
@@ -107,18 +74,7 @@ async function corner(p, name, { sat = 0 }) {
   }
 }
 
-// Drawn on above the page's corner (the blur's strip), panned as far up as it goes: the corner lies lower than a fresh
-// page's, the line above it in sight below the blur
-async function aboveInReach(p, name, { sat = 0 }) {
-  await wheel(p, await middleOfPage(p), { deltaX: -3000, deltaY: -3000 });
-  const { top } = await p.evaluate(cornerShown);
-  assert.ok(
-    top > sat + NEAR,
-    `${name}: what's drawn above the corner in reach (the corner at ${top}, a fresh page's ${sat})`,
-  );
-}
-
-// The middle of the page drawn on (beside HQ's page on an iPad on its side)
+// The middle of the page shown (beside HQ's page on an iPad on its side)
 const middleOfPage = async p => middleOf(await p.locator('#book .bk-desk').boundingBox());
 // A wheel at a point on the screen (with ctrlKey: a trackpad's pinch), as the browser sends it to what's there
 const wheel = (p, [x, y], more) =>
@@ -139,15 +95,19 @@ function cornerShown() {
   const r = shown.getBoundingClientRect();
   return { left: r.left, top: r.top, paper: desk.getBoundingClientRect().left };
 }
-// Every 8 px of the book's paper that isn't the page or a control: an island, a bookmark, the pull tab, the cover's
-// edge, the open asks' counter (a few, for the message)
+// Every 8 px of the book's paper that isn't the page or a control: an island, the Undo pill, a bookmark, the pull tab,
+// the cover's edge, the open asks' counter (a few, for the message).
 function notPage() {
   const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
     missed = [];
   for (let y = 0; y < paper.bottom && missed.length < 6; y += 8)
     for (let x = Math.max(0, paper.left); x < Math.min(innerWidth, paper.right) && missed.length < 6; x += 8) {
       const el = document.elementFromPoint(x, y);
-      if (!el?.closest('#book :is(.bk-desk, .bk-strip, .bk-bar, .bk-marks, .bk-lip, .bk-edge, .bk-for-you-count)'))
+      if (
+        !el?.closest(
+          '#book :is(.bk-desk, .bk-strip, .bk-bar, .bk-undo-pill, .bk-marks, .bk-lip, .bk-edge, .bk-for-you-count)',
+        )
+      )
         missed.push(`${x},${y}: ${el?.className || el?.tagName}`);
     }
   return missed;

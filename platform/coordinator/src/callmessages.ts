@@ -1,6 +1,6 @@
 // A colleague's message (hq say) to an agent who is on a call with the board reaches that call too (offer: the call in
-// messages.live_call): the board may be waiting on it there, and the call's agent has no job to read it in (call #258). The voice line takes them with each round of the transcript it keeps in HQ (call.ts kept), and the agent hears
-// them with its next turn.
+// messages.live_call): the board may be waiting on it there, and the call's agent has no job to read it in. The voice line takes them
+// with each round of the transcript it keeps in HQ (call.ts kept), and the agent hears them with its next turn.
 import { columnsOf, db } from './db.ts';
 import './messages.ts'; // (its table first)
 

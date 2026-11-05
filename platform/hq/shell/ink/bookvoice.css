@@ -1,6 +1,7 @@
-/* The voice note's parts (bookvoice.js, bookheard.js): the mic on the tools, lit while it waits for a press on the page
-   and red, ringed with the voice, while it records; and the words on the page as they're heard, with their loader.
-   Nothing floats beside them: the words are on the page (README, A voice note at a spot). */
+/* The voice note's parts (bookvoice.js, bookheard.js, bookholdring.js): the mic on the tools, lit while it waits for a
+   press on the page and red, ringed with the voice, while it records; the ring round the pen while a double tap is
+   held; and the note's slip of paper, its words written on it as they're heard, the voice's bars after them. Nothing
+   floats beside them: the slip is on the page (README, A voice note at a spot). */
 
 /* waiting for the press: picked as a tool is, its icon the recording's red */
 .bk-btn.bk-mic[aria-pressed='true'] {
@@ -18,57 +19,179 @@
   cursor: crosshair;
 }
 
-/* ---- the words as they're heard: placed and set as a page's box of words is (booktools.css .bk-typed), never pressed */
+/* ---- the ring round the pen while a double tap's second press is held (bookholdring.js): on the screen at the press,
+   round the point and never under it, a quiet track that the notebook's ink fills from the top, a halo of paper round
+   it so it reads on any page. Full, it closes and swells away as the recording starts. It takes no press. */
+.bk-hold-ring {
+  position: fixed;
+  z-index: 1000;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  pointer-events: none;
+  opacity: 0;
+  animation: bk-hold-show 0.14s ease-out var(--bk-show) forwards;
+}
+.bk-hold-ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  rotate: -90deg;
+  filter: drop-shadow(0 0 1.5px rgb(255 253 248 / 95%));
+}
+.bk-hold-ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+.bk-hold-under {
+  stroke: rgb(42 35 82 / 16%);
+}
+.bk-hold-fill {
+  stroke: #2a2352;
+  stroke-linecap: round;
+  stroke-dasharray: var(--bk-round);
+  stroke-dashoffset: var(--bk-round);
+  animation: bk-hold-fill var(--bk-fill) cubic-bezier(0.4, 0.1, 0.4, 1) var(--bk-show) forwards;
+}
+.bk-hold-ring[data-full] {
+  opacity: 1;
+  animation: bk-hold-done 0.26s ease-out forwards;
+}
+.bk-hold-ring[data-full] .bk-hold-fill {
+  stroke-dashoffset: 0;
+  animation: none;
+}
+@keyframes bk-hold-show {
+  from {
+    opacity: 0;
+    scale: 0.7;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes bk-hold-fill {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes bk-hold-done {
+  to {
+    opacity: 0;
+    scale: 1.35;
+  }
+}
+
+/* ---- the note's slip (bookheard.js as it's heard, booktexts.js once it's landed: a text marked voice): a slip of paper
+   of its own on the page or the scrap round its words, its real shadows and a strip of tape across its top, its look
+   bookvoiceslip.js's, set on the page by bookvoice.js (the store's picture and a canvas draw it from the same). The words
+   on it are the page's own type in the pen's ink, edited as any typed words are. */
+#book :is(.bk-heard, .bk-typed)[data-voice]::before,
+#book :is(.bk-heard, .bk-typed)[data-voice]::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+#book :is(.bk-heard, .bk-typed)[data-voice]::before {
+  z-index: -1;
+  inset: calc(-1 * var(--bk-voice-y)) calc(-1 * var(--bk-voice-x));
+  border-radius: var(--bk-voice-radius);
+  background: var(--bk-voice-paper);
+  box-shadow: var(--bk-voice-shadow);
+}
+#book :is(.bk-heard, .bk-typed)[data-voice]::after {
+  left: 50%;
+  top: calc(-1 * var(--bk-voice-y) - var(--bk-voice-tape-h) / 2);
+  width: var(--bk-voice-tape-w);
+  height: var(--bk-voice-tape-h);
+  translate: -50% 0;
+  rotate: var(--bk-voice-tape-tilt);
+  background: var(--bk-voice-tape);
+  box-shadow: 0 1px 2px rgba(29, 26, 47, 0.12);
+}
+/* (typed in: its paper ringed, the caret's) */
+#book .bk-typed[data-voice][data-editing] {
+  background: none;
+  box-shadow: none;
+}
+#book .bk-typed[data-voice][data-editing]::before {
+  box-shadow:
+    0 0 0 1.5px rgba(42, 35, 82, 0.32),
+    var(--bk-voice-shadow);
+}
+
+/* ---- the words as they're heard: placed and set as a page's box of words is (booktools.css .bk-typed), never pressed.
+   The slip comes down onto the page as the recording starts. */
 .bk-heard {
   position: absolute;
   z-index: 2;
   box-sizing: border-box;
   pointer-events: none;
+  animation: bk-slip-down 0.24s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 /* each new run of words inks in */
 .bk-heard-new {
   animation: bk-heard-ink 0.3s ease-out;
 }
-/* the loader: three dots of the words' ink after the last word, on its line, as if the pen were still writing. While
-   the press is held they swell with the voice; let go, they rise in turn till the last words are in. */
-.bk-hearing {
+/* the bars: a few strokes of the words' ink after the last word, on its line, as if the pen were still writing. While
+   the press is held they move with the voice (bookheard.js --h); let go, they settle low and breathe in turn till the
+   last words are in. */
+.bk-bars {
   display: inline-flex;
   align-items: center;
-  gap: 0.3em;
+  gap: 0.14em;
   height: 1em;
   margin-left: 0.35em;
-  vertical-align: -0.12em;
+  vertical-align: -0.14em;
 }
-.bk-heard .bk-typed-words > span:empty + .bk-hearing {
+.bk-heard .bk-typed-words > span:empty + .bk-bars {
   margin-left: 0;
 }
-.bk-hearing i {
-  width: 0.22em;
-  height: 0.22em;
-  border-radius: 50%;
+.bk-bars i {
+  width: 0.14em;
+  height: 1em;
+  border-radius: 0.07em;
   background: currentColor;
-  animation: bk-hearing 1.2s ease-in-out infinite;
+  scale: 1 calc(0.4 + 0.6 * var(--h, 0));
+  transition: scale 0.09s ease-out;
 }
-.bk-hearing i:nth-child(2) {
-  animation-delay: 0.16s;
+.bk-heard:not([data-listening]) .bk-bars i {
+  transition: scale 0.32s ease-in-out;
+  opacity: 0.75;
 }
-.bk-hearing i:nth-child(3) {
-  animation-delay: 0.32s;
+.bk-heard[data-waiting] .bk-bars i {
+  animation: bk-bars-wait 1.3s ease-in-out infinite;
 }
-.bk-heard[data-listening] .bk-hearing i {
-  scale: calc(1 + 0.45 * var(--lvl, 0));
-  transition: scale 0.08s;
+.bk-bars i:nth-child(2) {
+  animation-delay: 0.12s;
 }
-@keyframes bk-hearing {
+.bk-bars i:nth-child(3) {
+  animation-delay: 0.24s;
+}
+.bk-bars i:nth-child(4) {
+  animation-delay: 0.36s;
+}
+.bk-bars i:nth-child(5) {
+  animation-delay: 0.48s;
+}
+@keyframes bk-bars-wait {
   0%,
-  70%,
+  60%,
   100% {
-    opacity: 0.3;
-    translate: 0 0;
+    scale: 1 0.4;
+    opacity: 0.45;
   }
-  35% {
-    opacity: 1;
-    translate: 0 -0.28em;
+  30% {
+    scale: 1 0.65;
+    opacity: 0.9;
+  }
+}
+@keyframes bk-slip-down {
+  from {
+    opacity: 0;
+    scale: 1.04;
+    translate: 0 -3px;
   }
 }
 @keyframes bk-heard-ink {
@@ -79,9 +202,23 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .bk-hold-ring,
+  .bk-hold-ring[data-full],
+  .bk-heard,
   .bk-heard-new,
-  .bk-hearing i {
+  .bk-heard[data-waiting] .bk-bars i {
     animation: none;
+  }
+  .bk-hold-ring {
+    opacity: 1;
+  }
+  .bk-hold-ring[data-full] {
+    opacity: 0;
+  }
+  .bk-bars i,
+  .bk-heard:not([data-listening]) .bk-bars i {
+    scale: 1 0.4;
+    transition: none;
     opacity: 0.6;
   }
 }

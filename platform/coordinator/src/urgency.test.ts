@@ -43,16 +43,16 @@ test('task urgency carries into its reviews and fixes and clears without changin
   const source = h.queue({ agent: 'bolt', thread });
   const sibling = h.queue({ agent: 'kit', thread });
   const branch = `job/${source}`;
-  assert.equal(urgency.branchUrgent(branch), false);
+  assert.equal(urgency.urgentBranches([branch]).has(branch), false);
   const review = h.queue({ agent: 'wren', kind: 'review', branch, pr: 912 });
   const fix = h.queue({ agent: 'bolt', kind: 'work', stage: 'fix', branch, pr: 912 });
   assert.equal((await h.agent('urgent', ceo.token, { level: 'task', id: String(source), urgent: true })).status, 200);
   for (const id of [source, review, fix]) assert.equal(urgency.taskUrgent(id), true);
-  assert.equal(urgency.branchUrgent(branch), true);
+  assert.equal(urgency.urgentBranches([branch]).has(branch), true);
   assert.equal(urgency.taskUrgent(sibling), false);
   assert.equal((await h.agent('urgent', ceo.token, { level: 'task', id: String(source), urgent: false })).status, 200);
   for (const id of [source, review, fix]) assert.equal(urgency.taskUrgent(id), false);
-  assert.equal(urgency.branchUrgent(branch), false);
+  assert.equal(urgency.urgentBranches([branch]).has(branch), false);
 });
 
 test("the play carries an urgent task's urgency into the reviews of the tasks after it on its branch", async () => {
@@ -107,4 +107,40 @@ test("one job's urgency is read through its own thread and project, never a view
       .join('\n');
     assert.doesNotMatch(plan, /MATERIALIZE|SCAN|AUTOMATIC/, `${view}:\n${plan}`);
   }
+});
+
+test("a job's checks go first while its work is urgent or has a window, its own or its line's, as its heartbeat says", async () => {
+  const { db } = await import('./db.ts');
+  const ceo = await h.start({ agent: 'juno' });
+  const plain = await h.start({ agent: 'bolt', thread: opened('plain') });
+  const urgent = await h.start({ agent: 'kit', thread: opened('first') });
+  const due = h.dueThread({ deadline: Date.now() + 3_600_000 });
+  const windowed = await h.start({ agent: 'wren', thread: due });
+  db.prepare(
+    `insert into threads (id, project, name, goal, created, deadline_from) values ('due/after', 'due', 'After', 'It ships', ?, ?)`,
+  ).run(new Date().toISOString(), due);
+  const following = await h.start({ agent: 'moss', thread: 'due/after' });
+  const undated = await h.start({ agent: 'chime', thread: h.dueThread() });
+  const first = async (job: { id: number; seat: string; token: string; agent: string }) =>
+    (await h.heartbeat(job)).body.first === true;
+  assert.equal(await first(urgent), false);
+  assert.equal((await h.hq(ceo, 'urgent', 'task', String(urgent.id))).code, 0);
+  assert.deepEqual(await Promise.all([plain, urgent, windowed, following, undated].map(first)), [
+    false,
+    true,
+    true,
+    true,
+    false,
+  ]);
+  assert.equal((await h.hq(ceo, 'urgent', 'task', String(urgent.id), 'off')).code, 0);
+  assert.equal(await first(urgent), false);
+  for (const job of [plain, urgent, windowed, following, undated, ceo]) await h.finish(job);
+});
+
+test("a job's checks' turn reads its own thread's line, never every thread's window", async () => {
+  const { db } = await import('./db.ts');
+  const plan = (db.prepare(`explain query plan select ${urgency.checksFirstSql('?1')}`).all(1) as { detail: string }[])
+    .map(step => step.detail)
+    .join('\n');
+  assert.doesNotMatch(plan, /SCAN (t|w|fj|threads|jobs)\b|AUTOMATIC/, plan);
 });

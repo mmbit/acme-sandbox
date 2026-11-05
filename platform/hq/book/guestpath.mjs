@@ -39,7 +39,8 @@ export async function openShare(state, page, host) {
     (await import('/shell/ink/book.js')).foldBook();
     (await import('/shell/desk.js')).openLink(url);
   }, `https://${host}/`);
-  await page.locator('#viewer .bar .share').click();
+  await page.locator('#viewer .bar .more').click(); // (Share under More options.)
+  await page.locator('#viewer .options .share').click();
   await page.locator('#viewer .sharebox form.invite').waitFor();
 }
 export async function addPerson(page, name, email) {

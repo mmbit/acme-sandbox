@@ -29,7 +29,8 @@ package installation, stay on the lent machine, and return the command's exit co
    unknown kind and lists the kinds. It waits, so an agent starts it in the background. `--with <files>` adds files git
    ignores (a film's music, a clip: renders) to the bundle.
 2. Each kind's helper asks HQ for work every 10 s (`POST /api/helper/take`, with its kind, cores, memory, speed and
-   load). HQ gives it the oldest waiting run of its kind whose job still runs and that it may take (below), under an id
+   load). HQ gives it the first waiting run in line of its kind whose job still runs and that it may take (below): urgent
+   work's first, then the oldest (see "Urgent work's checks go first" below), under an id
    new with each take (the take's attempt: the run's id and the take's number, `57-2`): the helper's later calls for the
    run name it and its log lines print it, so HQ refuses a call from an earlier take of the run, the same helper's
    included. The helper fetches the bundle, unpacks it in a fresh workspace, and runs the command from the folder
@@ -288,9 +289,21 @@ Files brought into a job are limited to 1 GiB unpacked and 100,000 entries.
 
 The `tests` kind is the push's own: while a lent machine has a helper of it, the worker sends each push's tests and
 gates there (shared/gates/tests.ts and gates.ts `--helper`, through lent.ts: the repo at the base and as pushed in a
-git bundle, run by tests-on-helper.sh), with no turn, and runs them on the server only when no helper takes them in
-time. The gates go only when their type check runs and the change has no `.render.json`. A render check needs files
+git bundle, run by tests-on-helper.sh), with no turn. Each launch of the tests, a run again included, asks HQ again
+whether a helper is there. With none, or none that gave a verdict, the worker runs them itself, bounded: one push's
+tests at a time, started once it has room for a job, at a few test files at once (worker.ts TESTS_HERE_CONCURRENCY), so
+a missing machine costs speed, never the other jobs' memory. The gates go only when their type check runs and the change has no `.render.json`. A render check needs files
 and history outside the bundle. The tests that passed come back as the run's file, for the worker to count.
+
+**Urgent work's checks go first** wherever they queue. Urgency is read in one
+place, the coordinator's urgency.ts `checksFirst`: the job, its deliverable or its project marked urgent (`hq urgent`),
+an expedited job, a review or fix of urgent work's branch, or work on a deliverable with a window (a time given the
+board, its own or its follow-up line's). A lent machine takes such a job's waiting run before older ordinary ones
+(runs.ts `inLine`). The worker hears it in each heartbeat of the job (`first`, within a minute of a change): its tests
+take the next turn here before earlier ordinary ones (worker.ts `testsTurn`, turns.ts `fewAtOnce`), its check that had
+no room gets the room back first while ordinary ones wait (worker.ts `roomBack`, turns.ts `roomInTurn`), and a starved
+worker blocks an ordinary job's run, never an urgent one's, short of the job's own most (shares.ts). Ordinary work keeps
+its order among itself.
 
 A render kind, for example, takes an image with ffmpeg, Chromium and the fonts the films use, and `gpus: true`.
 Chromium inside a run's sandbox needs `--no-sandbox`: its own sandbox needs namespaces the container doesn't give. No

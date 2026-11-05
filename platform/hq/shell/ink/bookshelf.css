@@ -300,6 +300,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* the title whole on two lines, cut only past them */
+#book .bk-tile-name > :first-child {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 #book .bk-tile-day {
   font-size: 12px;
   color: var(--bk-muted);

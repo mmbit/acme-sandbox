@@ -4,6 +4,7 @@ import { ApiError, speakAs } from './api.ts';
 import * as cards from './cards.ts';
 import { card } from './cardread.ts';
 import { care } from './care.ts';
+import { activity } from './activity.ts';
 import { estimate } from './estimate.ts';
 import * as feedback from './feedback.ts';
 import { followthrough, summary } from './followthrough.ts';
@@ -117,6 +118,7 @@ const COMMANDS: Record<string, Command> = {
   spend,
   search: memory.search,
   history: memory.history,
+  activity,
   call: memory.call,
   intercom: memory.intercom,
   report,

@@ -20,6 +20,8 @@ type Sketch = {
   pictures?: number; // pictures placed on the page.
   sent: string | null;
   from?: string | null; // an invited person's name, null for the board's.
+  // a call's page: its prototypes, each version, newest first (its clips show the versions alone, not their names).
+  prototypes?: { name: string; version: number; link: string | null }[];
 };
 
 export const sketch = {
@@ -27,7 +29,8 @@ export const sketch = {
    hq sketch <id>                                    save a page of the board's book (or an invited person's own, which it
                                                      says) to $TMPDIR/sketch-<id>.XXXXXX.png, so you can look at it, with
                                                      its label, when it was made and last changed (the Sketchbook's
-                                                     sketches are its free pages, under the same numbers)`,
+                                                     sketches are its free pages, under the same numbers); a call's page
+                                                     lists its prototypes by name, version and link`,
 
   async run(args: string[]) {
     const id = (args[0] ?? '').replace(/^#/, '');
@@ -41,7 +44,7 @@ export const sketch = {
     const on = found.url ? ` On ${oneLine(found.url)}.` : '';
     const page = `A ${found.w} × ${found.h} px ${found.kind ?? 'free'} page, ${plural(found.strokes, 'stroke')}${pictured(found, ', ')}.${on}`;
     const path = savePicture(`sketch-${id}`, found.picture.type, text(found.picture.data));
-    print(`Page #${id}${labelled(found)} → ${path}`, `${page} ${state}${sent}`);
+    print(`Page #${id}${labelled(found)} → ${path}`, `${page} ${state}${sent}`, ...prototyped(found));
   },
 };
 
@@ -76,6 +79,9 @@ const whose = (s: Sketch) =>
 const labelled = (s: Sketch) => (s.label ? ` “${oneLine(s.label)}”` : '');
 // The pictures placed on it, after `gap`, or nothing when there are none.
 const pictured = (s: Sketch, gap: string) => (s.pictures ? `${gap}${plural(s.pictures, 'picture')}` : '');
+// A call's page's prototypes, a line each.
+const prototyped = (s: Sketch) =>
+  (s.prototypes ?? []).map(p => `  ${oneLine(p.name)} v${p.version}  ${p.link ?? '(no link: no domain)'}`);
 
 // (--artifact; a group's g<id>, --ink, --form, --asks, --version, --patch,
 // --expect; --source; --fix)

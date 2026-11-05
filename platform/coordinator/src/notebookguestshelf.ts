@@ -5,7 +5,7 @@
 //   - A share of a piece of work (shares.ts) is a lasting guest's or a review round's; each person on it has their own
 //     page in its notebook (notebookreviews.ts), where the notes they pin on the work land, and asks for them wait.
 //   - An ask for them is a scrap of the board's handed to them (ink/bookassign.ts): its copy on their page counts on the
-//     work's card and the book's cover until they write on it.
+//     work's card and the book's cover until they press Answer on it.
 import { db } from './db.ts';
 import * as guests from './guests.ts';
 import * as shares from './shares.ts';
@@ -50,13 +50,11 @@ type Book = { key: string; name: string; asks: number; artifacts: ReturnType<typ
 // first; timeZone the company's clock, which the guest's days are written on
 export function shelfOf(name: string) {
   const linked: Linked[] = [];
-  let journal: Membership | undefined;
   for (const m of forGuest(name)) {
     const share = shareOf(m.notebook);
     if (share) linked.push({ m, share });
-    else journal ??= m;
   }
-  journal ??= makeJournal(name);
+  const journal = journalOf(name);
   const known = artifacts.list();
   const books = new Map<string, Book>();
   for (const l of linked) {
@@ -103,7 +101,7 @@ const shareOf = (notebook: number) => {
     { share: number } | undefined;
   return linked ? shares.byId(linked.share) : undefined;
 };
-// The board's scraps handed to them on their pages in a notebook, not written on yet
+// The board's scraps handed to them on their pages in a notebook, not answered yet
 const asksFor = (m: Membership) =>
   (
     db
@@ -113,6 +111,9 @@ const asksFor = (m: Membership) =>
       )
       .get(m.notebook, whoOf(m)) as { n: number }
   ).n;
+// Their journal: their first notebook that's no share's, made the first time it's asked for (their shelf read, a page
+// given to them: notebookgive.ts).: exported
+export const journalOf = (name: string) => forGuest(name).find(m => !shareOf(m.notebook)) ?? makeJournal(name);
 // Their journal, made the first time their shelf is read: an invited notebook of theirs on the board's shelf, named for
 // them, with no work linked
 function makeJournal(name: string) {

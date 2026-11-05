@@ -1,10 +1,9 @@
 // book-check.mjs's stories of moving about the book's pages with a mouse on a desktop (shell/ink/bookpages.js,
-// bookpan.js, bookzoom.js, bookcontrols.js; Ink's folder): the overview opened
-// from its button and a page opened from it; the zoom by Ctrl with the wheel and with the keys (never when the pointer
-// is on HQ's page), its % at the foot back to 100%, and out past the page's width to the overview; the page panned by
-// Space and a drag and by the middle button, the paper showing nothing but paper; New page and back to the first from
-// the pages' list. Each asserts what the board sees: the paper's
+// bookpan.js, bookzoom.js, bookcontrols.js; Ink's folder): the overview opened from its button and a page opened from
+// it; the page panned by Space and a drag and by the middle button, never past its corner, the paper showing nothing
+// but paper; New page and back to the first from the pages' list. Each asserts what the board sees: the paper's
 // pixels, the controls' words.
+// (A trackpad's pinch zooms the page: canvas.mjs, pinch.mjs.)
 import assert from 'node:assert/strict';
 import { onDesk as onLiveDesk } from './mouse.mjs';
 import { button, namedNotebook } from './chrome.mjs';
@@ -23,10 +22,8 @@ const ISLANDS_PX = 90,
 export function deskStories(c) {
   return {
     'the overview from its button, and a page opened from it': browser => overview(browser, c),
-    "zoom in and out: the wheel, Ctrl and the keys, the foot's % back to 100%, and out to the overview": browser =>
-      zoom(browser, c),
-    'pan by Space and a drag and by the middle button, any way, the paper never showing an edge': browser =>
-      pan(browser, c),
+    'pan by Space and a drag and by the middle button, never past its corner, the paper never showing an edge':
+      browser => pan(browser, c),
     'New page, and back to the first from the pages’ list': browser => newPage(browser, c),
     'a notebook’s overview that can’t be read says why, retries at a tap; New page opens from it': browser =>
       unread(browser, c),
@@ -41,9 +38,10 @@ async function overview(browser, c) {
     const pages = (await c.storedPages(page)).length;
     await button(page, OVERVIEW, true).click();
     await page.waitForTimeout(c.settle);
-    assert.equal(await button(page, OVERVIEW, true).getAttribute('aria-pressed'), 'true');
-    // (the notebook's pages)
-    const frames = page.getByRole('list', { name: 'The overview' }).locator('.bk-tile[data-id] .bk-tile-open');
+    // (the notebook's pages, the bar put away over them.)
+    const list = page.getByRole('list', { name: 'The overview' }),
+      frames = list.locator('.bk-tile[data-id] .bk-tile-open');
+    await list.waitFor();
     assert.equal(await frames.count(), pages, "every page of the notebook's in the overview");
     await c.shot('desk-overview', page);
     // (a tile names a page as the pages control does, a sent one's with ", sent")
@@ -90,64 +88,6 @@ async function unread(browser, c) {
   }
 }
 
-async function zoom(browser, c) {
-  const { page, errors, done } = await onDesk(browser, c);
-  try {
-    const desk = await paperBox(page),
-      middle = [desk.x + desk.width / 3, desk.y + desk.height / 2],
-      ink = await inkPixels(page);
-    // (the zoom's % shows at the foot only while it's off 100%, a tap back to 100%)
-    assert.equal(await percent(page), '100%');
-    await page.mouse.move(...middle);
-    await page.keyboard.press('Control+Equal');
-    await page.waitForTimeout(c.settle);
-    assert.equal(await percent(page), '125%');
-    assert.ok((await inkPixels(page)) > ink, 'the ink drawn bigger');
-    // the wheel over the paper (Ctrl and the wheel pick tools: strip.mjs.)
-    await page.mouse.wheel(0, -100);
-    await page.waitForTimeout(c.settle);
-    assert.ok(parseInt(await percent(page)) > 125, `the wheel zoomed in: ${await percent(page)}`);
-    await c.shot('desk-zoomed', page);
-    // Ctrl and 0, + and − with the pointer on the book; on HQ's page they're the browser's
-    await page.keyboard.press('Control+0');
-    await page.waitForTimeout(c.settle);
-    assert.equal(await percent(page), '100%');
-    await page.keyboard.press('Control+Equal');
-    await page.waitForTimeout(c.settle);
-    assert.equal(await percent(page), '125%');
-    // (the pointer on HQ's page, the focus off the book's controls, as a click there leaves it)
-    await page.mouse.move(desk.x / 2, desk.height / 2);
-    await page.evaluate(() => document.activeElement?.blur());
-    await page.keyboard.press('Control+Minus');
-    await page.waitForTimeout(c.settle);
-    assert.equal(await percent(page), '125%', "the keys on HQ's page leave the book's zoom alone");
-    await button(page, 'Back to 100%').click();
-    await page.waitForTimeout(c.settle);
-    assert.equal(await percent(page), '100%');
-    await page.mouse.move(...middle);
-    await outToOverview(page, c);
-    assert.deepEqual(errors, []);
-  } finally {
-    await done();
-  }
-}
-
-// Ctrl and − over the paper, again and again: under 100%, and past its least zoom, the overview
-async function outToOverview(page, c) {
-  const pressed = async () => (await button(page, OVERVIEW, true).getAttribute('aria-pressed')) === 'true',
-    seen = [];
-  for (let i = 0; i < 8 && !(await pressed()); i++) {
-    seen.push(await percent(page));
-    await page.keyboard.press('Control+Minus');
-    await page.waitForTimeout(c.settle);
-  }
-  assert.ok(
-    seen.some(p => parseInt(p) < 100),
-    `zoomed out under 100% on the way: ${seen}`,
-  );
-  assert.ok(await pressed(), `out to the overview: ${seen}`);
-}
-
 async function pan(browser, c) {
   const { page, errors, done } = await onDesk(browser, c);
   try {
@@ -166,10 +106,11 @@ async function pan(browser, c) {
     await drag(page, at, [120, 80], 'middle');
     await page.waitForTimeout(c.settle);
     near(await originAt(page), from, [0, 0], 'the middle button');
-    // dragged right and down past its top-left: the page goes on up and left of its origin, as far as half the paper
+    // dragged right and down past its top-left: the page held at its corner, where the title lies at rest (the Ink
+    // README, the title on the view.)
     await drag(page, at, [200, 300], 'middle');
     await page.waitForTimeout(c.settle);
-    near(await originAt(page), from, [Math.min(200, desk.width / 2), Math.min(300, desk.height / 2)], 'up and left');
+    near(await originAt(page), from, [0, 0], 'never above or left of its corner');
     assert.deepEqual(await notPaper(page), [], 'nothing but paper there, no edge');
     // and far down and right: paper still
     await drag(page, at, [-500, -600], 'middle');
@@ -189,6 +130,8 @@ async function newPage(browser, c) {
     await press(page, 'New page');
     await button(page, new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`)).waitFor();
     assert.match(await where(page), new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`));
+    // (the leaf turned: its picture of the page before gone)
+    await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
     assert.equal(await hiddenCanvases(page), 0, 'the inked page turned past holds no canvas');
     assert.equal(await inkPixels(page), 0, 'a blank page');
     await button(page, /^The notebook's pages/).click();
@@ -207,15 +150,11 @@ async function newPage(browser, c) {
 
 // ---- what the board sees
 
-// (the % at the foot shows only while the zoom is off 100%)
-const percent = async page => {
-  const chip = button(page, 'Back to 100%');
-  return (await chip.isVisible()) ? (await chip.textContent()).trim() : '100%';
-};
 const where = page => button(page, /^The notebook's pages/).getAttribute('aria-label');
 // (the ink canvases the pages not shown still hold: bookpage.js lets them go)
 const hiddenCanvases = page => page.locator('#book .bk-page[hidden] canvas.bk-ink').count();
-const paperBox = page => page.locator('#book .bk-desk').boundingBox();
+// (the shown paper's, not a page turn's picture of it.)
+const paperBox = page => page.locator('#book .bk-desk:not(.bk-turn-picture *)').boundingBox();
 const originAt = page => page.locator('#book .bk-page:not([hidden])').boundingBox();
 async function drag(page, [x, y], [dx, dy], which) {
   await page.mouse.move(x, y);
@@ -237,9 +176,10 @@ export async function inkPixels(page) {
   const { data, w, h } = await onPaper(page),
     paper = await paperBox(page),
     k = w / paper.width,
-    // (the tools' and the bar's boxes in the shot's px, with a few px round them for their shadows)
+    // (the tools' and the bar's boxes in the shot's px, with a few px round them for their shadows, and the page's
+    // title on the view, never ink.)
     strip = await page.evaluate(() =>
-      [...document.querySelectorAll('#book .bk-strip, #book .bk-bar')]
+      [...document.querySelectorAll('#book .bk-strip, #book .bk-bar, #book .bk-view-head')]
         .filter(el => el.offsetParent)
         .map(el => el.getBoundingClientRect())
         .map(r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })),

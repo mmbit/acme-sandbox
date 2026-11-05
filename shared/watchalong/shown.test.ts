@@ -2,7 +2,7 @@
 // What a replay takes of a recording (shown.ts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shown, upTo } from './shown.ts';
+import { addPagesAndPictures, shown, upTo } from './shown.ts';
 import type { RecordedEvent } from './store.ts';
 
 // A page as rrweb records it: its address and the screen's size, then a full snapshot
@@ -45,4 +45,24 @@ test("a mirror opens with what the screen still shows: from the last full snapsh
   ].map((args, i) => drawn(70 + i, 8, { property: 'clearRect', args }));
   assert.deepEqual(shown([...page(0), before, ...partial]), [...page(0), before, ...partial]);
   assert.deepEqual(shown([frame(10), frame(20)]), [frame(20)], 'no full snapshot yet: from the start');
+});
+
+test('a mirror takes the pages it may show and the pictures a recording carries by their address, nothing else', () => {
+  const picture = (payload: unknown): RecordedEvent => ({ type: 5, timestamp: 5, data: { tag: 'picture', payload } });
+  const address = 'https://hq.test/api/notebooks/pictures?file=1-g-0a1b2c3d.png';
+  const mirror = {
+    pages: new Set<string>(),
+    pictures: new Map(),
+    shows: (origin: string) => origin !== 'https://x.test',
+  };
+  addPagesAndPictures(mirror, [
+    ...page(0),
+    { type: 5, timestamp: 6, data: { tag: 'page', payload: { address } } },
+    { type: 5, timestamp: 6, data: { tag: 'page', payload: { address: 'https://x.test/' } } },
+    picture({ address, type: 'image/webp', base64: Buffer.from('RIFF').toString('base64') }),
+    picture({ address: 'https://hq.test/x.js', type: 'text/javascript', base64: 'YQ==' }),
+    picture({ address: 7, type: 'image/png', base64: 'YQ==' }),
+  ]);
+  assert.deepEqual([...mirror.pages], ['https://shop.test', 'https://hq.test']);
+  assert.deepEqual([...mirror.pictures], [[address, { type: 'image/webp', body: Buffer.from('RIFF') }]]);
 });

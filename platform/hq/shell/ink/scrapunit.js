@@ -15,6 +15,10 @@ export const WORDS_IN = 12;
 export const NOTE_TEXT = { x: WORDS_IN, w: UNIT_W - 2 * WORDS_IN, color: '#1d1a2f' };
 // The post-it's yellow, as HQ's page lays it (bookgroups.css --bk-postit).
 export const POSTIT = '#fdf1a9';
+// A unit's card on the grid (bookunits.js cardOf, and the store's picture of a page, bookpicture.ts): the least it's
+// tall (a fresh scrap, still to be drawn on), the most before what's on it is shown smaller, and the paper kept round
+// what's on it (scrap px).
+export const CARD = { least: 120, most: 1.4 * UNIT_W, pad: 16 };
 // A note's lines with its own (mine: some of them, a call's agent's) typed again in new words where they stood: from
 // their x, no nearer the unit's sides than HQ's page lays words and as wide as the unit leaves them, so the page has
 // nothing to lay anew and save as the board's; the lines under them moved by the difference in height. lined: a new

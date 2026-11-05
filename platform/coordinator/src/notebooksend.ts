@@ -15,8 +15,10 @@ import { deliverDue } from './ink/booksheets.ts';
 import { changed, gone, mine, newPage, openPageOf, pageOf, pageRow, shut, type NotebookPage } from './notebook.ts';
 import { posAfter } from './notebookorder.ts';
 import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
+import { dropEmpty, emptyOn } from './notebookempty.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { judgeLater } from './ink/bookjudge.ts';
+import { pointedWhole } from './ink/callpointers.ts';
 import { fixerOf } from './ink/bookfix.ts';
 import { replySnip, sentSnip } from './ink/bookpick.ts';
 import { frameOf } from '../../hq/shell/ink/bookversionframes.js';
@@ -29,6 +31,7 @@ const PAD = 24;
 // stays where it is in the book, and no page is made after it. aside: the groups with asks still open on them (the
 // book's own list), moved to a new page at the notebook's end first, to answer there. A call's notes page is never
 // sent: it goes in as the call ends, and its follow-up hands out what's on it (ink/callnotes.ts ended).
+// A scrap nobody wrote on goes to nobody: let go as the page locks (notebookempty.ts).
 const RESEND = 'the page changed while it was being sent: send it again';
 export const sendShown = (b: any) => sendPage(b, { atOnce: true });
 // atOnce: delivered now (the board's own Send); otherwise in SEND_MS, with a fresh page made when no other is open (an
@@ -53,7 +56,7 @@ export async function sendPage(
           "select * from notebook_groups where page = ? and parent is null and deleted is null and status = 'open' order by id",
         )
         .all(p.id) as Group[],
-    sendable = () => open().filter(g => !aside.has(g.id));
+    sendable = () => open().filter(g => !aside.has(g.id) && !emptyOn(p.id).includes(g.id));
   const groups = sendable();
   if (!groups.length) return [409, 'nothing on this page to send', 'pageEmpty'] as Refused;
   // (a tried group goes with the version the board picked beside it.)
@@ -74,6 +77,7 @@ export async function sendPage(
       p,
       open().filter(g => aside.has(g.id)),
     );
+    dropEmpty(p.id);
     db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips, atOnce), p.id);
     const fresh = !atOnce && openPageOf(p.notebook) === null ? newPage(p.notebook) : null;
     db.prepare('update book_pages set fresh = ? where id = ?').run(fresh, p.id);
@@ -238,13 +242,13 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
       words: said.words,
       said: said.said,
     });
+    // (its frame kept, so HQ lays its ink over that version wherever the frames wrap to, and a call's agent sees it
+    // there.)
+    db.prepare('update notebook_groups set frame = ? where id = ?').run(frame && JSON.stringify(frame), g.id);
+    // (on a live call's page it points, for the call's agent alone: no note goes. ink/callpointers.ts.)
+    if (pointedWhole(g)) return g;
     const id = replyNote(p.id, anchorOf(top), slip, said, snip, who);
-    // (its frame kept, so HQ lays its ink over that version wherever the frames wrap to)
-    db.prepare("update notebook_groups set status = 'sent', note = ?, frame = ? where id = ?").run(
-      id,
-      frame && JSON.stringify(frame),
-      g.id,
-    );
+    db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
     return g;
   });
   if (who === BOARD) judgeLater({ grp: reply.id }); // (with the answer it replies to)
@@ -271,7 +275,12 @@ export function deleteReply(b: any, who = BOARD) {
   const g = row(Number(b?.id));
   const p = g && g.kind === 'reply' && pageRow(g.page, who);
   if (!g || !p || g.deleted !== null) return 404;
-  const n = note(g.note!)!,
+  // (a pointer on a live call's page went to no one.)
+  if (g.note === null) {
+    putAside(g, p);
+    return { ok: true, id: g.id };
+  }
+  const n = note(g.note)!,
     s = sheetRow(n.sheet, null)!;
   if (s.status !== 'sending' || s.send_at! <= Date.now())
     return [409, 'too late to take back: the reply has gone', 'replyGone'] as Refused;

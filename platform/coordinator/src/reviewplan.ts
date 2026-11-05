@@ -1,7 +1,7 @@
 // The measured runs and panels a pull request still needs before it can merge.
 import { db, prepared } from './db.ts';
 import { sweepAction, officeOnly, RULING_SWEEP_MS } from './review.ts';
-import { onChecks } from './expeditedplan.ts';
+import { expeditedPlans } from './expeditedplan.ts';
 import { org, roles, ceo } from './company.ts';
 import { OPEN_JOBS, workBranchOf } from './jobs.ts';
 import { withPicks } from './models.ts';
@@ -58,7 +58,7 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
       return undefined;
     const pr = record.branches.get(workBranchOf(work));
     // (expedited work)
-    return record.onChecks(work, pr && inReview(pr) ? pr : undefined) ?? roundsBefore(work, pr, record, actors, now);
+    return record.expedited(work, pr && inReview(pr) ? pr : undefined) ?? roundsBefore(work, pr, record, actors, now);
   };
 }
 
@@ -148,7 +148,7 @@ function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
 }
 
 // Every pull request's state from prs_plan, never a row's verdict (db.ts), and the files and links of those in review,
-// the only ones whose files are read (sweepAction, officeOnly, mergesOnChecks): the rest read as none. Of those, too,
+// the only ones whose files are read (sweepAction, officeOnly, expeditedPlans): the rest read as none. Of those, too,
 // whether it merged expedited.
 function pullRequests() {
   const prs = prepared(
@@ -186,7 +186,7 @@ function records(now: number, prospective?: ProspectiveRun) {
   );
   return {
     branches: new Map(prs.map(pr => [pr.branch, pr])),
-    onChecks: onChecks(),
+    expedited: expeditedPlans(),
     selections: recordedSelections(),
     runs: Map.groupBy(runs, run => run.pr),
     undrawn: undrawnOwners(),

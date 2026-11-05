@@ -5,7 +5,7 @@
 // big as the unit and what's drawn on it; our scraps' photos are taped onto their post-its under all of the page's ink
 // (photos). (were tiles across an endless page; what's drawn)
 import { draw } from '/__review/ink.js';
-import { layered } from '/__review/inkshape.js';
+import { layered, opacityOf } from '/__review/inkshape.js'; // (opacityOf)
 import { drawScrap, drawnBox, photoOf, tapeOf } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
 import { boxOf, pageBox } from './bookrow.js';
@@ -116,6 +116,7 @@ function unitInk(el, page, held) {
     rubbed: box => paintIn(box),
     under: on => inkUnder(st, on),
     over: (g, box) => paintOver(st, g, box),
+    grid: box => gridOf(st, box),
     drop: () => st.units.forEach((u, id) => drop(u.canvas, st.units, id)),
     hold(on) {
       st.held = on;
@@ -133,23 +134,15 @@ function unitInk(el, page, held) {
 // drawn still fits it
 function paint(st, p, box = null) {
   const { page, units } = st;
-  if (!units.has(p.id)) {
-    const canvas = document.createElement('canvas');
-    canvas.className = 'bk-ink';
-    // (under the canvases already there: the units painted in their order lie each over the ones after it, as the
-    // page picture stacks them, bookrender.ts inkSvg)
-    st.el.prepend(canvas);
-    units.set(p.id, { canvas, id: p.id });
-  }
-  // (as big as the unit, and further wherever its ink, a scrap's tape or its shadow reaches past it: nothing drawn is
-  // cut.)
+  if (!units.has(p.id)) made(st, p.id);
   const scraps = page.scraps.filter(s => s.g === p.id && !landing(page, s) && !fixed(page, s.g)),
     u = units.get(p.id),
     { canvas } = u,
-    reach = scraps.map(drawnBox).reduce(union, reachOn(page, p)),
+    fit = fitted(page, p.id),
+    reach = reachOf(page, p, scraps, fit),
     { at, k } = canvasAt(st, reach),
     part = box && u.at && u.k === k && same(u.at, at);
-  if (part && !meets(u.at, box)) return;
+  if (part && (fit || !meets(u.at, box))) return fit && paint(st, p);
   const { x0: x, y0: y } = at,
     [cw, ch] = [at.x1 - x, at.y1 - y],
     w = Math.round(cw * k),
@@ -175,14 +168,37 @@ function paint(st, p, box = null) {
     clip = { x0: x + (x0 - 1) / k, y0: y + (y0 - 1) / k, x1: x + (x1 + 1) / k, y1: y + (y1 + 1) / k };
   } else g.clearRect(0, 0, w, h);
   g.setTransform(k, 0, 0, k, -x * k, -y * k);
+  if (fit) onFit(g, fit, page.origins.get(p.id));
   const shows = b => !clip || meets(b, clip);
   for (const s of scraps) if (shows(drawnBox(s))) drawScrap(g, withPicture(st, s));
   const here = page.ink.filter(s => s.g === p.id && inked(st, s) && shows(boxOf(s)));
   draw(g, layered(here));
   g.restore();
 }
-// Whether paint() draws a stroke: not while it's landing, nor while a see-through line is drawn over it (inkUnder)
-const inked = (st, s) => !landing(st.page, s) && (!st.under || s.alpha < 1);
+// What a unit's canvas holds (page px): the unit and whatever's drawn on it reaches, a scrap's tape and shadow too, so
+// nothing drawn is cut; a card fitted to the grid only the card, what's on it drawn smaller.
+const reachOf = (page, p, scraps, fit) =>
+  fit ? { x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h } : scraps.map(drawnBox).reduce(union, reachOn(page, p));
+// A canvas drawing in page px turned to draw a fitted card's own px where the card shows them
+const onFit = (g, fit, o) =>
+  g.transform(fit.k, 0, 0, fit.k, o.x - (o.x + fit.x0) * fit.k, o.y - (o.y + fit.y0) * fit.k);
+// A unit's card fitted on the grid (bookunits.js cardOf), or null where it shows as drawn
+const fitted = (page, id) => {
+  const fit = page.fits?.get(id);
+  return fit && !fit.plain && page.origins?.has(id) ? fit : null;
+};
+// A unit's canvas made, under the canvases already there: the units painted in their order lie each over the ones
+// after it, as the page picture stacks them (bookrender.ts inkSvg)
+function made(st, id) {
+  const canvas = document.createElement('canvas');
+  canvas.className = 'bk-ink';
+  canvas.dataset.unit = id; // (hidden as it's picked up: bookscrapopen.js.)
+  st.el.prepend(canvas);
+  st.units.set(id, { canvas, id });
+}
+// Whether paint() draws a stroke: not while it's landing, nor while a see-through line is drawn under it (inkUnder):
+// st.under is that line's opacity, and what's less see-through lies over it (inkshape.js layered).
+const inked = (st, s) => !landing(st.page, s) && (!st.under || opacityOf(s) <= st.under);
 // A see-through line being drawn (bookwet.js): the units painted without the ink that will lie over it, which
 // paintOver draws to lie over the line; and painted whole again once it's gone, before the screen shows them (a lift's
 // own paint, addInk, comes first).
@@ -194,7 +210,8 @@ function inkUnder(st, on) {
   queueMicrotask(() => st.owed && st.redraw());
 }
 // The ink paint() leaves out under a see-through line being drawn, to lie over it: unit by unit from the bottom up (each
-// lies over the ones after it), what its pictures cover cut away and its ink drawn but for its see-through strokes.
+// lies over the ones after it), what its pictures cover cut away and its ink drawn but for what's as see-through as
+// the line or more.
 function paintOver(st, g, box) {
   const { page } = st;
   for (const p of (page.places ?? []).toReversed()) {
@@ -207,9 +224,20 @@ function paintOver(st, g, box) {
     g.restore();
     draw(
       g,
-      page.ink.filter(s => s.g === p.id && !(s.alpha < 1) && !landing(page, s) && meets(boxOf(s), box)),
+      page.ink.filter(s => s.g === p.id && opacityOf(s) > st.under && !landing(page, s) && meets(boxOf(s), box)),
     );
   }
+}
+// The device px the units' canvases are painted in where a box is (page px): the top one's there, its corner and how
+// many device px a page px is ({ x, y, k }), and the box its canvas covers when it's the only one there (at), or null
+// when none is painted there. A canvas over them in the same px, laid where theirs is, shows its ink as theirs, the very
+// pixels: one in the screen's px shows the same lines a touch sharper or softer, as the view rests between the zooms
+// the units are drawn for, and the compositor snaps each canvas to the screen's px its own way (bookwet.js over).
+function gridOf(st, box) {
+  const under = (st.page.places ?? []).map(p => st.units.get(p.id)).filter(u => u?.at && meets(u.at, box));
+  if (!under.length) return null;
+  const [{ at, k }] = under;
+  return { x: at.x0, y: at.y0, k, ...(under.length === 1 ? { at } : {}) };
 }
 // What of a unit's reach (page px) its canvas holds, in whole px, and how many device px a page px is on it: the zoom
 // the view rests at (st.r); zoomed in past 1, only what's within NEAR of the paper's view; never more than MOST_PX
@@ -252,29 +280,47 @@ function photos(st) {
     layer = Object.assign(document.createElement('div'), { className: 'bk-photos' });
     el.prepend(layer);
   }
-  const had = new Map([...layer.children].map(c => [c.dataset.url, c]));
+  // (kept by its group, its picture and which of that group's copies of it it is: two scraps can show one picture, and
+  // each keeps an element of its own.)
+  const had = new Map([...layer.children].map(c => [c.dataset.key, c])),
+    seen = new Map();
   for (const s of page.scraps) {
     if (!fixed(page, s.g) || landing(page, s)) continue;
-    let photo = had.get(s.url);
-    had.delete(s.url);
+    const base = `${s.g} ${s.url}`,
+      key = `${base} ${seen.get(base) ?? 0}`;
+    seen.set(base, (seen.get(base) ?? 0) + 1);
+    let photo = had.get(key);
+    had.delete(key);
     if (!photo) {
       photo = Object.assign(document.createElement('div'), { className: 'bk-photo' });
+      photo.dataset.key = key;
       photo.dataset.url = s.url;
+      photo.dataset.g = s.g;
       photo.append(Object.assign(new Image(), { src: s.url, alt: '', draggable: false }));
     }
     // (an agent's drawing: its lines straight on the post-it.)
     photo.toggleAttribute('data-drawing', !!s.drawing);
-    const at = photoOf(s),
+    // (on a fitted card, as small as the rest of it.)
+    const fit = fitted(page, s.g),
+      k = fit?.k ?? 1,
+      at = fit ? fitPhoto(photoOf(s), fit, page.origins.get(s.g)) : photoOf(s),
       tape = tapeOf(s);
     Object.assign(photo.style, {
       ...{ left: `${at.x}px`, top: `${at.y}px`, width: `${at.w}px`, height: `${at.h}px`, rotate: `${s.tilt}deg` },
     });
-    photo.style.setProperty('--bk-tape-w', `${tape.w}px`);
-    photo.style.setProperty('--bk-tape-h', `${tape.h}px`);
+    photo.style.setProperty('--bk-tape-w', `${tape.w * k}px`);
+    photo.style.setProperty('--bk-tape-h', `${tape.h * k}px`);
     layer.append(photo);
   }
   for (const gone of had.values()) gone.remove();
 }
+// A photo's box ({ x, y, w, h }, page px) where its fitted card shows it
+const fitPhoto = (at, fit, o) => ({
+  x: o.x + (at.x - o.x - fit.x0) * fit.k,
+  y: o.y + (at.y - o.y - fit.y0) * fit.k,
+  w: at.w * fit.k,
+  h: at.h * fit.k,
+});
 // a scrap's picture, drawn again once it has loaded
 function withPicture(st, s) {
   if (s.img) return s;

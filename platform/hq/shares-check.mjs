@@ -301,9 +301,10 @@ try {
       .filter(c => !c.hidden)
       .every(c => c.getBoundingClientRect().right <= bar.getBoundingClientRect().right + 0.5),
   );
-  assert.ok(fitsBar, 'the bar with Share still fits a phone');
+  assert.ok(fitsBar, 'the bar with More options still fits a phone');
   const BOX = '#viewer .sharebox';
-  await hq.click('#viewer .bar .share');
+  await hq.click('#viewer .bar .more'); // (Share under More options.)
+  await hq.click('#viewer .options .share');
   await hq.waitForSelector(`${BOX} .invites li.none`);
   assert.equal(await hq.textContent(`${BOX} .invites li.none`), 'Nobody yet.');
   assert.deepEqual(await hq.$$eval(`${BOX} [data-days]`, b => b.map(x => x.textContent)), [
@@ -431,7 +432,8 @@ try {
     a.remove();
   }, 'https://cycles.preview.company.test/2026-03-03-deck/presentation/');
   await hq.waitForSelector('#viewer .bar .pin:not([hidden])', { timeout: 15_000 });
-  await hq.click('#viewer .bar .share');
+  await hq.click('#viewer .bar .more'); // (Share under More options.)
+  await hq.click('#viewer .options .share');
   await hq.waitForSelector(`${BOX} [data-kind="view"]`);
   assert.equal(await hq.$(`${BOX} [data-kind="tester"]`), null, 'to try out: on the shop’s preview only');
   await hq.click(`${BOX} [data-kind="view"]`);
@@ -521,7 +523,8 @@ try {
     a.remove();
   }, 'https://front.preview.company.test/');
   await hq.waitForSelector('#viewer .bar .pin:not([hidden])', { timeout: 15_000 });
-  await hq.click('#viewer .bar .share');
+  await hq.click('#viewer .bar .more'); // (Share under More options.)
+  await hq.click('#viewer .options .share');
   await hq.waitForSelector(`${BOX} [data-kind="tester"]`);
   await hq.click(`${BOX} [data-kind="tester"]`);
   assert.equal(await hq.textContent(`${BOX} > b`), 'Testers');

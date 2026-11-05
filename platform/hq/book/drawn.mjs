@@ -1,25 +1,18 @@
-// book-check.mjs's story of the board's own drawing on a notebook page (shell/ink/bookunits.js): on My journal's blank
-// page, the word WHY written with the pen and three rectangles pulled out, at a phone and an iPad mini both ways and a
-// desktop. Each stays whole, as ink where it was drawn: no stroke cut off at a scrap's edge, none moved into another
-// column, no paper scrap under any of it, and no arrows for stepping through scraps. Then the Asks tab, its chapter
-// empty, opening its own empty page. Recorded with --shots.
+// book-check.mjs's story of the board's own drawing on a notebook page (shell/ink/bookunits.js, bookscrapopen.js): on My
+// journal's blank page, a click on it makes a new scrap there and opens it, and the word WHY is written in it with the
+// pen and three rectangles pulled out, at a phone and an iPad mini both ways and a desktop. Each stays whole, as ink
+// where it was drawn: no stroke cut off, none moved. Put back, it's the page's one scrap, and there are no arrows for
+// stepping through scraps. Then the Asks tab, its chapter empty, opening its own empty page. Recorded with --shots.
 import assert from 'node:assert/strict';
 import { freePage } from './mouse.mjs';
-import { atEverySize, toChapter } from './kit.mjs';
+import { atEverySize, closeScrap, openScrap, toChapter } from './kit.mjs';
 import { bookWide, noMicrophone, watchedPage } from './start.mjs';
 
 // c: book-check.mjs's hqIn, base, pages, notebook, shot, noErrorsIn
 export function drawnPageStories(c) {
   return {
-    "the board's own drawing on a blank page: WHY and three rectangles whole, as ink where drawn, at five sizes":
+    "the board's own drawing on a blank page: a new scrap with WHY and three rectangles whole in it, as ink where drawn, at five sizes":
       atEverySize(DRAWN_SIZES, (browser, name, size) => drawnAt(browser, c, name, size)),
-    // (each size draws among the earlier sizes' drawings without moving them)
-    "the board's own drawing on a crowded page: WHY and three rectangles drawn again at each size on one page, the iPad mini's over two columns of them, each as ink where drawn":
-      async browser => {
-        freePage(c);
-        for (const name of ['phone-upright', 'phone-sideways', 'ipad-mini-upright'])
-          await drawnAt(browser, c, `crowded-${name}`, DRAWN_SIZES[name], { crowded: true });
-      },
   };
 }
 
@@ -31,17 +24,19 @@ const DRAWN_SIZES = {
   'ipad-mini-sideways': { width: 1133, height: 744 },
   desktop: { width: 1920, height: 1080, book: 900 },
 };
-// On My journal's blank page, the word WHY written with the pen and three rectangles pulled out (one from its foot's
-// right corner up): every corner of each rectangle and every end of the letters inked where it was drawn (nothing cut
-// off, nothing moved), no paper scrap under any of it, and no arrows for stepping through scraps. Shot as drawn. Then
-// the Asks tab, its chapter empty: its own empty page. crowded: on the page the sizes before drew on, its ends checked
-// where this size drew them, and no Asks tab
-async function drawnAt(browser, c, name, size, { crowded = false } = {}) {
+// On My journal's blank page, a new scrap opened by a click on it, the word WHY written with the pen and three
+// rectangles pulled out in it (one from its foot's right corner up): every corner of each rectangle and every end of the
+// letters inked where it was drawn (nothing cut off, nothing moved). Shot as drawn. Put back, the page's one scrap and
+// no arrows for stepping through scraps. Then the Asks tab, its chapter empty: its own empty page.
+async function drawnAt(browser, c, name, size) {
   // (a blank page of its own at each size, not the one the size before drew on)
-  if (!crowded) freePage(c);
+  freePage(c);
   const { context, page, errors } = await blankBook(browser, c, size);
   try {
-    const { letters, rects } = await written(page);
+    const mouse = { tap: ([x, y]) => page.mouse.click(x, y) },
+      desk = await page.locator('#book .bk-desk').boundingBox(),
+      { sheet } = await openScrap(page, mouse, undefined, [desk.x + 120, desk.y + 200]);
+    const { letters, rects } = await written(page, sheet);
     await page.waitForTimeout(900);
     await c.shot(`drawn-${name}`, page);
     const ends = [
@@ -54,12 +49,12 @@ async function drawnAt(browser, c, name, size, { crowded = false } = {}) {
       ]),
     ];
     assert.deepEqual(await bareOf(page, ends), [], `${name}: every corner and letter's end inked where it was drawn`);
+    await closeScrap(page, mouse);
     const shown = await page.evaluate(() => ({
-      scraps: document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit:not([data-drawing])').length,
+      scraps: document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit').length,
       arrows: [...document.querySelectorAll('#book .bk-for-you-count')].some(e => e.checkVisibility()),
     }));
-    assert.deepEqual(shown, { scraps: 0, arrows: false }, `${name}: no paper scrap under the drawing, no arrows`);
-    if (crowded) return c.noErrorsIn(errors);
+    assert.deepEqual(shown, { scraps: 1, arrows: false }, `${name}: the drawing the page's one scrap, no arrows`);
     // (Asks, a chapter with no pages yet: its own empty page, its tab the page's own)
     await toChapter(page, 'asks');
     await page.waitForTimeout(500);
@@ -130,12 +125,11 @@ const WHY = [
     [115, 40],
   ],
 ];
-// WHY written with the pen and three rectangles pulled
-// out under it, the second from its foot's right corner up: their points on screen
-async function written(page) {
-  const d = await page.locator('#book .bk-desk').boundingBox(),
-    // (the room left of whatever controls stand at the paper's right)
-    w = Math.min(d.width, 560) - 80,
+// WHY written with the pen and three rectangles pulled out under it in the opened scrap's sheet (d, its box on the
+// screen), the second from its foot's right corner up: their points on screen
+async function written(page, d) {
+  // (the room left of the Undo and Redo keys at the sheet's right)
+  const w = Math.min(d.width, 560) - 120,
     at = (fx, fy) => [d.x + 40 + fx * w, d.y + fy * d.height],
     k = Math.min(44, d.height * 0.1) / 40,
     [wx, wy] = at(0, 0.16);

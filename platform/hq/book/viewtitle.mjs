@@ -5,15 +5,14 @@
 //   - the title sits at the content's top left, below the blur, with the day of the topmost scrap on screen under it;
 //     panned down to the second day's scraps and zoomed in, it stays put and the same size, and its day follows what's
 //     at the top; nothing on the page is a title, and there's no pencil;
-//   - on the sketch page it shows the page's title and its drawing's date, and a pen's line across the title is ink on
-//     the page under it;
+//   - on the sketch page it shows the page's title and its drawing's date;
 //   - Rename page, first of the page's rows in the dots menu (no Close notebook there), writes the title where it
 //     shows, saved by Enter;
 //   - the page list from the bar's count has no title line or pencil of its own, its page numbers read at 4.5:1 or
 //     more on the card.
 // Recorded with --shots.
 import assert from 'node:assert/strict';
-import { LOOK_SCHEMES, inkAt, pressAlong, toChapter, until } from './kit.mjs';
+import { LOOK_SCHEMES, toChapter, until } from './kit.mjs';
 import { blurred } from './islands.mjs';
 import { restsOpen } from './start.mjs';
 import { contrastChannels } from '../../../shared/contrast/contrast.js';
@@ -89,7 +88,7 @@ const dayOf = id => DAYS[Math.floor((id - 1) / 4)][1];
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function viewTitleStories(c) {
   return {
-    "the page's title on the view: fixed as the page pans and zooms, the day of what's showing, drawn on under it; Rename page in the dots menu; the page list's numbers read":
+    "the page's title on the view: fixed as the page pans and zooms, the day of what's showing; Rename page in the dots menu; the page list's numbers read":
       async browser => {
         for (const [look, how] of Object.entries(LOOK_SCHEMES))
           for (const [name, size] of Object.entries(SIZES))
@@ -215,29 +214,11 @@ async function dateHandedOver(p, c, name, middle) {
   await c.shot(`viewtitle-${name}-date-under`, p);
 }
 
-// The sketch page: its title and its drawing's date; a pen's line across the title is ink on the page
+// The sketch page: its title and its drawing's date (no line across the title: the grid takes no ink, a line is drawn
+// in an opened scrap.)
 async function sketch(p, c, name) {
   await headSays(p, 'Ideas', DAYS[1][1]);
-  const { title } = await p.evaluate(headSeen),
-    y = title.top + title.height / 2,
-    line = [
-      [title.left + 4, y],
-      [title.left + Math.max(40, title.width - 4), y],
-    ];
-  await pressAlong(p, line);
-  await until(
-    async () => (await p.evaluate(inkAt, { x: title.left, y: y - 6, w: title.width, h: 12 })) > 0,
-    "a pen's line across the title drawn on the page under it",
-    10_000,
-  );
   await c.shot(`viewtitle-${name}-sketch`, p);
-  // (taken back, so the title reads clean in the shots after)
-  await p.locator('#book .bk-undo').click();
-  await until(
-    async () => (await p.evaluate(inkAt, { x: title.left, y: y - 6, w: title.width, h: 12 })) === 0,
-    'the line taken back',
-    10_000,
-  );
 }
 
 // Rename page, the first of the page's rows in the dots menu, writes the title where it shows; Enter saves it
@@ -329,7 +310,8 @@ function headSeen() {
     size: getComputedStyle(title).fontSize,
     desk: { left: desk.left, top: desk.top, width: desk.width, height: desk.height },
     onPage: document.querySelectorAll('#book .bk-page .bk-page-title, #book .bk-title-tap').length,
-    pencils: document.querySelectorAll('#book .bk-view-head svg').length,
+    // (a read-only page's lock is no pencil.)
+    pencils: document.querySelectorAll('#book .bk-view-head svg:not(.bk-view-locked *)').length,
     takes: !!under?.closest('.bk-view-head'),
     foot: band.bottom,
     firstScrap: Math.min(

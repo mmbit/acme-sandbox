@@ -1,9 +1,10 @@
 // An agent's desk-phone card about a note (hq ask --note), under the note's group on its Notebook page
 // (notebookgroups.ts asks): a slip in the answers' look, tinted as an ask, "Lark asks", the card's summary, its Choose:
 // as chips and its questions drawn by the desk phone's own fields (questions.js). A tap on a choice answers it; or the
-// board answers in the room pulled out under it as under an answer's slip (bookslipreply.js), drawn (the ink goes as a
-// picture of it with the answer) or typed with the text tool: no field to type in. It goes to the
-// desk phone's own route, so one answer closes the card in both places. Answered, it reads like a ticked slip with the
+// board opens its scrap and answers on it, drawn (the ink goes as a picture of it with the answer) or typed with the
+// text tool, sent by the sheet's Beantwoord (bookscrapkeys.js, bookslipreply.js): no field or room under it to answer
+// in. It goes to the desk phone's own route, so one answer closes the card in
+// both places. Answered, it reads like a ticked slip with the
 // pick, the words or the drawing. Its before-and-after pairs and other pictures show under its words as the desk phone
 // shows them, small, a tap opening them in its one viewer (pictures.js): never their files' paths as words.
 // A card for a secret, a step or built work never comes here: it stays on the desk phone (bookasks.ts deskOnly). Its
@@ -15,8 +16,9 @@ import { sfx } from '../audio.js';
 import { figuresHtml, pairsHtml, picturesIn, wirePics } from '../pictures.js';
 import { pictureUrl, uploadPicture } from '../data.js';
 import { answerAsk } from './notebookdata.js';
+import { readAgain } from './booksave.js';
 import { openSpot } from './bookaskspot.js';
-import { ROOM, roomHtml, wireRoom } from './bookslipreply.js';
+import { gone, unsent } from './bookslipreply.js';
 import { SNIP_PAD, inkPicture } from './bookpaperdraw.js';
 import { answerIn, toggled } from './bookanswerreply.js';
 
@@ -32,13 +34,10 @@ const ASK_CLIP =
 const ASK_TICK = '<svg class="ask-tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l5.5 5L21 4"/></svg>';
 
 // A group's cards, under its answers. A scrap of an ask about one thing on a page (hq ask --at --spot) says where it
-// is, and a tap there opens it (bookaskspot.js). (spot) rooms: the page's rooms pulled out (bookgroups.js), dev: on the
-// played store, whose pictures are this visit's
-export const asksHtml = (g, rooms, dev) =>
-  (g.asks ?? []).map(a => askHtml(a, g.anchor?.el ? spotHtml(g.anchor) : '', rooms, dev)).join('');
-// (a card's room, among the page's: its own key, apart from the answers')
-const roomKey = a => `ask-${a.id}`;
-function askHtml(a, spot, rooms, dev) {
+// is, and a tap there opens it (bookaskspot.js). (spot) dev: on the played store, whose pictures are this visit's
+export const asksHtml = (g, dev) =>
+  (g.asks ?? []).map(a => askHtml(a, g.anchor?.el ? spotHtml(g.anchor) : '', dev)).join('');
+function askHtml(a, spot, dev) {
   const c = unfoldedCard(a.body ?? ''),
     said = (c.summary[0] || a.title).trim();
   const by = `<b class="slip-by">${esc(a.name ?? 'An agent')} asks</b>`;
@@ -65,10 +64,7 @@ function askHtml(a, spot, rooms, dev) {
         }<div class="qa">${inputHtml(q, { id: `ask-${a.id}-${k}`, placeholder: q.optional ? 'Optional' : '' })}</div></div>`,
     )
     .join('');
-  // (with nothing to tap, the room is what answers it: out from the start)
-  const free = !choices.length && !asked && a.kind !== 'notice';
-  const room = roomHtml(roomKey(a), a.name ?? 'the agent', rooms.get(roomKey(a)) ?? (free ? ROOM : 0));
-  return `<section class="ask-slip" data-ask="${a.id}" aria-label="${esc(label)}">${head}${chosen}${asked}${room}<p class="ask-foot"><span>The same card is on your ${esc(phone)}.</span>${
+  return `<section class="ask-slip" data-ask="${a.id}" aria-label="${esc(label)}">${head}${chosen}${asked}<p class="ask-foot"><span>The same card is on your ${esc(phone)}.</span>${
     asked ? '<button type="button" class="ask-send">Send</button>' : ''
   }</p><p class="slip-said" hidden></p></section>`;
 }
@@ -103,12 +99,12 @@ function spotHtml(anchor) {
 }
 
 // The cards under root wired to the desk phone's answer: a choice tapped answers at once (with the questions' answers
-// when it has some), as does Send, each with all that's drawn in its room; so does the room's own Send once something's
-// drawn there, or words typed there once they're left, with the questions' answers too. asks: the cards drawn there, by id. answered(): one answered, for the page to read
-// again. rooms: the page's pulled out rooms. hooks: wireRoom's hooks (bookslipreply.js), their send this card's
-// answer, its book's dev on the played store
-export function wireAsks(root, { asks, answered, rooms, hooks }) {
-  const { dev } = hooks.book;
+// when it has some), as does Send, each with what's drawn and typed on its scrap since it was opened and not gone yet
+// (bookslipreply.js unsent). asks: the cards drawn there, by id. answered(): one answered, for the page to read again.
+// book: its book (its dev on the played store), page: the page shown (the grid's, or the scrap opened), relay(): the
+// page laid again round a picture loaded
+export function wireAsks(root, { asks, answered, book, page, relay }) {
+  const { dev } = book;
   for (const spot of root.querySelectorAll('.ask-spot'))
     spot.addEventListener('click', () => {
       const { url, selector, text } = spot.dataset;
@@ -121,23 +117,18 @@ export function wireAsks(root, { asks, answered, rooms, hooks }) {
     wirePics(pics, { pairs: unfoldedCard(a.body ?? '').pairs, parent: pics.closest('#book') });
   }
   for (const img of root.querySelectorAll('img.ask-drawn, .ask-pics img'))
-    if (!img.complete) img.addEventListener('load', hooks.relay, { once: true });
+    if (!img.complete) img.addEventListener('load', relay, { once: true });
   for (const slip of root.querySelectorAll('.ask-slip:not([data-answered])')) {
     const a = asks.get(Number(slip.dataset.ask));
-    if (a) wireAsk(slip, a, { dev, answered }, rooms, hooks);
+    if (a) wireAsk(slip, a, { dev, answered, page, gid: Number(slip.closest('[data-g]').dataset.g) });
   }
 }
-function wireAsk(slip, a, on, rooms, hooks) {
+function wireAsk(slip, a, on) {
   const said = slip.querySelector('.slip-said'),
     tell = text => Object.assign(said, { textContent: text, hidden: !text });
   for (const chip of slip.querySelectorAll('.ask-q .chip'))
     chip.addEventListener('click', () => toggled(chip, a.questions));
-  // (whatever answers it, what's drawn in its room goes with it)
-  const room = wireRoom(slip.querySelector('.bk-slip-room'), rooms, {
-    ...hooks,
-    send: what => answer(slip, a, on, undefined, { ink: room.drawn(), ...what }),
-  });
-  const go = pick => answer(slip, a, on, pick, { ink: room.drawn() }).catch(e => tell(e.message));
+  const go = pick => answer(slip, a, on, pick).catch(e => tell(e.message));
   for (const chip of slip.querySelectorAll('[data-choice]'))
     chip.addEventListener('click', () => {
       chip.classList.add('on');
@@ -146,11 +137,20 @@ function wireAsk(slip, a, on, rooms, hooks) {
     });
   slip.querySelector('.ask-send')?.addEventListener('click', () => go(undefined));
 }
-// The card answered as the desk phone answers it (pick: the choice tapped; words typed in its room; ink drawn there,
-// going as a picture of it, uploaded for the card as the desk phone's tray uploads one), then shown ticked with the
-// answer. Refused, it throws why, the slip staying as it was.
-async function answer(slip, a, on, pick, { words = '', ink = [] } = {}) {
-  const said = slip.querySelector('.slip-said');
+// Card a answered from its opened scrap by the sheet's Beantwoord (bookscrapkeys.js): its slip on the scrap's view (its
+// questions' answers there), with what's drawn and typed on the scrap. Refused, it throws why.
+export function answerFromScrap(book, view, gid, a) {
+  const slip = view.el.querySelector(`.ask-slip[data-ask="${a.id}"]:not([data-answered])`);
+  if (!slip) throw new Error('That card has been answered already.');
+  return answer(slip, a, { dev: book.dev, answered: () => readAgain(book, view.page), page: view.page, gid });
+}
+// The card answered as the desk phone answers it (pick: the choice tapped), with what's on its scrap that hasn't gone
+// yet (on: its page and group; its typed words, and its ink going as a picture of it, uploaded for the card as the
+// desk phone's tray uploads one), then shown ticked with the answer. Refused, it throws why, the slip staying as it was.
+async function answer(slip, a, on, pick) {
+  const said = slip.querySelector('.slip-said'),
+    what = unsent(on.page, on.gid),
+    { words, ink } = what;
   const tell = text => Object.assign(said, { textContent: text, hidden: !text });
   if (slip.hasAttribute('aria-busy')) throw new Error('Sending…');
   const answers = (a.questions ?? []).map((q, k) => answerIn(slip.querySelector(`[data-q="${k}"]`), q));
@@ -163,12 +163,13 @@ async function answer(slip, a, on, pick, { words = '', ink = [] } = {}) {
     const picture = await inkPicture(ink),
       pictures = picture ? [(await uploadPicture(on.dev, picture, { request: a.id })).id] : undefined;
     await answerAsk(on.dev, a.id, text, a.questions?.length ? answers : undefined, pictures);
+    gone(on.page, on.gid, what);
     sfx.jingle();
     tell('');
     slip.toggleAttribute('data-answered', true);
-    for (const el of slip.querySelectorAll('.ask-chips, .ask-q, .bk-slip-room, .ask-foot')) el.remove();
+    for (const el of slip.querySelectorAll('.ask-chips, .ask-q, .ask-foot')) el.remove();
     said.insertAdjacentHTML('beforebegin', `${ASK_TICK}${answerHtml(text, drawnHtml(pictures, on.dev))}`);
-    on.answered();
+    await on.answered(); // (read again before the scrap it's on is put back)
   } catch (e) {
     tell('');
     throw e.status === 400 ? new Error('That didn’t go through: a question still needs its answer.') : e;

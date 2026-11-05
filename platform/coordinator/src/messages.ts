@@ -29,8 +29,8 @@ import { GUEST, PARTNER } from './outsidewords.ts';
 // guest: a guest's step on the guest page (guests.ts), its request; title: the job it becomes, if it does.
 // call: the live call that made this addition to a job it queued (call.ts addToJob); it is the message's sender, as sender_job is a job's.
 // customers: marked before 31 Oct as holding a customer's details; the job its words go into keeps the mark (keepsMark).
-// held: the owner's notice of this proposal, which its inbox holds on the job (proposals.ts tell): unread when the job
-// stops running, it lapses, and the inbox's minute sweep tells the owner again.
+// held: the owner's notice of this proposal on its running session (proposals.ts tell, deliverFindings): offered unless
+// the proposal was decided after it was sent, it lapses unread when the job ends.
 // next_run: send chose delivery to the next CEO run, rather than one specific job or independent work.
 // goal: the call item whose goal it carries (ledger.ts goalTo): whichever job it is in, or became or joined, hears when
 // that item is replaced or dropped (ledger.ts goalHeard). corrects: the call item whose change it tells (ledger.ts tell).
@@ -114,7 +114,7 @@ export function send(from: From, to: string, text: string, only?: number, held?:
   const guidance = from.job === null ? undefined : from.guidance;
   const shown = guidance ? `Message #${id}: correction for item #${guidance.item} on call #${guidance.call}`
     : call ? `Message #${id}: sent on call #${call}` : text;
-  publish({ type: 'chat', agent: from.agent, to, text: shown });
+  publish({ type: 'chat', agent: from.agent, to, text: shown, job: from.job ?? undefined }); // (job)
   if (nextRun) {
     publish({ type: 'log', agent: to, text: 'Message kept for the CEO: the next run reads it, even while a pause holds work' });
     return { id, state: reads ? 'queued' : 'pending', job: reads ? job.id : undefined, why: 'next-run' };
@@ -293,9 +293,10 @@ function prompt(all: Message[]) {
   }).join('\n\n');
 }
 
-// hq inbox --hook, step one: the running job's waiting messages (only its own: the token says which job), offered to
-// its hook. Offered isn't delivered: the hook acknowledges what it printed (ack). Until then no other hook of this
-// job gets them (two at once, after parallel tool calls); after OFFER_AGAIN, a later step's hook gets them again.
+// hq inbox --hook, step one: the running job's waiting messages (only its own: the token says which job; a held one
+// unless its proposal was decided since), offered to its hook. Offered isn't delivered: the hook acknowledges what it
+// printed (ack). Until then no other hook of this job gets them (two at once, after parallel tool calls); after
+// OFFER_AGAIN, a later step's hook gets them again.
 export function take(job: number) {
   db.prepare(`update messages set job = ?, offered = null where recipient = ? and delivered is null
     and (job is null or job != ? and not exists (select 1 from jobs where id = messages.job and status = 'running'))
@@ -303,7 +304,7 @@ export function take(job: number) {
     and exists (select 1 from jobs where id = ? and agent = ? and status = 'running')`).run(job, ceo(), job, job, ceo());
   const now = new Date(), again = new Date(now.getTime() - OFFER_AGAIN).toISOString();
   const waiting = db.prepare(`select * from messages where job = ? and delivered is null and became is null and lapsed is null
-    and (offered is null or offered < ?) order by id`).all(job, again) as Message[];
+    and (offered is null or offered < ?) and (held is null or exists (select 1 from proposals where id = messages.held and (status = 'open' or decided <= messages.created))) order by id`).all(job, again) as Message[];
   for (const m of waiting) db.prepare('update messages set offered = ? where id = ?').run(now.toISOString(), m.id);
   return waiting.map(m => m.guest ? { message: m.id, from: m.sender, guest: m.guest, sent: m.created, text: m.text }
     : m.partner ? { message: m.id, from: m.sender, partner: m.partner, sent: m.created, text: m.text }
@@ -331,7 +332,6 @@ export function ack(job: number, ids: unknown) {
 // A run ended without taking its messages in (done, failed, parked on the board), or without acknowledging one it
 // was offered: each becomes a job, unless its chain has started CHAIN jobs already (then it lapses, as hq say told
 // the sender it would). A paused or requeued job keeps them: it resumes in the same session and its hook reads them then.
-// A held notice lapses: its proposal's inbox tells the owner again (proposals.ts sweep).
 export function jobEnded(job: number) {
   const s = (db.prepare('select status from jobs where id = ?').get(job) as { status: string } | undefined)?.status;
   if (!s || s === 'running' || s === 'queued') return;
@@ -363,7 +363,7 @@ export function withdraw(proposal: number) {
 // (proposals.ts ownerChanged), and keeps it.
 function lapseHeld(m: Message) {
   db.prepare('update messages set lapsed = ? where id = ?').run(new Date().toISOString(), m.id);
-  publish({ type: 'log', agent: m.recipient, text: `Message #${m.id} to ${m.recipient} wasn't read while job #${m.job} ran: its inbox tells ${m.recipient} again.` });
+  publish({ type: 'log', agent: m.recipient, text: `Message #${m.id} to ${m.recipient} wasn't read while job #${m.job} ran: it lapses.` });
 }
 
 // finish() (jobs.ts) ends the job before its hand-offs, and calls jobEnded last: if one of them throws, or the coordinator

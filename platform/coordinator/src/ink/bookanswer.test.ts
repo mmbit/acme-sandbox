@@ -13,6 +13,7 @@ const h = await harness('bookanswer', {
 });
 const { agent, db } = h;
 const { answerNow } = await import('./bookanswer.ts');
+const { DRAWING } = await import('./bookpicture.ts');
 const { ORIGIN } = await import('../config.ts');
 const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
@@ -490,8 +491,11 @@ test("a page's picture asked for while a key's scrub is under way is drawn and k
   await scrubbed();
   const stamp = setting('scrubbed')!;
   assert.notEqual(stamp, before, 'the pass is done');
-  // (y: bookpicture.ts DRAWING.)
-  assert.match(kept(), new RegExp(`^${page}-y[^]*-${stamp.slice(0, 6)}-[0-9a-f]{8}\\.png$`), "the pass's stamp");
+  assert.match(
+    kept(),
+    new RegExp(`^${page}-${DRAWING}[^]*-${stamp.slice(0, 6)}-[0-9a-f]{8}\\.png$`),
+    "the pass's stamp",
+  );
   const file = kept();
   assert.ok(drawn.equals(await picture()) && kept() === file, 'kept after the pass: not drawn again');
   // the same page drawn afresh now, from its masked words

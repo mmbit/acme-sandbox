@@ -7,9 +7,10 @@ import * as world from '../world/world.js';
 import { loadArtifacts, loadEarlierVersions } from './data.js';
 import { sfx } from './audio.js';
 import { DEVICES, GAP, HEAD, devicesFor, fit, chosen, bookChoice } from './viewerfit.js';
-import { shapeOf } from './ink/booklayout.js';
+import { shapeOf, layout, recall } from './ink/booklayout.js';
 import { openBook, foldBook, layOver } from './ink/book.js';
 import { pairCode, qrSvg } from './paircode.js';
+import { mountMore } from './viewermore.js';
 
 // A frame that scrolled leads for this long after its last scroll: the other's scrolls meanwhile are its own following
 // (or stopping short at its end), never passed back
@@ -19,9 +20,10 @@ const QR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 
 const shape = () => shapeOf(innerWidth, innerHeight);
 const recalled = () => chosen(store.get(`viewer.${shape()}`, null), devicesFor(innerWidth), shape());
 
-// The stage in the viewer v, for the preview at url. Returns { close, toStaging }: close for the viewer's Close or its
-// next page, toStaging to bring staging to the front where the two take turns (the bar's Note pins there).
-export function mountStage(v, url) {
+// The stage in the viewer v, for the preview at url. share: More options' Share (desk.js shareBox). Returns { close,
+// toStaging }: close for the viewer's Close or its next page, toStaging to bring staging to the front where the two
+// take turns (the bar's Note pins there).
+export function mountStage(v, url, share) {
   const me = {
     url,
     stage: v.querySelector('.stage'),
@@ -41,11 +43,7 @@ export function mountStage(v, url) {
     closed: false,
     qr: null, // (the QR card's code while it shows: showQr)
   };
-  v.querySelector('.bar .pin').before(me.choices);
-  // (its QR opens this page on whatever device scans it: never in a call's recording, shared/watchalong.)
-  me.qrCard.setAttribute('data-watchalong-hide', '');
-  v.append(me.qrCard);
-  me.choices.addEventListener('click', e => choose(me, e.target.closest('button')));
+  mountBar(me, v, share);
   listenToHead(me);
   addBefore(me);
   const sized = new ResizeObserver(() => lay(me)),
@@ -67,16 +65,28 @@ export function mountStage(v, url) {
       sized.disconnect();
       removeEventListener('resize', turned);
       removeEventListener('message', scrolled);
+      me.more.close();
       tellBook(me);
     },
   };
 }
 
+// The stage's parts of the viewer v's bar: its choices before Note, the QR card, and More options after Note, the
+// notebook's layout pictured there beside Share.
+function mountBar(me, v, share) {
+  v.querySelector('.bar .pin').before(me.choices);
+  // (its QR opens this page on whatever device scans it: never in a call's recording, shared/watchalong.)
+  me.qrCard.setAttribute('data-watchalong-hide', '');
+  v.append(me.qrCard);
+  me.choices.addEventListener('click', e => choose(me, e.target.closest('button')));
+  me.more = mountMore(v, { layouts: () => layouts(me), pick: button => choose(me, button), share });
+}
+
 // The book lies over the frames where the board picked Over, on a screen that offers the choice (book.js's layOver.
 const tellBook = me => layOver(!me.closed && bookChoice(shape()) && me.picked.book === 'over');
 
-// The bar's choices: the device's size (where the screen offers more than its own), Over or Beside (on its side), and
-// the QR (a laptop's or a desktop's)
+// The bar's choices: the device's size (where the screen offers more than its own) and the QR (a laptop's or a
+// desktop's). Over or Beside is under More options (layouts).
 function paintChoices(me) {
   const offered = devicesFor(innerWidth),
     seg = (name, options, on) =>
@@ -85,14 +95,9 @@ function paintChoices(me) {
           ([id, words]) => `<button type="button" data-${name}="${id}" aria-pressed="${id === on}">${words}</button>`,
         )
         .join('')}</div>`,
-    devices = offered.map(id => [id, DEVICES[id].name]),
-    books = [
-      ['over', 'Over'],
-      ['beside', 'Beside'],
-    ];
+    devices = offered.map(id => [id, DEVICES[id].name]);
   me.choices.innerHTML =
     (offered.length > 1 ? seg('device', devices, me.picked.device) : '') +
-    (bookChoice(shape()) ? seg('book', books, me.picked.book) : '') +
     (shape() === 'wide'
       ? `<button type="button" class="glyph qr" aria-label="Open on your phone or tablet" aria-expanded="${!me.qrCard.hidden}">${QR}</button>`
       : '');
@@ -115,6 +120,25 @@ function choose(me, button) {
   store.set(`viewer.${shape()}`, me.picked);
   paintChoices(me);
   lay(me);
+}
+// The notebook's layouts on a screen on its side, as More options pictures them (viewermore.js pictureOf): over the
+// frames at the screen's whole width, or beside them in the page's room by the open notebook (the width the board gave
+// it on this shape), the frames side by side or as tabs as fit lays them out in that room. None on a screen with no
+// choice.
+function layouts(me) {
+  if (!bookChoice(shape())) return [];
+  const open = layout(innerWidth, innerHeight, { ...recall(store, shape()), mode: 'open' }),
+    two = !!beside(me),
+    side = (book, width) => ({
+      book,
+      on: me.picked.book === book,
+      aspect: innerWidth / innerHeight,
+      frames: two ? 2 : 1,
+      columns: fit(width, me.stage.clientHeight, me.picked.device, two, pickable(me)).columns,
+      page: open.page / innerWidth,
+      notebook: open.room / innerWidth,
+    });
+  return [side('over', innerWidth), side('beside', open.page)];
 }
 // A turn to a new screen shape: that shape's own choices
 function turn(me) {

@@ -118,8 +118,26 @@ test('a pick-many: every option starts picked, any of them is an answer (none to
   assert.equal(said(q, answer(q, [fixes[1]])), fixes[1]);
   assert.equal(said(q, '[]'), 'none');
   assert.equal(answerLines([q], ['[]']), '1. Which fixes shall we make? → none');
-  // on the desk phone, all on until the board takes one off
-  assert.equal((inputHtml(q).match(/class="chip on"/g) ?? []).length, 3);
+  // on the desk phone, tick boxes, all ticked until the board takes one off
+  assert.equal((inputHtml(q).match(/class="chip tick on"/g) ?? []).length, 3);
   assert.equal((inputHtml(q, { value: [fixes[1]] }).match(/aria-pressed="true"/g) ?? []).length, 1);
   assert.ok(chips(q));
+});
+
+test('a pick-many of facts starts with none ticked (picked: []); a one-pick choice has no tick box', () => {
+  const places = ['Phone', 'Tablet', 'Desktop'];
+  const q = question({ title: 'Where did you see it?', options: places, many: true, picked: [] });
+  assert.deepEqual(q, { title: 'Where did you see it?', options: places, many: true, picked: [] });
+  assert.equal((inputHtml(q).match(/class="chip tick"/g) ?? []).length, 3, 'none ticked, each a box');
+  assert.equal((inputHtml(q, { value: ['Phone', 'Desktop'] }).match(/aria-pressed="true"/g) ?? []).length, 2);
+  assert.equal(said(q, answer(q, ['Desktop', 'Phone'])), 'Phone; Desktop', 'the agent reads every one ticked');
+  // picked: some to start with, in the question's order, trimmed
+  assert.deepEqual(question({ title: 'x', options: places, many: true, picked: [' Desktop', 'Phone'] }).picked, [
+    'Phone',
+    'Desktop',
+  ]);
+  assert.match(question({ title: 'x', options: places, picked: [] }), /picked goes with many: true/);
+  assert.match(question({ title: 'x', options: places, many: true, picked: ['Watch'] }), /picked goes with many/);
+  assert.match(question({ title: 'x', options: places, many: true, picked: 'Phone' }), /picked goes with many/);
+  assert.ok(!inputHtml({ title: 'x', options: places }).includes('tick'), 'a choice stays one pick, no box');
 });

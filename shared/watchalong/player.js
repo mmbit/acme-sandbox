@@ -10,6 +10,7 @@ import { inkAt, paint, placer } from './strokes.js';
 import { changesLayers, raise, topAt } from './toplayer.js';
 import { changesMedia, mediaAt, applyMedia } from './media.js';
 import { Scrubber, clock } from './scrubber.js';
+import { Rebuilt } from './rebuilt.js';
 
 export const SPEEDS = [1, 2, 4];
 export const STEP_MS = 5000; // what back and forward skip (the arrow keys too)
@@ -56,6 +57,7 @@ export class Player {
     this.media = [];
     this.tops = []; // (the recording's top layers as they changed, snapshots without their pages: toplayer.js)
     this.waiting = []; // events come before the replayer is built
+    this.rebuilt = new Rebuilt();
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.build(replay, side);
     this.frameLoop = () => this.tick();
@@ -160,6 +162,7 @@ export class Player {
     if (!events.length) return;
     this.loadedTo = events.at(-1).timestamp;
     this.scrubber.loaded((this.loadedTo - this.start) / Math.max(1, this.end - this.start));
+    events = this.rebuilt.take(events); // (what rrweb's rebuild gets unlike the page, put right: rebuilt.js)
     if (this.replayer) {
       for (const event of events) this.replayer.addEvent(event);
       if (this.stalled && this.playing) this.go();

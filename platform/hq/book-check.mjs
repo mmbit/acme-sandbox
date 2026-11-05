@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Ink played in a browser as the board lives it, on HQ's mock data: the Pencil on HQ's own page here, then the stories
 // in book/ (Ink's README, "The book check")
-//   node platform/hq/book-check.mjs [--shots dir] [--stories 'words[|more words]' [--webkit] | --first]
+//   node platform/hq/book-check.mjs [--shots dir] [--workers n] [--stories 'words[|more words]' [--webkit] | --first]
 import assert from 'node:assert/strict';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { crc32, deflateSync } from 'node:zlib';
@@ -16,9 +16,7 @@ import { callStory } from './book/call.mjs';
 import { notesPageStories } from './book/notespage.mjs';
 import { notesDrawnStories } from './book/notesdrawn.mjs';
 import { notesScrapsStories } from './book/notesscraps.mjs';
-import { inkStaysStories } from './book/inkstays.mjs';
 import { flickStories } from './book/flick.mjs';
-import { roomBelowStories } from './book/roombelow.mjs';
 import { canvasStories } from './book/canvas.mjs';
 import { pinchStories } from './book/pinch.mjs';
 import { agentPageStories } from './book/agentpage.mjs';
@@ -64,6 +62,7 @@ import { strayStories } from './book/stray.mjs';
 import { sendStories } from './book/send.mjs';
 import { grabStories } from './book/grab.mjs';
 import { backdropStories } from './book/backdrop.mjs';
+import { coveredTapsStories } from './book/coveredtaps.mjs';
 import { arrivalStories } from './book/arrival.mjs';
 import { wheelStories } from './book/wheel.mjs';
 import { barStories, press } from './book/bar.mjs';
@@ -84,6 +83,7 @@ import { edgeStories } from './book/edges.mjs';
 import { tapedStories } from './book/taped.mjs';
 import { menuStories } from './book/menus.mjs';
 import { unitsPageStories } from './book/unitspage.mjs';
+import { scrapbookStories } from './book/scrapbook.mjs';
 import { noteSizeStories } from './book/notesize.mjs';
 import { fillStories } from './book/fill.mjs';
 import { drawnPageStories } from './book/drawn.mjs';
@@ -92,6 +92,7 @@ import { bookmarkChaptersStories } from './book/bookmarkchapters.mjs';
 import { bookmarksFoldStories } from './book/bookmarksfold.mjs';
 import { notebookAskStories } from './book/notebookasks.mjs';
 import { askPictureStories } from './book/askpictures.mjs';
+import { askTickStories } from './book/askticks.mjs';
 import { notebookSpotStories } from './book/notebookspot.mjs'; // (an ask's spot)
 import { forYouStories } from './book/foryou.mjs';
 import { notebookRowStories } from './book/notebookrow.mjs';
@@ -125,6 +126,7 @@ import { DESKTOP, MINI, UPRIGHT, OVERVIEW, pressAlong, ui, bookAtRest } from './
 import { groupsOf } from './book/played.mjs';
 import { twoFingerTap } from './book/hands.mjs';
 import { morningStory, everyWidthStory, LOOKS } from './book/film.mjs';
+import { sharedOut } from './book/pool.mjs';
 
 const only = process.argv.includes('--stories') ? process.argv[process.argv.indexOf('--stories') + 1] : null;
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
@@ -568,6 +570,8 @@ function STORIES() {
     ...edgeStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...tapedStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...menuStories({ hqIn, base, settled, shot, noErrorsIn }),
+    // (the scrapbook: a scrap opened to draw in, a new one in a gap)
+    ...scrapbookStories({ hqIn, base, settled, shot, noErrorsIn }),
     // (a page of scrap units laid as a masonry at every width)
     ...unitsPageStories({ hqIn, base, settled, shot, noErrorsIn }),
     // (its notes at their own size at every book width)
@@ -583,6 +587,7 @@ function STORIES() {
     ...assignStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookAskStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
     ...askPictureStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...askTickStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookSpotStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...forYouStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     // (one way to move things: the pen draws on a scrap, Select moves a group as one.)
@@ -636,6 +641,7 @@ function STORIES() {
     ...sendStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...grabStories({ hqIn, base, settled }),
     ...backdropStories({ hqIn, base, shot, settled }),
+    ...coveredTapsStories({ hqIn, base, settled }),
     ...arrivalStories({ hqIn, base, settled, settle: SETTLE_MS, shot, noErrorsIn }),
     ...wheelStories({ hqIn, base, store, pages, notebook, shot, settled }),
     ...barStories({ hqIn, base, store, pages, notebook, shot, settled }),
@@ -668,12 +674,9 @@ function STORIES() {
     // (how an agent's notes look there: its drawing on its post-it, notes apart.)
     ...notesDrawnStories({ hqIn, base, shot, settled, noErrorsIn, PHONE }),
     ...notesScrapsStories({ hqIn, base, shot, settled, noErrorsIn }),
-    ...inkStaysStories({ hqIn, base, shot, settled, noErrorsIn }),
     // (a flick always glides on, from paper and from a scrap's words)
     ...flickStories({ hqIn, base, shot, settled, noErrorsIn }),
-    // (a page scrolls a screen past its last note)
-    ...roomBelowStories({ hqIn, base, shot, settled, noErrorsIn }),
-    // (a sketch stays where it was drawn at any notebook width)
+    // (a canvas pinch-zoomed and panned past its first screen)
     ...canvasStories({ hqIn, base, notebook, pages, shot, settled, noErrorsIn }),
     ...pinchStories({ hqIn, base, shot, settled, noErrorsIn }),
     // (the test call at a phone both ways, an iPad mini on its side and a desktop)
@@ -729,6 +732,8 @@ function STORIES() {
       settle: SETTLE_MS,
       MINI,
       PHONE,
+      UPRIGHT,
+      DESKTOP,
     }),
     // (circle a version to pick it, on three devices and a call's page.)
     ...pickStories({
@@ -1727,29 +1732,72 @@ async function settled(page, mode) {
   });
   await page.waitForTimeout(SETTLE_MS);
 }
-// The book's stories run in browser (named engine in the log), and the main flow's stories to run with them
-async function bookStories(browser, engine, flowStories = {}) {
+// (how long since from: each part's time in the log)
+const took = from => `${((performance.now() - from) / 1000).toFixed(1)} s`;
+// Every part of the check in an engine: the main flow's parts (below) and the book's stories, made once per engine
+const made = {};
+const partsOf = engine => (made[engine] ??= { ...FLOWS[engine], ...STORIES() });
+// One part played in its engine's browser, its line for the log (a part may return a note to add to it)
+async function playPart({ engine, name }) {
+  const browser = await browserOf(engine),
+    from = performance.now(),
+    asleep = slept,
+    time = () => `${took(from)}, ${((slept - asleep) / 1000).toFixed(1)} s of it in timed waits`;
+  try {
+    const note = await partsOf(engine)[name](browser);
+    return { ok: true, line: `ok   ${engine}: ${name} (${time()}${note ? `; ${note}` : ''})` };
+  } catch (e) {
+    return {
+      ok: false,
+      line: `FAIL ${engine}: ${name} (${time()})\n     ${e.message.split('\n').join('\n     ')}`,
+    };
+  } finally {
+    // (what it left open closed, a failed one's too: the next part starts on a browser holding nothing)
+    for (const c of browser.contexts()) await c.close().catch(() => {});
+  }
+}
+// The names among names holding words (or any of words|words)
+const matching = (names, words) => names.filter(n => words.split('|').some(w => n.includes(w)));
+// The parts of those names played one after another here, the failures counted
+async function playHere(engine, names) {
   let failed = 0;
-  for (const [name, story] of Object.entries({ ...STORIES(), ...flowStories })) {
-    if (only && !only.split('|').some(w => name.includes(w))) continue;
-    try {
-      await story(browser);
-      console.log(`ok   ${engine}: ${name}`);
-    } catch (e) {
-      failed++;
-      console.log(`FAIL ${engine}: ${name}\n     ${e.message.split('\n').join('\n     ')}`);
-    }
+  for (const name of names) {
+    const { ok, line } = await playPart({ engine, name });
+    console.log(line);
+    if (!ok) failed++;
   }
   return failed;
 }
 
-// (--stories: Chromium, which this machine has; the whole check's first part is WebKit's. Chromium's microphone is its
-// fake one, allowed: the words of a ring come over the voice line only once the mic starts.)
+// Each engine's browser, launched at its first part and kept for the rest. Chromium's microphone is its fake one,
+// allowed: the words of a ring come over the voice line only once the mic starts.
 const FAKE_MIC = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
-const browser = await (only && !inWebKit
-  ? playwright().chromium.launch({ args: ['--disable-dev-shm-usage', ...FAKE_MIC] })
-  : playwright().webkit.launch());
-let context = await hqIn(browser);
+const browsers = {};
+const browserOf = engine =>
+  (browsers[engine] ??= (
+    engine === 'webkit'
+      ? playwright().webkit.launch()
+      : playwright().chromium.launch({ args: ['--disable-dev-shm-usage', ...FAKE_MIC] })
+  ).then(countSleeps));
+// The timed waits the parts sleep through (waitForTimeout: fixed ones, and polls that check between them), summed: each
+// part's line gives its own beside its time
+let slept = 0;
+async function countSleeps(browser) {
+  const blank = await browser.newPage(),
+    kind = Object.getPrototypeOf(blank),
+    wait = kind.waitForTimeout;
+  if (!kind.counted)
+    Object.assign(kind, {
+      counted: true,
+      waitForTimeout(ms) {
+        slept += ms;
+        return wait.call(this, ms);
+      },
+    });
+  await blank.close();
+  return browser;
+}
+let context;
 
 // HQ at an address, on a page of its own
 let page, errors;
@@ -1897,7 +1945,7 @@ async function ringed(look) {
 // ---- the Pencil on a phone, the book folded away to its lip: the post-it on HQ's page, and Save puts the note in the
 // Notebook, its ink landing in the folded book's lip, the book still folded
 async function onAPhone(browser) {
-  await context.close();
+  await context?.close();
   context = await hqIn(browser, PHONE);
   await open('/?intro=0');
   await settled(page, 'folded');
@@ -1914,7 +1962,7 @@ async function onAPhone(browser) {
 }
 // ---- the Pencil writes on HQ's page, never on the book beside it: in landscape, the book open.
 async function besideTheBook(browser) {
-  await context.close();
+  await context?.close();
   context = await hqIn(browser, MINI);
   await open('/?intro=0');
   await settled(page, 'open');
@@ -1985,104 +2033,143 @@ const noErrors = () =>
 
 // A call drawing in (book/call.mjs), on a context of its own, in a look (none: HQ's own).
 async function callDrawingIn(browser, look) {
-  await context.close();
+  await context?.close();
   context = await hqIn(browser);
   await callStory({ context, open, page: () => page, pen, ring, ui, posts, org, pixels, grab, shot, look });
   noErrors();
 }
 
-// --stories <words>: only the book's stories whose names hold those words (or any of words|words), in Chromium (WebKit
-// with --webkit), nothing else (a check's share of the worker's memory holds one part at a time).
-// (the call's story too, in the look the whole check gives it in that browser: Brownstone in WebKit, Wire in Chromium)
-if (only) {
-  const failed = await bookStories(browser, inWebKit ? 'webkit' : 'chromium', {
-    'a call drawing in': browser => callDrawingIn(browser, inWebKit ? undefined : 'wire'),
-  });
-  await context.close();
-  await browser.close();
-  server.close();
-  process.exit(failed ? 1 : 0);
+// ---- the Pencil on HQ's own page: a ring, then a finger's drag, the pen held still and a two-finger tap. Returns how
+// much moved at the lift.
+async function onHq(browser) {
+  await context?.close();
+  context = await hqIn(browser);
+  await open('/?intro=0');
+  const { jump } = await ringed('');
+
+  // ---- a finger works the page: its drag draws nothing
+  const before = posts.length;
+  await pen(
+    Array.from({ length: 20 }, (_, i) => [200 + i * 12, 700]),
+    { type: 'touch' },
+  );
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator(ui('.sheet')).isHidden(), true, "a finger's drag opens no note");
+  assert.equal(posts.length, before);
+
+  // ---- held still, the pen waits on nothing: no note, nothing listening
+  const heldFrom = posts.length;
+  await pen([[560, 520]], { lift: false });
+  await page.waitForTimeout(2000);
+  assert.equal(await page.locator(ui('.sheet')).isHidden(), true, 'the pen held still opens no note');
+  await page.evaluate(() => window.__lift());
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator(ui('.sheet')).isHidden(), true, 'nor once it lifts');
+  assert.equal(posts.length, heldFrom, 'and nothing goes into the Notebook');
+
+  // ---- a two-finger tap takes back the last thing: the ring's note, off the Notebook's page (nothing of it was on the
+  // page to go)
+  const last = groupsOf(context.notebook).at(-1);
+  await twoFingerTap(page);
+  const taken = () => posts.slice(heldFrom).find(p => p.path === '/api/notebooks/groups/delete');
+  for (let i = 0; i < 20 && !taken(); i++) await page.waitForTimeout(150);
+  assert.equal(taken()?.body.id, last.id, 'a two-finger tap takes it back');
+  await nothingDrawn(page, 'a note taken back');
+  assert.equal(
+    posts.slice(before).filter(p => p.path === '/api/notebooks/groups/scrap' || p.path === '/api/book/note').length,
+    0,
+    'nothing new in its place',
+  );
+  noErrors();
+  return `nothing moving at the lift: at most ${jump.worst} off on an edge`;
 }
-await open('/?intro=0');
-const { jump } = await ringed('');
-
-// ---- a finger works the page: its drag draws nothing
-const before = posts.length;
-await pen(
-  Array.from({ length: 20 }, (_, i) => [200 + i * 12, 700]),
-  { type: 'touch' },
-);
-await page.waitForTimeout(500);
-assert.equal(await page.locator(ui('.sheet')).isHidden(), true, "a finger's drag opens no note");
-assert.equal(posts.length, before);
-
-// ---- held still, the pen waits on nothing: no note, nothing listening
-const heldFrom = posts.length;
-await pen([[560, 520]], { lift: false });
-await page.waitForTimeout(2000);
-assert.equal(await page.locator(ui('.sheet')).isHidden(), true, 'the pen held still opens no note');
-await page.evaluate(() => window.__lift());
-await page.waitForTimeout(500);
-assert.equal(await page.locator(ui('.sheet')).isHidden(), true, 'nor once it lifts');
-assert.equal(posts.length, heldFrom, 'and nothing goes into the Notebook');
-
-// ---- a two-finger tap takes back the last thing: the ring's note, off the Notebook's page (nothing of it was on the
-// page to go)
-const last = groupsOf(context.notebook).at(-1);
-await twoFingerTap(page);
-const taken = () => posts.slice(heldFrom).find(p => p.path === '/api/notebooks/groups/delete');
-for (let i = 0; i < 20 && !taken(); i++) await page.waitForTimeout(150);
-assert.equal(taken()?.body.id, last.id, 'a two-finger tap takes it back');
-await nothingDrawn(page, 'a note taken back');
-assert.equal(
-  posts.filter(p => p.path === '/api/notebooks/groups/scrap' || p.path === '/api/book/note').length,
-  1,
-  'nothing new in its place',
-);
-noErrors();
-
-// ---- a call drawing in (book/call.mjs; the agent's ink, aimed: book/aim.mjs.)
-await callDrawingIn(browser);
-// ---- a walk-through of finished work (book/walk.mjs)
-await context.close();
-context = await hqIn(browser);
-await walkStory({ context, open, page: () => page, pen, ring, posts, pages, org, shot, reviewJs });
-noErrors();
-await besideTheBook(browser);
-await onAPhone(browser);
-await context.close();
-// --first: the whole check's first part alone, up to here (past a job's memory share whole)
-if (process.argv.includes('--first')) {
-  console.log('book-check: the first part, in WebKit');
-  await browser.close();
-  server.close();
-  process.exit(0);
-}
-
-// ---- every kind of line, wet and dry, on a page of its own
-const lines = await browser.newContext(IPAD_MINI);
-for (const line of await wetDry(await lines.newPage()))
-  assert.ok(line.changed <= STILL, `${line.name}: wet and dry are the same line (${JSON.stringify(line)})`);
-let failed = await bookStories(browser, 'webkit');
-await browser.close();
-
 // ---- the ring, its number and Send in Wire, in Chromium: Linux's headless WebKit has no en-CA dates (its ICU writes
 // 10/26/2026 for HQ's YYYY-MM-DD), so Wire's calendar can't start there and HQ shows Brownstone instead (Safari has them)
-const chromium = await playwright().chromium.launch({ args: FAKE_MIC });
-context = await hqIn(chromium);
-await open('/?intro=0&renderer=wire');
-assert.equal(await page.evaluate(() => document.body.classList.contains('brownstone')), false, 'Wire is the look');
-const wire = await ringed('-wire');
-noErrors();
-// ---- a call drawing in, in Wire (book/call.mjs)
-await callDrawingIn(chromium, 'wire');
-await besideTheBook(chromium);
-failed += await bookStories(chromium, 'chromium');
-await chromium.close();
+async function inWire(browser) {
+  await context?.close();
+  context = await hqIn(browser);
+  await open('/?intro=0&renderer=wire');
+  assert.equal(await page.evaluate(() => document.body.classList.contains('brownstone')), false, 'Wire is the look');
+  const { jump } = await ringed('-wire');
+  noErrors();
+  return `nothing moving at the lift: at most ${jump.worst} off on an edge`;
+}
+// ---- a walk-through of finished work (book/walk.mjs)
+async function walkThrough(browser) {
+  await context?.close();
+  context = await hqIn(browser);
+  await walkStory({ context, open, page: () => page, pen, ring, posts, pages, org, shot, reviewJs });
+  noErrors();
+}
+// ---- every kind of line, wet and dry, on a page of its own
+async function wetAndDry(browser) {
+  const lines = await browser.newContext(IPAD_MINI);
+  for (const line of await wetDry(await lines.newPage()))
+    assert.ok(line.changed <= STILL, `${line.name}: wet and dry are the same line (${JSON.stringify(line)})`);
+  await lines.close();
+}
+// The main flow's parts in each engine: the call in Brownstone in WebKit, in Wire in Chromium
+const FLOWS = {
+  webkit: {
+    "the Pencil on HQ's page: a ring, a finger's drag, the pen held still, a two-finger tap": onHq,
+    'a call drawing in': browser => callDrawingIn(browser),
+    'a walk-through of finished work': walkThrough,
+    'the Pencil beside the book': besideTheBook,
+    'the Pencil on a phone': onAPhone,
+    'every kind of line, wet and dry': wetAndDry,
+  },
+  chromium: {
+    "the Pencil on HQ's page in Wire": inWire,
+    'a call drawing in': browser => callDrawingIn(browser, 'wire'),
+    'the Pencil beside the book': besideTheBook,
+  },
+};
+const closeAll = async () => {
+  for (const b of Object.values(browsers)) await (await b).close();
+  server.close();
+};
 
-server.close();
-// (Search; handwriting; a morning, a picture dragged in, every width)
-console.log(
-  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; the pen held still waiting on nothing; a two-finger tap taking the ring's note back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; the book's stories above (the Notebook's groups drawn, joined, split, moved, deleted and sent, with Undo, answers under them, an agent's card answered under its group, and a second screen's change, on an iPad mini, a desktop and a phone; the overview of the notebook's pages and the Shelf among them, Search, handwriting kept as ink, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
-);
-if (failed) process.exitCode = 1;
+if (process.argv.includes('--worker')) {
+  // ---- a worker of the whole check (book/pool.mjs): a part at a time from the check, its line sent back; none: done
+  process.on('message', async part => {
+    if (!part) {
+      await closeAll();
+      process.exit(0);
+    }
+    process.send(await playPart(part));
+  });
+} else if (process.argv.includes('--first') || (only && !process.argv.includes('--workers'))) {
+  // ---- --stories <words>: only the parts whose names hold those words (or any of words|words), in Chromium (WebKit
+  // with --webkit), one after another (a check's share of the worker's memory holds one part at a time). --first: the
+  // main flow's parts in WebKit, the whole check's first part.
+  const engine = inWebKit ? 'webkit' : 'chromium';
+  const failed = only
+    ? await playHere(engine, matching(Object.keys(partsOf(engine)), only))
+    : await playHere('webkit', Object.keys(FLOWS.webkit));
+  await closeAll();
+  process.exit(failed ? 1 : 0);
+} else {
+  // ---- the whole check: every part in both engines (with --stories, those parts in its engine), shared out over
+  // workers side by side (--workers n; none: as many as this machine holds)
+  server.close();
+  const from = performance.now(),
+    workers = process.argv.includes('--workers') ? Number(process.argv[process.argv.indexOf('--workers') + 1]) : null;
+  const parts = (only ? [inWebKit ? 'webkit' : 'chromium'] : ['webkit', 'chromium']).flatMap(engine => {
+    const names = Object.keys(partsOf(engine));
+    return (only ? matching(names, only) : names).map(name => ({ engine, name }));
+  });
+  const { failed, count, peak, own, waitedMs } = await sharedOut(
+    fileURLToPath(import.meta.url),
+    process.argv.slice(2),
+    parts,
+    workers,
+  );
+  const played = `${parts.length} parts in ${took(from)} on ${count} workers, ${(peak / 1e9).toFixed(1)} GB in use at most (${(own / 1e9).toFixed(1)} GB of it the check's), ${(waitedMs / 1000).toFixed(0)} s of parts waiting for memory`;
+  if (only) console.log(`book-check: ${played}${failed ? `, ${failed} failing` : ''}`);
+  // (Search; handwriting; a morning, a picture dragged in, every width)
+  else
+    console.log(
+      `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; the pen held still waiting on nothing; a two-finger tap taking the ring's note back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; the book's stories above (the Notebook's groups drawn, joined, split, moved, deleted and sent, with Undo, answers under them, an agent's card answered under its group, and a second screen's change, on an iPad mini, a desktop and a phone; the overview of the notebook's pages and the Shelf among them, Search, handwriting kept as ink, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width); ${played}${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
+    );
+  if (failed) process.exitCode = 1;
+}

@@ -53,6 +53,27 @@
   background: var(--bk-cloth);
   color: #fffdf6;
 }
+/* a pick-many's option, a tick box ticked or not (questions.js, the class tick), on a card's slip and an answer's form
+   alike (bookanswerform.css). */
+#book :is(.ask-slip, .bk-answer-form) .chip.tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+#book :is(.ask-slip, .bk-answer-form) .chip.tick::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+#book :is(.ask-slip, .bk-answer-form) .chip.tick.on::before {
+  content: '✓';
+}
 #book .ask-slip .chip:focus-visible {
   outline: 2px solid var(--bk-cloth);
   outline-offset: 2px;
@@ -155,8 +176,8 @@
   outline: 2px solid var(--bk-cloth);
   outline-offset: 2px;
 }
-/* the board's drawing it answered with, under the tick: the picture that went, at its own px, as wide as the slip's
-   room it was drawn in (bookslipreply.css .bk-slip-room) and narrower only when the card is. Its paper's room round
+/* the board's drawing it answered with, under the tick: the picture that went, at its own px, a little wider than the
+   slip and narrower only when the card is. Its paper's room round
    the ink (--pad) is pulled out so the ink sits at the words, and clipped off, the paper left under the ink multiplied
    away, so only the ink shows, as an answer's slip draws it (bookanswers.css .bk-slip-ink). */
 #book .ask-drawn {

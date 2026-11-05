@@ -3,6 +3,7 @@
 import * as call from './call.ts';
 import * as jobs from './jobs.ts';
 import * as ledger from './ledger.ts';
+import { keysAgent } from './memory.ts';
 import * as projects from './projects.ts';
 import * as windows from './windows.ts';
 import { isRefused, refusableStep, RefusedError, type Refused } from './pagechecks.ts';
@@ -22,6 +23,18 @@ export const onCall = (c: { id: number; agent: string }): Recorder => ({
   call: true,
   callId: c.id,
 });
+
+// A live call's item's owner, as named (none: the follow-up decides), or why not: a call about a card for keys is its own
+// agent's alone (memory.ts keysAgent), named or left out. Its notes' write_down and hq item add on it alike.
+export function ownerOn(call: number, owner: string | null): string | null | Refused {
+  const keys = keysAgent(call);
+  if (keys && owner !== null && owner !== keys)
+    return [
+      400,
+      `owner: this call is about a card for keys, so its work is ${keys}'s alone: name ${keys} or leave it out`,
+    ];
+  return owner ?? keys;
+}
 
 // Item b on call `on`'s list, checked: the refusal of its time or the work it names, or the step that records it (onPage:
 // a live call's item goes in its notes by itself, unless it's there already).

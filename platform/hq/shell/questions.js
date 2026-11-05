@@ -1,11 +1,13 @@
 // Questions as form fields, one engine for every form that asks them: a guest's
 // checklist (the coordinator's guests.ts, on its page) and a desk-phone card (hq ask --questions, the phone in desk.js).
 // Plain functions, no DOM: the coordinator imports this file from here (as it does card.js), and HQ serves it.
-//   A question is { title, detail?, type?, unit?, options?, many? }: a short text (the default), a yes or no ("yes-no"), a
-//   number ("number", with a unit like "mm" shown after its box), or a choice of 2 to 8 short options (options, no type).
-// With many: true, a choice is a pick-many of 2 to 20 (a deck's numbered changes):
-//   every option starts picked, a tap takes one off or puts it back, and none picked is an answer too. A card's only (the
-//   guest page's chips post one answer each).
+//   A question is { title, detail?, type?, unit?, options?, many?, picked? }: a short text (the default), a yes or no
+//   ("yes-no"), a number ("number", with a unit like "mm" shown after its box), or a choice of 2 to 8 short options
+//   (options, no type).
+// With many: true, a choice is a pick-many of 2 to 20, for a question several of whose answers can be true together (a
+//   deck's numbered changes, where the board saw something): tick boxes, a tap ticks one or takes it off, and none ticked
+//   is an answer too. Every option starts ticked (a deck's changes: yes to all is Send), or only those its picked lists
+//   ([]: none, the board ticks what applies). A card's only (the guest page's chips post one answer each).
 //   Its answer is stored as typed or tapped: "yes" or "no", a number with a point ("3.5"), the option, or the text; a
 //   pick-many's, the options picked as a JSON list, in their order ("[]": none).
 //   optional: true, a question its reader may leave blank ("What to change, if anything"); the rest need their answer
@@ -52,6 +54,13 @@ export function question(q) {
     if (!ok || q.type !== undefined)
       return `options make a question a choice: 2 to ${most} different lines of up to ${MAX_OPTION} characters, and no type`;
   }
+  if (
+    q.picked !== undefined &&
+    (!q.many ||
+      !Array.isArray(q.picked) ||
+      q.picked.some(o => typeof o !== 'string' || !q.options.some(p => p.trim() === o.trim())))
+  )
+    return 'picked goes with many: true, a list of the options ticked to start with ([]: none)';
   if (q.type !== undefined && !TYPES.includes(q.type))
     return `a question's type is ${TYPES.join(', ')} (or options for a choice)`;
   if (q.unit !== undefined && (q.type !== 'number' || !line(q.unit, MAX_UNIT)))
@@ -66,6 +75,7 @@ export function question(q) {
     ...(q.options ? { options: q.options.map(o => o.trim()) } : {}),
     ...(q.optional ? { optional: true } : {}),
     ...(q.many ? { many: true } : {}),
+    ...(q.picked ? { picked: q.options.map(o => o.trim()).filter(o => q.picked.some(p => p.trim() === o)) } : {}),
   };
 }
 // A card's questions (hq ask --questions): a list of 1 to 40, or what's wrong, with the question's number
@@ -143,8 +153,8 @@ export const answerLines = (list, answers) =>
     .join('\n');
 
 // The input for one question, without its label (its form puts that around it): chips to tap for a yes-or-no and a choice,
-// a box for a number (its unit after it) or a short text. A pick-many's chips are each on or off (value: the list picked,
-// every one when there's none yet).
+// a box for a number (its unit after it) or a short text. A pick-many's chips are tick boxes, each on or off (value: the
+// list picked; with none yet, its picked list or every option), the class tick drawing the box.
 //   post: the guest page's plain form, where a chip is a submit button that posts its answer (name, value); otherwise (the
 //   desk phone) a chip is a toggle its script reads (data-answer, aria-pressed). id: the box's id, for its label.
 export function inputHtml(
@@ -160,12 +170,12 @@ export function inputHtml(
             ['no', w.no],
           ]
         : q.options?.map(o => [o, o]);
-  const on = v => (q.many ? (Array.isArray(value) ? value : q.options).includes(v) : value === v);
+  const on = v => (q.many ? (Array.isArray(value) ? value : (q.picked ?? q.options)).includes(v) : value === v);
   if (chips)
     return chips
       .map(
         ([v, label]) =>
-          `<button ${post ? `name="${esc(name)}" value="${esc(v)}"` : `type="button" data-answer="${esc(v)}"`} class="chip${on(v) ? ' on' : ''}" aria-pressed="${on(v)}">${esc(label)}</button>`,
+          `<button ${post ? `name="${esc(name)}" value="${esc(v)}"` : `type="button" data-answer="${esc(v)}"`} class="chip${q.many ? ' tick' : ''}${on(v) ? ' on' : ''}" aria-pressed="${on(v)}">${esc(label)}</button>`,
       )
       .join('');
   const box = `<input id="${esc(id)}" name="${esc(name)}" value="${esc(number && value ? written(value, lang) : value)}"${number ? ' inputmode="decimal" autocomplete="off"' : ` maxlength="${MAX_ANSWER}"`}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}${required ? ' required' : ''}>`;

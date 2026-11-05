@@ -31,9 +31,11 @@ import { startDrop, stopDrop } from './calldrop.js';
 import { forgetHeard, heldCall, holdCall, letCallGo, lostCall, rejoined, resend, sendFrame } from './callheld.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './ink/calldraw.js'; // (Ink's folder)
 import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
-import { guestKey, guestsToLine } from './callguest.js'; // (guestsToLine)
+import { askHangUp, guestKey, guestsToLine, listed } from './callguest.js'; // (guestsToLine; askHangUp)
 import { handFromLine } from './callhand.js';
-import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComing, tell, watchCall } from './desk.js';
+import { lagging, PING_MS } from './calllag.js';
+import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComing, watchCall } from './desk.js';
+import { tell } from './alert.js';
 
 const $ = s => document.querySelector(s);
 let call = null;
@@ -57,26 +59,25 @@ export const callName = () => call?.name ?? null;
 // the card it's about.
 // walk: from a card's Walk me through it (calldraw.js). pictures: Files (or promises of them, or a promise of their
 // list: callpictures.js showPictures) the agent is shown once the line picks up,
-// design: a design session, the call's page a sketch page opened at once (calldraw.js)
 // a page of the Notebook shared by its corner (bookshare.js); with a call already on, they go into that one. page: that page's id, brought to the call's notes page as its first scrap (calldraw.js). (request and the rest named; pictures)
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),
-  { request = 0, walk = false, pictures = [], page = 0, design = false } = {},
+  { request = 0, walk = false, pictures = [], page = 0 } = {},
 ) {
   if (intercomOpen()) closeTool();
   if (call) {
     expand(call);
     return showPictures(call, pictures);
   }
-  // (design: its page a sketch page, calldraw.js.)
-  const c = (call = { agent, name, request, walk, design, brought: page, voiced: [], kept: [], keptFrom: 0 });
-  c.hangUp = () => endCall();
+  // (never a design session from the start: the agent makes the call one when asked, calldraw.js designed.
+  const c = (call = { agent, name, request, walk, brought: page, voiced: [], kept: [], keptFrom: 0 });
+  c.hangUp = () => hangUp(c);
   c.audio = audioOf(c);
   openLayer(c);
   hush(true, 'call');
   // (the board interrupts by speaking: the line clears the voice, FROM_LINE.clear.)
-  $('#call-end').onclick = () => endCall();
+  $('#call-end').onclick = () => hangUp(c);
   startPictures(c);
   showPictures(c, pictures);
   startDrop(c);
@@ -105,7 +106,7 @@ export async function callAgent(
     if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`);
   }, 30000);
   // (walk)
-  c.dial = { agent, lang: l.lang, request: c.request, design, ...(walk && c.request ? { walk } : {}) };
+  c.dial = { agent, lang: l.lang, request: c.request, ...(walk && c.request ? { walk } : {}) };
   connect(c, held ? { resume: held.id, back: true } : c.dial);
 }
 
@@ -152,7 +153,7 @@ function connect(c, hello) {
   ws.onclose = e => {
     if (call !== c || c.ws !== ws) return;
     if (hello.back && !c.id && e.code === 4000) return connect(c, c.dial); // (the call it would rejoin is over)
-    // the call waits on the other end (callheld.js HOLD_MS): keep trying to get back to it
+    // the call waits on the other end (HOLD_MS): keep trying to get back to it.
     const lost = c.id && e.code !== 4000;
     if (lost && !c.tries) lostCall(c); // (from the first try on)
     if (lost && (c.tries = (c.tries ?? 0) + 1) <= 12) {
@@ -181,6 +182,8 @@ const FROM_LINE = {
   },
   call(c, ev) {
     if (ev.said) rejoined(c, ev);
+    // (back in a call with guests on its page: a hang-up asks again whether to leave it to them)
+    for (const name of ev.guests ?? []) if (!(c.guests ??= []).includes(name)) c.guests.push(name);
     c.t0 ??= performance.now();
     c.id = ev.id || c.id;
     c.call = Number(ev.call) || c.call;
@@ -304,45 +307,6 @@ function onAir(c) {
   // (the bubble's face, or the call screen's own little screen)
   (c.small ? c.bubble : c.face)?.voice(c.live && moving && speaking ? Math.min(1, c.audio.voiceLevel() * 6) : 0);
 }
-// The line running behind. On a weak connection the microphone's frames back up and reach the line late, in a burst
-// (nothing is lost on the way, nor with a dropped connection: sendFrame), and the line waits for them before it answers
-// (platform/voice, LATE). Twice a second a ping goes beside the frames, and the line answers how late it came, on HQ's
-// monotonic clock against its own. The screen says so while the line hears the board over 1.5 s
-// late, nothing has come back from it for 4 s since this connection's first ping, or the frames wait here unsent
-// (bufferedAmount, at the 64 kB a second they come to at most), and until 3 s after it caught up; each spell goes in
-// the timeline. (How late the line hears, not how long a pong takes: the pongs come back behind the reply's audio,
-// which goes out ahead of its playing, so its audio coming counts as the line answering.)
-const PING_MS = 500,
-  LAGGING_S = 1.5,
-  UNANSWERED_MS = 4000,
-  CAUGHT_UP_MS = 3000;
-function lagging(c) {
-  const now = performance.now(),
-    ws = c.ws;
-  if (!c.live || ws?.readyState !== 1) return;
-  if (now - (c.pinged ?? -PING_MS) >= PING_MS) {
-    c.pinged = now;
-    c.heardAt ??= now;
-    ws.send(JSON.stringify({ type: 'ping', t: Math.round(now) }));
-  }
-  const silent = now - c.heardAt,
-    behind = Math.max(c.late, ws.bufferedAmount / 64000, silent > UNANSWERED_MS ? silent / 1000 : 0);
-  if (behind > LAGGING_S) {
-    if (!c.lagAt) c.audio.mark('lagging');
-    c.lagAt = now;
-    c.lagMax = Math.max(c.lagMax ?? 0, behind);
-    c.lagShown = Math.round(behind);
-  } else if (c.lagAt && now - c.lagAt > CAUGHT_UP_MS) {
-    c.audio.mark('caught up', undefined, c.lagMax);
-    c.lagAt = c.lagMax = 0;
-  }
-  const n = $('#call-net'),
-    text = c.lagAt ? `Weak connection: ${c.name} hears you about ${c.lagShown} s late.` : '';
-  if (n && n.textContent !== text) {
-    tell(n, text);
-    n.hidden = !text;
-  }
-}
 // What the call's screen says under its state about the call's sound (callaudio.js warn), until it's fine again
 const soundNote = why =>
   !why
@@ -365,7 +329,23 @@ function callSay(state) {
   const s = $('#call-state');
   if (s) s.textContent = state;
 }
-function endCall(why) {
+// Hang up: with guests on the call's page, the board picks first whether to end it for everyone or leave it to them
+// (callguest.js askHangUp; the bubble's key opens the call for it).
+function hangUp(c) {
+  if (call !== c) return;
+  if (c.guests?.length && c.live) expand(c);
+  askHangUp(c, { end: () => call === c && endCall(), leave: () => leaveCall(c) });
+}
+// The board leaves the call to its guests: the line holds it for one of them to go on with on their own device, and
+// HQ's side closes as at a hang-up, without its 'bye'. Calling the agent again comes back into the call (callheld.js,
+// and the line's own held), where Hang up ends it.
+function leaveCall(c) {
+  if (call !== c) return;
+  if (c.ws?.readyState !== 1) return endCall('The line dropped before your guests could take the call.');
+  c.ws.send(JSON.stringify({ type: 'leave' }));
+  endCall('', true);
+}
+function endCall(why, left = false) {
   const c = call;
   if (!c) return;
   call = null;
@@ -375,8 +355,10 @@ function endCall(why) {
   cueInto(null);
   // (how the voice played here, numbers only, and its timeline in seconds after the line picked up)
   const { played, timeline } = c.audio.report(c.t0);
-  if (c.ws?.readyState === 1) c.ws.send(JSON.stringify({ type: 'bye', played, timeline }));
-  if (!why) letCallGo(); // (hung up: the line hears 'bye', or ends it once it's held long enough)
+  if (c.ws?.readyState === 1 && !left) c.ws.send(JSON.stringify({ type: 'bye', played, timeline }));
+  if (left)
+    lostCall(c); // (left to its guests: calling the agent again comes back into it)
+  else if (!why) letCallGo(); // (hung up: the line hears 'bye', or ends it once it's held long enough)
   c.ws?.close();
   c.voiced = [];
   stopPictures(c);
@@ -390,11 +372,13 @@ function endCall(why) {
   for (const header of document.querySelectorAll('.intercom header')) header.classList.remove('on-air');
   closeLayer(c);
   if (intercomOpen()) closeTool(); // (opened by the board while the call was small)
-  if (c.agent === world.company.ceo && !c.request && c.id) notesComing(); // the transcript reaches the chat in a moment
+  if (c.agent === world.company.ceo && !c.request && c.id && !left) notesComing(); // the transcript reaches the chat in a moment
   if (c.live || c.id) watchCall(c.agent, Date.now(), c.call);
   // (a toast's tap goes where the notes appear)
   toast(
-    `<b>Call with ${esc(c.name)} ended</b>${why ? `<br>${esc(why)}` : ''}`,
+    left
+      ? `<b>You left the call with ${esc(c.name)}</b><br>${esc(listed(c.guests))} can go on with ${esc(c.name)}. Call ${esc(c.name)} again to come back, or to end it.`
+      : `<b>Call with ${esc(c.name)} ended</b>${why ? `<br>${esc(why)}` : ''}`,
     c.agent === world.company.ceo && !c.request ? openIntercom : () => openComputer('calls'),
   );
 }

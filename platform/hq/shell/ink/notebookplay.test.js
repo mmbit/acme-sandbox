@@ -463,7 +463,7 @@ test("Search: a group's words, the boxes typed on its page and the answers under
   assert.deepEqual(play.route('/api/book/search', { q: '' }), { q: '', found: [], total: 0 });
 });
 
-test('a scrap of an Asks page handed to a guest keeps its place and wears their tag; the short list puts them first', () => {
+test('a scrap of any page handed to a guest keeps its place and wears their tag; the short list puts them first', () => {
   const people = [
     { to: 'guest:14', name: 'Femke Jansen-Okafor', kind: 'guest' },
     { to: 'agent:wiebe', name: 'Wiebe', kind: 'agent' },
@@ -488,9 +488,13 @@ test('a scrap of an Asks page handed to a guest keeps its place and wears their 
     'never an agent',
   );
   const given = post('groups/assign', { id: g.id, to: 'guest:14' });
-  assert.deepEqual(given.to, people[0]);
+  const femke = { ...people[0], initial: 'F', colour: null };
+  assert.deepEqual(given.to, femke);
   assert.deepEqual(given.group.box, g.box, 'it stays where it is');
-  assert.deepEqual(groups(page)[0].assigned, [{ ...people[0], answered: false }]);
+  assert.deepEqual(groups(page)[0].assigned, [{ ...femke, answered: false }]);
+  assert.equal(groups(page)[0].question, null, "the board's own scrap is no question");
+  play.answered(g.id, 'guest:14');
+  assert.deepEqual(groups(page)[0].assigned, [{ ...femke, answered: true }], 'answered once they press Answer');
   assert.deepEqual(names(play.route('/api/notebooks/people').recent), ['Femke Jansen-Okafor', 'Annemieke Bos']);
   assert.throws(
     () => post('groups/assign', { id: g.id, to: 'guest:Nobody' }),
@@ -500,16 +504,88 @@ test('a scrap of an Asks page handed to a guest keeps its place and wears their 
     () => post('groups/assign', { id: 999, to: 'guest:14' }),
     e => e.status === 404,
   );
-  // (a sketch's scraps reach their agent by themselves: none is handed over)
+  // (and from a sketch page too)
   const drawn = post('groups/create', { page: sketch, ink: [stroke(10, 10)] });
+  assert.equal(post('groups/assign', { id: drawn.id, to: 'guest:14' }).to.to, 'guest:14');
   assert.throws(
-    () => post('groups/assign', { id: drawn.id, to: 'guest:14' }),
+    () => post('groups/answer', { id: drawn.id }),
     e => e.status === 409,
+    'only a copy handed to this side is answered',
   );
   post('pages/send', { id: page });
   assert.throws(
     () => post('groups/assign', { id: g.id, to: 'guest:14' }),
     e => e.status === 409,
+  );
+});
+
+test("a page's people are those invited to its book; a copy handed over answered by its Answer; an empty scrap first", () => {
+  const people = [
+    { to: 'guest:14', name: 'Femke Jansen-Okafor', kind: 'guest', notebooks: [2] },
+    { to: 'guest:11', name: 'Annemieke Bos', kind: 'guest', notebooks: [3] },
+  ];
+  const made = { created: '2026-10-27T08:00:00.000Z', updated: '2026-10-27T08:00:00.000Z' };
+  const { play, post, groups } = played({
+    people,
+    notebooks: [
+      { id: 1, kind: 'mine', name: 'My journal', ...made },
+      { id: 2, kind: 'invited', name: 'Femke', ...made },
+      { id: 3, kind: 'round', name: 'Round', ...made },
+    ],
+    pages: [
+      { id: 1, notebook: 1, pos: 0, kind: 'free', label: '', ...made },
+      { id: 2, notebook: 2, pos: 0, kind: 'asks', label: 'Asks', ...made },
+    ],
+    groups: [{ id: 5, page: 2, h: 200, texts: [], handed: { answered: false } }],
+  });
+  const names = page => play.route('/api/notebooks/people', { page }).everyone.map(p => p.name);
+  assert.deepEqual(names(2), ['Femke Jansen-Okafor']);
+  assert.deepEqual(names(1), ['Annemieke Bos', 'Femke Jansen-Okafor'], "the board's own book: everyone");
+  assert.deepEqual(groups(2)[0].question, { answered: false });
+  assert.deepEqual(post('groups/answer', { id: 5 }).group.question, { answered: true });
+  assert.throws(
+    () => post('groups/create', { page: 2, after: 'start' }),
+    e => e.status === 400,
+  );
+  const empty = post('groups/create', { page: 2, after: 'start', empty: true });
+  assert.deepEqual([empty.ink, empty.texts, empty.pictures], [[], [], []]);
+  assert.deepEqual(
+    groups(2).map(g => g.id),
+    [empty.id, 5],
+  );
+});
+
+test("an Asks page gathers its book's open questions from other pages, each where it is, no place among its own", () => {
+  const made = { created: '2026-10-27T08:00:00.000Z', updated: '2026-10-27T08:00:00.000Z' };
+  const card = { agent: 'lyra', kind: 'question', title: 'Blue or green?', status: 'open', note: null };
+  const { post, groups } = played({
+    notebooks: [{ id: 1, kind: 'mine', name: 'My journal', ...made }],
+    pages: [
+      { id: 1, notebook: 1, pos: 0, kind: 'free', label: 'Monday', ...made },
+      { id: 2, notebook: 1, pos: 1, kind: 'asks', label: 'Asks', ...made },
+    ],
+    groups: [
+      { id: 5, page: 2, h: 200, by: 'lyra', texts: [] },
+      { id: 6, page: 1, h: 200, by: 'lyra', texts: [] },
+      { id: 7, page: 1, h: 200, texts: [] },
+    ],
+    asks: [
+      { id: 1, group: 6, ...card },
+      { id: 2, group: 5, ...card },
+    ],
+  });
+  const read = () => groups(2).map(g => [g.id, g.elsewhere ?? null]);
+  assert.deepEqual(read(), [
+    [5, null],
+    [6, { page: 1, label: 'Monday' }],
+  ]);
+  assert.equal(groups(1).length, 2, 'it stays on its own page');
+  const added = post('groups/create', { page: 2, after: 6, empty: true });
+  assert.equal(added.page, 2);
+  assert.deepEqual(
+    read().map(([id]) => id),
+    [5, added.id, 6],
+    "after a gathered one: the page's own end",
   );
 });
 

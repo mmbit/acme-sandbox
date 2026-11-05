@@ -900,6 +900,32 @@ test("a call page with only the board's typed words keeps them", async () => {
   );
 });
 
+test("a scrap made empty on the call's page and never written on goes as the page locks; one drawn on stays", async () => {
+  const { call, token } = await h.liveCall('juno');
+  const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
+  const make = async (more: object) => (await h.board('/api/notebooks/groups/create', { page, ...more })).body.id;
+  const drawn = await make({
+      ink: [
+        {
+          color: '#2F6BDC',
+          size: 3,
+          points: [
+            [10, 10, 0.5, 0],
+            [60, 40, 0.5, 16],
+          ],
+        },
+      ],
+    }),
+    empty = await make({ empty: true });
+  assert.ok(drawn && empty, 'both made');
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
+  await wentIn(page);
+  assert.deepEqual(
+    (await groups(page)).map(g => g.id),
+    [drawn],
+  );
+});
+
 test("a page brought to the call by its folded corner is the call page's first scrap, in front of both", async () => {
   const { call } = await h.liveCall('juno');
   const mine = (await h.board('/api/notebooks')).body.shelf[0].id;
@@ -1041,7 +1067,7 @@ const sentTo = (page: number) =>
       .all(page) as { owner: string | null }[]
   ).map(r => r.owner);
 
-test("a keys call's asks stay with its agent: a scrap naming another is refused, and a carried page goes to nobody", async () => {
+test("a keys call's asks stay with its agent: a scrap or an item off the page naming another is refused, and a carried page goes to nobody", async () => {
   const card = jobs.createRequest({
     kind: 'credential',
     title: 'Another key',
@@ -1059,39 +1085,18 @@ test("a keys call's asks stay with its agent: a scrap naming another is refused,
   const named = await h.voice('write-down', { call: keys.call, words: 'Juno files it', goal: GOAL, owner: 'juno' });
   assert.equal(named.status, 400);
   assert.equal((await h.voice('write-down', { call: keys.call, words: 'The key goes here', goal: GOAL })).status, 200);
+  // Off the notes page (write_down's page false: hq item add --off-page) the same
+  const off = { kind: 'task', what: 'Rotate the key', goal: GOAL, quote: 'Rotate the key', page: false };
+  assert.equal((await h.agent('item', keys.token, { ...off, owner: 'juno' })).status, 400);
+  assert.equal((await h.agent('item', keys.token, off)).status, 200);
   assert.deepEqual(
     ledger.items(keys.call).map(i => i.owner),
-    ['wren'],
-    "its list's item is the agent's",
+    ['wren', 'wren'],
+    "its list's items are the agent's",
   );
   await h.voice('call-end', { agent: 'wren', lines: ['Board: done.'], request: card.id, token: keys.token });
   await wentIn(page);
   assert.deepEqual(sentTo(page), [], "the board's words and the agent's scrap, for the follow-up");
-});
-
-test("a design session's call page is a sketch page: a canvas from then on, still a call's page under Calls", async () => {
-  const placeOn = (page: number, id: number) =>
-    h.board('/api/notebooks/groups/place', { page, places: [{ id, x: 40, y: 60 }] });
-  const { call } = await h.liveCall('juno');
-  const page = (await h.board('/api/notebooks/call', { call })).body.page;
-  assert.equal(page.sketch, undefined, 'a call page is notes, a masonry');
-  assert.equal(page.chapter, 'calls');
-  const note = await h.voice('write-down', { call, words: 'A bigger header', goal: GOAL });
-  assert.equal(note.status, 200);
-  assert.equal((await placeOn(page.id, note.body.id)).status, 400, 'no place on an ordinary call page');
-  // the design session's switch: the same page, a canvas, its note so far placed where HQ first lays it
-  assert.equal((await h.board('/api/notebooks/call', { call, design: 'yes' })).status, 400);
-  const sketch = (await h.board('/api/notebooks/call', { call, design: true })).body.page;
-  assert.equal(sketch.id, page.id);
-  assert.equal(sketch.sketch, true);
-  assert.equal(sketch.chapter, 'calls', 'it stays a call page');
-  const placed = await placeOn(page.id, note.body.id);
-  assert.equal(placed.status, 200);
-  assert.deepEqual(placed.body.groups[0].place, { x: 40, y: 60 });
-  // never unset: asked for again without design, it's still one
-  assert.equal((await h.board('/api/notebooks/call', { call })).body.page.sketch, true);
-  const shelf = (await h.board(`/api/notebooks/pages?notebook=${page.notebook}`)).body;
-  assert.equal(JSON.stringify(shelf).includes('"sketch":true'), true, 'the page record HQ reads carries it');
 });
 
 test("the call engine's split: the watch-along, the screen and the line's drawing and driving read nothing of Ink", () => {

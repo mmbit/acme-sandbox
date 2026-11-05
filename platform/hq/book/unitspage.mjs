@@ -1,22 +1,17 @@
-// book-check.mjs's story of a notebook page as a masonry of scrap units (shell/ink/bookunits.js), on an Asks page (a
-// masonry the board draws on) seeded with an agent's six scraps of mixed heights (pictures with words, plain notes, one
-// with an answer under it). First the same scraps on a sketch page, each pinned clear of the one under it, the page's
-// day in the board's English. Then the board's annotations: a line written in a scrap's room, a line between scraps (the nearer
-// scrap's), a room dragged taller by its handle, a line under the tallest column's last
-// scrap. At a phone, an iPad mini upright
-// and sideways, and a wide desktop. Each time: no two units (with what hangs under them) overlap, the space between
-// units in a column is the same, nothing scrolls sideways, each line between scraps stays under the scrap it was
-// written under, the room grows as its handle's dragged, and the last unit scrolls clear of the tools. Each note's
-// paper is as tall as its body, and the room to write under it is plain page: no shadow, edge or turned corner. The
-// wide desktop is then made narrower and opened again: its lines still under their scraps in fewer columns. Recorded
-// with --shots.
+// book-check.mjs's story of a notebook page as a masonry of scrap units (shell/ink/bookunits.js), on an Asks page
+// seeded with an agent's six scraps of mixed heights (pictures with words, plain notes, one with an answer under it).
+// First the same scraps on a sketch page, a masonry too, the page's day in the board's English. At a phone, an iPad mini
+// upright and sideways, and a wide desktop. Each time: no two units (with what hangs under them) overlap, the space
+// between units in a column is the same, nothing scrolls sideways, and the last unit scrolls clear of the tools. Each
+// note's paper is the whole card: no room or handle under it, the card itself no shadow, edge or turned corner (a scrap
+// is opened to be drawn in: scrapbook.mjs). The wide desktop is then made narrower and opened again, laid in fewer
+// columns. Recorded with --shots.
 import assert from 'node:assert/strict';
-import { atEverySize, until } from './kit.mjs';
+import { atEverySize } from './kit.mjs';
 import { bookWide, noMicrophone, watchedPage } from './start.mjs';
 import { BOOK } from '../shell/ink/booklayout.js';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
-import { UNIT_W } from '../shell/ink/scrapunit.js';
-import { line, opened, savedInto, sound, still, strokesBy, units } from './unitsread.mjs';
+import { opened, sound, still, units } from './unitsread.mjs';
 
 const T0 = '2026-10-29T15:00:00.000Z';
 const SIZES = {
@@ -88,7 +83,7 @@ export const SEED = {
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function unitsPageStories(c) {
   return {
-    "a page of scrap units: an agent's six scraps and the board's annotations, at a phone, an iPad mini both ways and a desktop, never overlapping":
+    "a page of scrap units: an agent's six scraps, whole cards with no room under them, at a phone, an iPad mini both ways and a desktop, never overlapping":
       atEverySize(SIZES, (browser, name, size) => atSize(browser, c, name, size)),
   };
 }
@@ -102,15 +97,10 @@ async function atSize(browser, c, name, size) {
     await opened(page, 6);
     await page.waitForTimeout(400);
     await sound(page, `${name}, as the agent left it`);
-    await plainRooms(page, name);
+    await wholePapers(page, name);
     await c.shot(`units-${name}-1-call`, page);
-    const low = await annotate(page, name);
-    await page.waitForTimeout(900);
-    await sound(page, `${name}, annotated`);
-    await c.shot(`units-${name}-2-annotated`, page);
     await atFoot(page, c, name);
-    const tallest = await underTallest(page, name);
-    if (size.turned) await turned(page, c, name, size.turned, [low, tallest], errors);
+    if (size.turned) await turned(page, c, name, size.turned, errors);
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`units-${name}-failed`, page);
@@ -120,8 +110,8 @@ async function atSize(browser, c, name, size) {
     await context.close();
   }
 }
-// The same scraps arriving on a sketch page (My journal's, a canvas: sketchcanvas.js): each pinned clear of the one
-// under it once its words are measured (bookunits.js), the view's day in the board's English.
+// The same scraps arriving on a sketch page (My journal's, a grid like every page): each clear of the one under it once
+// its words are measured (bookunits.js), the view's day in the board's English.
 async function onSketch(browser, c, name, size) {
   const sketch = { ...SEED, pages: SEED.pages.map(p => ({ ...p, kind: undefined, label: 'Cover notes' })) },
     context = await deskAt(browser, c, size, sketch),
@@ -147,20 +137,19 @@ async function boardDays(page, name) {
   assert.ok(days.length, `${name}: the book shows a page day`);
   for (const day of days) assert.match(day, /^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}$/, `${name}: the board's page day`);
 }
-// Each unit bare (no paper, shadow, clip or turned corner of its own), its note's paper as tall as its body and ending
-// where its room starts, and the room plain page: no shadow, edge or paper
-async function plainRooms(page, name) {
+// Each unit bare (no paper, shadow, clip or turned corner of its own), its note's paper the whole card, with no room or
+// handle under it
+async function wholePapers(page, name) {
   const seen = await page.evaluate(() =>
     [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => {
       const [look, after] = [getComputedStyle(u), getComputedStyle(u, '::after')],
-        paper = u.querySelector(':scope > .bk-unit-paper').getBoundingClientRect(),
-        room = u.querySelector(':scope > .bk-room'),
-        at = getComputedStyle(room);
+        card = u.getBoundingClientRect(),
+        paper = u.querySelector(':scope > .bk-unit-paper').getBoundingClientRect();
       return {
         unit: u.dataset.unit,
         bare: [look.boxShadow, look.backgroundImage, look.backgroundColor, look.clipPath, after.content],
-        room: [at.boxShadow, at.borderTopWidth, at.borderLeftWidth, at.backgroundImage, at.backgroundColor],
-        paperEnds: Math.round(room.getBoundingClientRect().top - paper.bottom),
+        rooms: u.querySelectorAll('.bk-room, .bk-room-handle').length,
+        paperEnds: Math.round(card.bottom - paper.bottom),
       };
     }),
   );
@@ -169,55 +158,12 @@ async function plainRooms(page, name) {
   for (const u of seen) {
     const what = `${name}: unit ${u.unit} (${JSON.stringify(u)})`;
     assert.deepEqual(u.bare, ['none', 'none', clear, 'none', 'none'], `${what}: no paper, shadow, clip or corner`);
-    assert.deepEqual(u.room, ['none', '0px', '0px', 'none', clear], `${what}: its room plain page`);
-    assert.ok(Math.abs(u.paperEnds) <= 1, `${what}: its note's paper ends where its room starts`);
+    assert.equal(u.rooms, 0, `${what}: no room or handle under it`);
+    assert.ok(Math.abs(u.paperEnds) <= 1, `${what}: its note's paper the whole card`);
   }
 }
-// The board's annotations: a line in the first unit's room, one in the space under a unit (that unit's, or one of its
-// own right under it), a room dragged taller by its handle. Returns where the line was written under its unit (written).
-// (each at the page's px, so the same place in a scrap at every scale)
-async function annotate(page, name) {
-  const [first] = await units(page),
-    s = first.w / UNIT_W;
-  await line(page, first.x + 40 * s, first.y + first.h - 50 * s, 120);
-  // (apart in time, so the handwriting read into type, where it is, reads them apart)
-  // (once the page is still: words read from the first line, where it is, land and grow its scrap first)
-  const low = (await still(page)).sort((a, b) => a.bottom - b.bottom)[0];
-  const between = await written(page, low);
-  stays(await still(page), between, `${name}: the line between scraps`);
-  await dragRoom(page, name);
-  return between;
-}
-// A line written under the tallest column's last unit, at the page's foot: it stays in that column, under it.
-// Returns that unit.
-async function underTallest(page, name) {
-  const all = await still(page),
-    last = all.sort((a, b) => b.bottom - a.bottom)[0],
-    under = await written(page, last);
-  stays(await still(page), under, `${name}: the line under the tallest column's last unit`);
-  return under;
-}
-// A line written 12 px (the page's, at the unit's scale) under a unit (and what hangs under it): saved in the store,
-// the unit's own or the next one's in its column (as near), or a unit of its own (bookunits.js). Returns
-// the unit, how far down it the line is as a share of its width (its scale's), the next unit under it in its column,
-// and the group the store keeps it in.
-async function written(page, unit) {
-  const s = unit.w / UNIT_W,
-    y = unit.bottom + 12 * s,
-    all = await units(page),
-    next = all
-      .filter(u => Math.abs(u.x - unit.x) < 1 && u.y > unit.y)
-      .sort((a, b) => a.y - b.y)
-      .at(0)?.id,
-    had = strokesBy(page);
-  await line(page, unit.x + 40 * s, y, 140);
-  const into = await savedInto(page, had, 'the line written under a unit saved');
-  return { id: unit.id, down: (y - unit.y) / unit.w, next, into };
-}
-// The page turned to another size once its lines are saved, and opened again from the store: laid in another number
-// of columns, each line still right under the unit it was written under
-async function turned(page, c, name, size, under, errors) {
-  await until(async () => (await units(page)).every(u => u.id > 0), 'the lines saved', 8000);
+// The page turned to another size and opened again from the store: laid in another number of columns
+async function turned(page, c, name, size, errors) {
   const columns = async () => new Set((await units(page)).map(u => Math.round(u.x))).size,
     were = await columns(),
     n = (await units(page)).length;
@@ -227,26 +173,10 @@ async function turned(page, c, name, size, under, errors) {
   await opened(page, n);
   // (WebKit tells the requests a reload cut off, HQ's events and the like, as refused: not the page's.
   errors.splice(before, Infinity, ...errors.slice(before).filter(e => !/due to access control checks/.test(e)));
-  const all = await still(page);
+  await still(page);
   assert.notEqual(await columns(), were, `${name}: turned, the page laid in another number of columns`);
-  for (const at of under) stays(all, at, `${name}, turned: the line written under unit ${at.id}`);
   await sound(page, `${name}, turned`);
   await c.shot(`units-${name}-4-turned`, page);
-}
-// A line written under a unit (written) still by it: the unit grown to hold it, the next unit in its column holding it
-// over its top, or a unit not the seed's right under it in its column, the space between units apart
-function stays(all, { id, down, next, into }, what) {
-  const above = all.find(u => u.id === id),
-    seeded = new Set(SEED.groups.map(g => g.id)),
-    made = all.find(u => !seeded.has(u.id) && Math.abs(u.x - above.x) < 1 && u.y > above.bottom);
-  assert.ok(
-    into === id
-      ? above.h / above.w >= down
-      : into === next
-        ? all.some(u => u.id === next)
-        : made && made.y - above.bottom <= 40,
-    `${what} stays by the unit it was written under (${JSON.stringify({ above, made, down, next, into })})`,
-  );
 }
 // HQ at a size on a seed (the story's own by default), a mouse's desk: its notebook as narrow or wide as the board
 // dragged it (booklayout.js keep).
@@ -257,41 +187,6 @@ export async function deskAt(browser, c, size, seed = SEED) {
   await noMicrophone(context);
   await bookWide(context, viewport, book);
   return context;
-}
-// A unit's room dragged 80 px taller by its handle: the first handle on screen
-async function dragRoom(page, name) {
-  // (one scrolled up into the top of the screen where none shows there: a line written in a room grows it, its handle
-  // further down)
-  const low = await page.evaluate(() =>
-    [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-room-handle')]
-      .map(h => h.getBoundingClientRect())
-      .every(r => r.top <= 0 || r.bottom >= innerHeight - 200)
-      ? [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-room-handle')]
-          .map(h => h.getBoundingClientRect().top)
-          .find(top => top >= innerHeight - 200)
-      : undefined,
-  );
-  if (low !== undefined) {
-    const paper = await page.locator('#book .bk-desk').boundingBox();
-    await page.mouse.move(paper.x + paper.width / 2, paper.y + paper.height / 2);
-    await page.mouse.wheel(0, low - 200);
-    await page.waitForTimeout(800);
-  }
-  const b = await page.evaluate(() => {
-    const on = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-room-handle')]
-      .map(h => Object.assign(h.getBoundingClientRect().toJSON(), { unit: h.dataset.unit }))
-      .find(r => r.top > 0 && r.bottom < innerHeight - 200);
-    return on && { x: on.left + on.width / 2, y: on.top + on.height / 2, unit: Number(on.unit) };
-  });
-  assert.ok(b, `${name}: a unit's handle shows`);
-  const tall = () => units(page).then(all => all.find(u => u.id === b.unit).h),
-    was = await tall();
-  await page.mouse.move(b.x, b.y);
-  await page.mouse.down();
-  for (let k = 1; k <= 8; k++) await page.mouse.move(b.x, b.y + k * 10);
-  await page.mouse.up();
-  // The press is the handle's, never the pen's.
-  await until(async () => (await tall()) >= was + 70, `${name}: the room dragged 80 px taller`, 4000);
 }
 // Scrolled to its foot: the last unit up on the page, and every unit clear of the tools
 async function atFoot(page, c, name) {

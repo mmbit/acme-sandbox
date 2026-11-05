@@ -1,7 +1,7 @@
 // node --test src/turns.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fewAtOnce } from './turns.ts';
+import { fewAtOnce, roomInTurn } from './turns.ts';
 
 // a run that ends when its test says so
 function held() {
@@ -67,4 +67,53 @@ test('only a run that had to wait hears how long', async () => {
   await one;
   assert.equal(heard.length, 1);
   assert.ok(heard[0] >= 0);
+});
+
+test('a waiting run of urgent work takes the next place before those that came earlier, which keep their order', async () => {
+  const turn = fewAtOnce(1),
+    started: string[] = [],
+    urgent = new Set(['c']),
+    runs = ['a', 'b', 'c', 'd'].map(name => ({ name, ...held() }));
+  const all = runs.map(r =>
+    turn(
+      () => {
+        started.push(r.name);
+        return r.run();
+      },
+      undefined,
+      () => urgent.has(r.name),
+    ),
+  );
+  await settle();
+  // (urgency read as the place frees: d's came while it waited)
+  urgent.add('d');
+  for (const r of runs) {
+    r.end();
+    await settle();
+  }
+  await Promise.all(all);
+  assert.deepEqual(started, ['a', 'c', 'd', 'b']);
+});
+
+test("while urgent work's check waits for room the others leave it the room, and take it once it has it", async () => {
+  let room = false;
+  const ticks: (() => void)[] = [];
+  const tick = () => new Promise<void>(go => ticks.push(go));
+  const roomBack = roomInTurn(async () => room, tick, 15_000);
+  const waiter = (name: string, first: boolean) => roomBack(() => first).then(() => name);
+  const back: string[] = [];
+  const ordinary = waiter('ordinary', false).then(name => back.push(name));
+  const urgent = waiter('urgent', true).then(name => back.push(name));
+  await settle();
+  room = true;
+  // the ordinary one asks first, sees the urgent one waiting and leaves the room; the urgent one takes it
+  ticks.shift()!();
+  await settle();
+  assert.deepEqual(back, []);
+  ticks.shift()!();
+  await urgent;
+  assert.deepEqual(back, ['urgent']);
+  ticks.shift()!();
+  await ordinary;
+  assert.deepEqual(back, ['urgent', 'ordinary']);
 });

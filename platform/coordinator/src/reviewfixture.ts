@@ -48,12 +48,13 @@ function storePr(
     removed?: number;
     reviewClass?: string;
     verdict?: string;
+    expedited?: boolean; // merged ahead of its review (review.ts mergeExpedited)
   } = {},
 ) {
   return db
     .prepare(
-      `insert into prs (number, branch, author, status, files, sha, round, since, added, removed, review_class, verdict)
-      select ?, 'job/' || id, agent, ?, ?, ?, ?, ?, ?, ?, ?, ? from jobs where id = ? on conflict(number) do update set status = excluded.status, round = excluded.round, sha = excluded.sha`,
+      `insert into prs (number, branch, author, status, files, sha, round, since, added, removed, review_class, verdict, expedited)
+      select ?, 'job/' || id, agent, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? from jobs where id = ? on conflict(number) do update set status = excluded.status, round = excluded.round, sha = excluded.sha`,
     )
     .run(
       number,
@@ -66,6 +67,7 @@ function storePr(
       recorded.removed ?? null,
       recorded.reviewClass ?? null,
       recorded.verdict ?? null,
+      recorded.expedited ? 1 : 0,
       job,
     );
 }

@@ -10,7 +10,7 @@
 // run still past the cores, even right after a cores stop (priority.ts, which rechecks each process and counts only
 // the live ones' cores). A disk stop waits for a look with no other stop, though disk use is still sampled.
 // - Memory: a job past mostMb in all, and the job holding the most past shareMb while the worker is starved (no slot
-//   could start long enough, and work is waiting).
+//   could start long enough, and work is waiting), urgent work's (`first`) left out.
 // - Processes: a job with more than `processes` non-CLI processes.
 // - CPU: a job's processes using more than half the cores get nice 10, and their sessions' groups too (the kernel shares
 //   the CPU between sessions first: sched_autogroup), so the others' come first. Renicing another uid's process takes
@@ -239,6 +239,9 @@ export type ShareLimits = {
   cores: number;
   processes: number;
   starved: boolean;
+  // the jobs (uids) of urgent work (the heartbeat's `first`): a starved worker blocks an ordinary job's run, never theirs,
+  // so their checks keep the room and the others' yield
+  first?: Set<number>;
   hot?: Set<number>;
   workerSessionId: number;
   disk?: Map<number, DiskUse>;
@@ -246,9 +249,10 @@ export type ShareLimits = {
 
 function selectBlock(jobs: JobUse[], cli: Set<number>, limits: ShareLimits): Block | undefined {
   const others = (u: JobUse) => u.processes.filter(p => !cli.has(p.pid));
-  const heaviestPast = (memoryMb: number) =>
-    jobs.filter(u => u.memoryMb > memoryMb && others(u).length).sort((a, b) => b.memoryMb - a.memoryMb)[0];
-  const memory = heaviestPast(limits.mostMb) ?? (limits.starved ? heaviestPast(limits.shareMb) : undefined);
+  const heaviestPast = (memoryMb: number, among = jobs) =>
+    among.filter(u => u.memoryMb > memoryMb && others(u).length).sort((a, b) => b.memoryMb - a.memoryMb)[0];
+  const ordinary = jobs.filter(u => !limits.first?.has(u.uid));
+  const memory = heaviestPast(limits.mostMb) ?? (limits.starved ? heaviestPast(limits.shareMb, ordinary) : undefined);
   const crowded = jobs.find(u => others(u).length > limits.processes);
   const disk = jobs.find(u => {
     const use = limits.disk?.get(u.uid);

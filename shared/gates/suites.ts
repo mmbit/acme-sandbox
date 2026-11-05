@@ -90,8 +90,14 @@ function runsOf(root: string, files: string[]): Run[] {
   return [...runs.values()];
 }
 
-// The cores the tests have: a container's CPU limit where it has one (a lent machine's helper), else all of them
+// The cores the tests have: a container's CPU limit where it has one (a lent machine's helper), else all of them; at
+// most TESTS_CONCURRENCY, which the worker sets for a push's tests run on itself, so their memory stays bounded beside
+// the jobs (worker.ts TESTS_HERE_CONCURRENCY)
 function cores() {
+  const most = Number(process.env.TESTS_CONCURRENCY) || Infinity;
+  return Math.max(1, Math.min(most, machineCores()));
+}
+function machineCores() {
   try {
     const [quota, period] = readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(' ');
     if (quota !== 'max')

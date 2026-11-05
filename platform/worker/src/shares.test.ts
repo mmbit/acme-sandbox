@@ -62,6 +62,15 @@ test('past its share a job has its heaviest run blocked, never its CLI; starved,
   assert.equal(overShare(mid, cli, opts).block, undefined, 'under its share, and nobody waits');
   const starved = overShare(mid, cli, { ...opts, starved: true }).block!;
   assert.deepEqual([starved.root.pid, starved.share], [11, 1536], 'the job holding the most');
+  const spared = overShare(mid, cli, { ...opts, starved: true, first: new Set([1501]) }).block!;
+  assert.deepEqual(
+    [spared.root.pid, spared.uid],
+    [21, 1502],
+    "urgent work's run keeps the room, an ordinary one yields",
+  );
+  const alone = overShare(mid, cli, { ...opts, starved: true, first: new Set([1501, 1502]) });
+  assert.equal(alone.block, undefined, 'only urgent work past the share: none blocked for the starved worker');
+  assert.equal(overShare(hog, cli, { ...opts, first: new Set([1501]) }).block!.root.pid, 11, 'past its most, as any');
 });
 
 test('a run is the command the CLI started, with everything under it: the browser goes with all its pages', () => {

@@ -21,7 +21,7 @@ import { BOARD } from './book.ts';
 import { note, shown, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
 import { SLIP_MAX, addSlip, slipOf, slipRow, type More, type Slip } from './bookslips.ts';
-import { onCall, rootOn, tryHolds } from './booktry.ts';
+import { rootOn, tryHolds } from './booktry.ts';
 import { pick } from './bookpick.ts';
 import { branchVersion, overMain } from './trybranch.ts';
 import { partsOfAnswer } from './answerparts.ts';
@@ -41,11 +41,9 @@ const EXPECT_MAX = 12;
 if (lacks('book_notes', 'reason')) db.exec('alter table book_notes add column reason integer');
 
 // ---------------------------------------------------------------- the quick run
-// The owner's quick run for a verdict 'answer' (booktry.ts rootOn: who answers). Not on a live call's page: there the
-// call's agent is with the board (booktry.ts onCall).
+// The owner's quick run for a verdict 'answer' (booktry.ts rootOn: who answers)
 const PURPOSE = 'ink-answer';
 export function answerNow(t: Target, verdict: { id: number; why: string }) {
-  if (onCall(t) !== null) return null;
   const root = rootOn(t);
   if (root === null) return null;
   forgetReason(t);

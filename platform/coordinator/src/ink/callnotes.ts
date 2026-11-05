@@ -26,7 +26,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { db, inOneStep } from '../db.ts';
-import { onCall, toList } from '../callitems.ts';
+import { onCall, ownerOn, toList } from '../callitems.ts';
 import { ceo, companyTime } from '../company.ts';
 import { findAgent } from '../jobs.ts';
 import { keysAgent } from '../memory.ts';
@@ -39,6 +39,8 @@ import { pictureOf } from './bookpicture.ts';
 import { changed, endOf, newPage, ownNotebook, pageOf, pageRow, shut, type NotebookPage } from '../notebook.ts';
 import { addPicture, addWords } from '../notebookscraps.ts';
 import { partsOf, type Group } from '../notebookgroups.ts';
+import { dropEmpty } from '../notebookempty.ts';
+import { hasGroups } from '../notebookorder.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { carryParts } from '../notebookcarry.ts';
 import { throwAway } from './bookcalls.ts';
@@ -105,19 +107,12 @@ function openPage(call: number) {
   return open?.id;
 }
 
-// POST /api/notebooks/call { call, page?, design? }: the live call's notes page, for HQ to open as the call starts;
-// page: one of the board's pages brought to the call by its folded corner, put on it as its first scrap (once); design
-// (true): it's a design session's, a sketch page from now on (notebook.ts sketch), its units so far pinned where the
-// masonry laid them as HQ first lays it as a canvas (sketchcanvas.js).
+// POST /api/notebooks/call { call, page? }: the live call's notes page, for HQ to open as the call starts; page: one of
+// the board's pages brought to the call by its folded corner, put on it as its first scrap (once).
 export async function openFor(b: any) {
   const call = Number(b?.call);
   const p = Number.isInteger(call) && call > 0 ? pageFor(call) : null;
   if (!p) return [404, 'no live call of yours by that number'] as Refused;
-  if (b.design != null && b.design !== true) return [400, 'design is true'] as Refused;
-  if (b.design && !p.sketch) {
-    db.prepare('update book_pages set sketch = 1 where id = ?').run(p.id);
-    changed(p.notebook, p.id);
-  }
   const brought = b.page == null ? null : (pageRow(Number(b.page), BOARD) ?? null);
   if (b.page != null && !brought) return [404, 'no such page to bring'] as Refused;
   if (brought && brought.id !== p.id && !hasGroups(p.id)) await bring(p, brought);
@@ -180,14 +175,9 @@ function noteOf(b: any, call: number) {
     return [400, `goal: why the board wants it, in its own terms, one line of at most ${GOAL} characters`] as Refused;
   if (b.owner != null && !(typeof b.owner === 'string' && findAgent(b.owner)))
     return [400, 'owner: the id of the agent whose work it is, or left out'] as Refused;
-  // (a call about a card for keys is its own agent's alone: memory.ts keysAgent.)
-  const keys = keysAgent(call);
-  if (keys && b.owner != null && b.owner !== keys)
-    return [
-      400,
-      `owner: this call is about a card for keys, so its work is ${keys}'s alone: name ${keys} or leave it out`,
-    ] as Refused;
-  return { words, goal, owner: (b.owner ?? keys) as string | null };
+  const owner = ownerOn(call, b.owner ?? null);
+  if (isRefused(owner)) return owner;
+  return { words, goal, owner };
 }
 // write_down's answer: the note's id and its item's, and a picture's box
 function writtenDown(g: Group, pictured: boolean, item: number, words: string) {
@@ -304,6 +294,7 @@ export function ended(call: number) {
   const p = pageRow(open, BOARD)!;
   // (what the book wrote on it the old way. The board's notes stay the call's: none goes in by itself.)
   carryParts(p, []);
+  dropEmpty(p.id); // (a scrap nobody wrote on.)
   if (!hasGroups(p.id)) {
     throwAway(p.id);
     db.prepare('delete from book_pages where id = ?').run(p.id);
@@ -329,8 +320,6 @@ const pageOfCall = (call: number) =>
     ?.id;
 // Which page is the call's (the call's number its one parameter.)
 const CALL_PAGE = "kind = 'call' and call = ? and notebook is not null";
-const hasGroups = (page: number) =>
-  !!db.prepare('select 1 from notebook_groups where page = ? and parent is null and deleted is null limit 1').get(page);
 const pageAnchor = (id: number): Anchor => ({
   v: 1,
   url: `/api/book/picture?id=${id}`,

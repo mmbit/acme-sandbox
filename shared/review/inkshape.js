@@ -38,8 +38,11 @@ export function fills(strokes) {
   }
   return out;
 }
-// A unit's strokes in the order they're laid: a highlighter's under the ink, as on paper, each in its own order
-export const layered = strokes => [...strokes.filter(s => s.alpha < 1), ...strokes.filter(s => !(s.alpha < 1))];
+// A unit's strokes in the order they're laid: the more see-through under the less, so the highlighter's always lies
+// under the pencil's and the pen's, whichever came first, as on paper; each in its own order.
+export const layered = strokes => strokes.toSorted((a, b) => opacityOf(a) - opacityOf(b));
+// A stroke's opacity: 1 for a pen's
+export const opacityOf = s => (s.alpha < 1 ? s.alpha : 1);
 // A filled shape's inside: its points as one polygon, turned clockwise on screen like the discs and bands, so the
 // nonzero rule adds it to them and never cuts a hole where they overlap
 function inside(pts) {

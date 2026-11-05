@@ -199,7 +199,7 @@ export async function toChapter(page, chapter, press = loc => loc.click({ timeou
   if (!(await out.count())) await press(tab.locator('.bk-mk-icon'));
   await out.waitFor({ timeout: LOADED_MS });
   await press(tab);
-  await out.waitFor({ state: 'detached', timeout: LOADED_MS });
+  await out.waitFor({ state: 'hidden', timeout: LOADED_MS });
 }
 
 // A part of review mode's (CSS), inside its shadow root
@@ -300,4 +300,35 @@ export function inkAt(box) {
     for (let i = 3; i < data.length; i += 4) if (data[i] > 128) n++;
   }
   return n;
+}
+
+// A scrap on the grid opened by a pen's tap on its card (pen: hands.mjs's), its sheet shown: the opened scrap's group
+// id and the sheet's box on the screen. at: where to tap instead of the card's middle (a gap between cards makes a new
+// scrap there).
+export async function openScrap(page, pen, gid, at) {
+  // (the card shown: a page kept laid out of sight holds the same scrap)
+  const card =
+    gid === undefined
+      ? null
+      : await page.locator(`#book .bk-unit[data-unit="${gid}"]`).filter({ visible: true }).first().boundingBox();
+  await page.evaluate(() => {
+    window.__scrapOpened = null;
+    document.addEventListener('book:scrap-open', e => (window.__scrapOpened = e.detail.gid), { once: true });
+  });
+  await pen.tap(at ?? middleOf(card));
+  const opened = await until(() => page.evaluate(() => window.__scrapOpened), 'a scrap opened (book:scrap-open)');
+  const sheet = page.locator('#book .bk-sheet');
+  await sheet.waitFor({ state: 'visible', timeout: LOADED_MS });
+  // (its pick-up's flight over)
+  await page.waitForFunction(() => !document.querySelector('#book .bk-lift[data-flying]'));
+  return { gid: opened, sheet: await sheet.boundingBox() };
+}
+// The opened scrap put back by its sheet's Klaar, tapped with the pen, the grid shown again
+export async function closeScrap(page, pen) {
+  await pen.tap(middleOf(await page.locator('#book .bk-sheet-keys .bk-sheet-done').boundingBox()));
+  await page.locator('#book .bk-sheet').waitFor({ state: 'hidden', timeout: LOADED_MS });
+  // (and the flight down onto its card over)
+  await page.waitForFunction(
+    () => !document.querySelector('#book .bk-pages[data-open]') && !document.querySelector('#book .bk-lift'),
+  );
 }

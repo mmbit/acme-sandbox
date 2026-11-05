@@ -21,8 +21,10 @@ import { BOARD } from './ink/book.ts';
 import { addSlip } from './ink/bookslips.ts';
 import { callPage } from './ink/callpage.ts';
 import { liveCall } from './ink/callnotes.ts';
-import { row } from './notebookgroups.ts';
-import { addWords, createPageScrap } from './notebookscraps.ts';
+import { pointedWhole } from './ink/callpointers.ts';
+import { insertGroup, row } from './notebookgroups.ts';
+import { createPageScrap } from './notebookscraps.ts';
+import { emptyGroup } from '../../hq/shell/ink/notebookparts.js';
 import { pageRow, type NotebookPage } from './notebook.ts';
 import { isRefused, type Refused } from './pagechecks.ts';
 
@@ -55,10 +57,11 @@ export const JSON_MAX = Math.ceil((FILES_MOST * 4) / 3) + 1_000_000;
 export const PAGE_JSON_MAX = 12 * HTML_MOST + (1 << 16);
 const PATH = /^(?!.*(?:^|\/)\.)[\w.-]+(?:\/[\w.-]+)*$/;
 // Its picture: the page at an iPad's size in landscape, a second to settle (one that never does is taken as it is
-// then), and how long the browser may take in all: the line waits 15 s for the tool's answer
+// then), and how long the browser may take in all: the line waits 15 s for the tool's answer, and a busy server takes
+// 2 to 6 s for a picture and past 8 now and then
 const SEEN = { width: 1180, height: 820 },
   SETTLE_MS = 1000,
-  PICTURE_MS = 8000;
+  PICTURE_MS = 12_000;
 // (the frame's own address in the picture's browser: every request is answered from the prototype's files, none
 // reaches a network. Each answer turns script off, in the frames below it too, as the coordinator's Chromium has no
 // sandbox of its own: chromium.ts.)
@@ -145,7 +148,6 @@ async function save(call: number, by: string, b: any, files: Map<string, Buffer>
   for (const [path, bytes] of files) keepFile(`${DIR}/${id}/${path}`, bytes);
   const p = byId(id)!;
   const clip = clipOn(at, p, picture);
-  if (isRefused(clip)) return clip;
   const ok = `${p.name} v${p.version} is up on both iPads: a card slides in, and it's a clip in the call's notes (#${clip.grp}) \
 beside its other versions. Its address: ${linkOf(p) ?? '(none: no domain)'}`;
   if (!seen) return { ok, id, version: p.version, link: linkOf(p) };
@@ -161,9 +163,10 @@ beside its other versions. Its address: ${linkOf(p) ?? '(none: no domain)'}`;
     picture: { type: 'image/jpeg', data: small.toString('base64') },
   };
 }
-// Its clip on the call's page: the note its versions are under, while it's still there, else a new one, with this
-// version's frame under it; and its card on every screen. The note has no room to write of its own, so its versions
-// hang right under its name, one thing, and the next note stands apart (masonry.js GAP.)
+// Its clip on the call's page: the group its versions are under, while it's still there, else a new one, with this
+// version's frame under it; and its card on every screen. The group has nothing on it and no height: the clip is its
+// versions alone, no card over them (HQ's bookunits.js, the page's picture), and the next unit stands apart (masonry.js
+// GAP). Its name is call_prototypes' (listFor), not words on the page.
 function clipOn(at: { agent: string; page: NotebookPage }, p: Prototype, picture: Buffer) {
   // (the newest version with a clip: one whose clip couldn't be made has none.)
   const had = db
@@ -173,8 +176,9 @@ function clipOn(at: { agent: string; page: NotebookPage }, p: Prototype, picture
     .get(p.call, p.name) as { grp: number } | undefined;
   const kept = had && row(had.grp);
   const g =
-    kept && kept.page === at.page.id && kept.deleted === null ? kept : addWords(at.page, at.agent, p.name, { room: 0 });
-  if (isRefused(g)) return g;
+    kept && kept.page === at.page.id && kept.deleted === null
+      ? kept
+      : insertGroup(at.page, 'note', at.agent, emptyGroup, { h: 0 });
   const slip = addSlip(null, p.by, null, p.about, {
     grp: g.id,
     style: 'version',
@@ -322,7 +326,15 @@ export function markOnCall(b: any, by: (page: number) => string | undefined = ()
   if (!at || isRefused(at)) return [404, 'The call had ended.'] as Refused;
   const who = by(at.page.id);
   if (!who) return [404, 'The call had ended.'] as Refused;
-  return createPageScrap({ anchor: b.anchor, snip: b.snip, words: '', said: null }, pageRow(at.page.id, BOARD)!, who);
+  const made = createPageScrap(
+    { anchor: b.anchor, snip: b.snip, words: '', said: null },
+    pageRow(at.page.id, BOARD)!,
+    who,
+  );
+  // (on the call's artifact it points: gone once the agent's turn on it is done, ink/callpointers.ts.)
+  const g = !isRefused(made) && row(made.id);
+  if (g) pointedWhole(g);
+  return made;
 }
 
 // ---------------------------------------------------------------- for the guest's room

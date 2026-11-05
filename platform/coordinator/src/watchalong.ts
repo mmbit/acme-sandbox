@@ -18,13 +18,16 @@ import { DATA_DIR, KITS_DIR, ORIGIN } from './config.ts';
 import { findFile, hqDir } from './files.ts';
 import { timeZone } from './company.ts';
 import * as store from '../../../shared/watchalong/store.ts';
+import * as playback from '../../../shared/watchalong/playback.ts';
 import { Moments, lines } from '../../../shared/watchalong/moments.ts';
 import { LOADING_MS, Mirrors, type Shows } from '../../../shared/watchalong/mirror.ts';
 import { WHEN_WORDS, when } from './watchtimes.ts';
 import { regionOf } from './region.ts';
 import { mirrored } from './previewfiles.ts';
+import { webFonts } from './webfonts.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 import { opensCall } from './pictures.ts';
+import { exclude } from './latency.ts';
 import { refuse, reply } from './uploads.ts';
 
 const kept = store.open(db, `${DATA_DIR}/watchalong`, (id, events, at) => heard(id, events, at));
@@ -129,14 +132,18 @@ type Watch = {
   tap?: { x: number; y: number; version: number };
 };
 const watches = new Map<number, Watch>();
-// What the replay may load, never a page or a script: HQ's own pictures and stylesheets, found as HQ serves them (its
-// files, a kit's HQ app's), and a preview's pictures, fonts and stylesheets when the recording was on that preview, its
-// page or a frame's, and the session may show it (shows) (previewfiles.ts mirrored). Nothing from another host.
-const ASSETS = new Set(['.css', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+// What the replay may load, never a page or a script: HQ's own pictures, fonts and stylesheets, found as HQ serves them
+// (its files, a kit's HQ app's), and a preview's pictures, fonts and stylesheets when the recording was on that preview,
+// its page or a frame's, and the session may show it (shows) (previewfiles.ts mirrored), and the fonts HQ's looks load
+// from Google Fonts (webfonts.ts). Nothing from another host.
+// (HQ's fonts: the Notebook's lettering)
+const ASSETS = new Set(['.css', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.woff2']);
+const webFont = webFonts();
 export const mirrors = new Mirrors(REPLAY, async ({ url }, pages) => {
   const asked = new URL(url),
     { origin, pathname } = asked;
-  if (origin !== ORIGIN) return pages.has(origin) ? fromPreview(asked) : null;
+  // (fromGoogle)
+  if (origin !== ORIGIN) return pages.has(origin) ? fromPreview(asked) : fromGoogle(asked);
   if (!ASSETS.has(extname(pathname).toLowerCase())) return null;
   const kit = /^\/kits\/([a-z0-9][a-z0-9-]*)(\/.+)$/.exec(pathname);
   const found = kit ? findFile(`${KITS_DIR}/${kit[1]}/hq`, kit[2]) : findFile(hqDir(pathname), pathname);
@@ -152,6 +159,11 @@ const shows =
 const fromPreview = (url: URL) =>
   mirrored(url, LOADING_MS).catch(err => {
     console.error(`Watch-along mirror: a file of ${url.host} didn't load:`, err);
+    return null;
+  });
+const fromGoogle = (url: URL) =>
+  webFont(url, LOADING_MS).catch(err => {
+    console.error(`Watch-along mirror: a web font of ${url.host} didn't load:`, err);
     return null;
   });
 // (a mouse or a finger moving changes nothing on screen)
@@ -241,7 +253,8 @@ picture of the screen as ${their} words ended when it changed, the last tap ring
 now, a moment before, a part zoomed in, or the moments since a time. ${Who} may describe things loosely ("this one", \
 "up here"): trust the screen, and ask about what's on it when it isn't clear. Talk about what you see as someone \
 looking over ${their} shoulder would ("the blue button at the bottom"), and never read the lines, their numbers or \
-times out. While the screen is paused you see nothing of it.)`;
+times out. A box marked "picture not captured" stands for a picture your copy of the screen couldn't show: it is \
+there on ${their} screen, so never raise it. While the screen is paused you see nothing of it.)`;
 };
 
 // What each purpose's agent is told once the screen is shown. A purpose without a briefing is never watched for an agent.
@@ -320,16 +333,18 @@ export async function screen(b: Record<string, unknown>) {
   if (region === null) return [400, 'region is { x, y, width, height }, each a fraction of the screen from 0 to 1'];
   const spec = String(b.at ?? 'now').trim();
   if (spec === 'now' || spec === '') {
-    const picture = await mirrors.now(watch.id, { long: TOOL_PX, region });
+    const picture = await exclude(mirrors.now(watch.id, { long: TOOL_PX, region }));
     return picture ? pictured(picture.bytes, `The screen now (${clock(Date.now() - watch.clockMs)})`) : [404, NOTHING];
   }
   const time = when(spec, watch);
   if (time === undefined) return [400, WHEN_WORDS];
   const moment = spec.startsWith('#') ? watch.moments.list.find(m => m.n === Number(spec.slice(1))) : undefined;
   const ring = moment?.kind === 'tap' ? { x: moment.x!, y: moment.y! } : undefined;
-  const recording = store.read(kept, watch.id);
-  const picture =
-    recording && (await mirrors.at(recording.events, time, { long: TOOL_PX, region, ring }, shows(recording.session)));
+  // (read on playback.ts's thread: a long share's recording would hold the loop.)
+  // (its waits there and on Chromium hold nothing of HQ's: latency.ts exclude.)
+  const session = store.find(kept, watch.id);
+  const events = session && (await exclude(playback.at(kept.dir, [session], time)));
+  const picture = events && (await exclude(mirrors.at(events, time, { long: TOOL_PX, region, ring }, shows(session))));
   return picture
     ? pictured(picture.bytes, `The screen at ${clock(time)}${moment ? ` (#${moment.n})` : ''}`)
     : [404, NOTHING];
@@ -342,29 +357,23 @@ const pictured = (jpeg: Buffer, words: string) => ({
 });
 
 // ---------------------------------------------------------------- watching a call back
-// A call's recording, every session of it in order (a call minimised again after a restore records anew), with its
-// moments folded and settled: what HQ's player and hq call's moments and screen read. clockMs: how far the page's clock
-// ran behind the server's (the sessions are one page's, so one gap). undefined: nothing recorded.
-export function playback(purpose: string, ref: string) {
-  const recordings = store
-    .sessionsOf(kept, purpose, ref)
-    .map(session => store.read(kept, session.id))
-    .filter(recording => recording?.events.length) as store.Recording[];
-  if (!recordings.length) return undefined;
-  const events = recordings.flatMap(recording => recording.events);
-  const moments = new Moments();
-  moments.add(events);
-  moments.settle(Infinity);
+// A call's recording, every session of it in order (a call minimised again after a restore records anew), read on
+// playback.ts's thread: its moments folded and settled, its times, the events a replay to a time needs (at) and every
+// event (every), as HQ's player and hq call's moments and screen read them. undefined: nothing recorded. A request's
+// waits on that thread hold nothing of HQ's (latency.ts exclude).
+export async function callPlayback(call: number) {
+  const sessions = store.sessionsOf(kept, CALL, String(call)).filter(session => session.bytes > 0);
+  const recording = sessions.length ? await exclude(playback.played(kept.dir, sessions)) : undefined;
+  if (!recording) return undefined;
   // (shows: what its sessions may show, for the mirror.)
-  const shown = recordings.map(recording => shows(recording.session));
+  const shown = sessions.map(shows);
   return {
-    events,
-    clockMs: Math.min(...recordings.map(recording => recording.clockMs)),
-    moments: moments.list,
+    ...recording,
     shows: (origin: string) => shown.some(may => may(origin)),
+    at: (time: number) => exclude(playback.at(kept.dir, sessions, time)),
+    every: () => exclude(playback.every(kept.dir, sessions)),
   };
 }
-export const callPlayback = (call: number) => playback(CALL, String(call));
 
 // Whether a call has something recorded to watch back (the call log's "Watch it back")
 export const recorded = (call: number) => store.sessionsOf(kept, CALL, String(call)).some(session => session.bytes > 0);

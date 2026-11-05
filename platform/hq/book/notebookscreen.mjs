@@ -3,6 +3,10 @@
 import assert from 'node:assert/strict';
 import { pressAlong, until } from './kit.mjs';
 
+// The page shown, as a selector: the opened scrap's while one is open (its sheet over the grid, which still shows under
+// its backdrop), else the first page not hidden.
+export const SHOWN =
+  '#book:has(.bk-page[data-focus]) .bk-page[data-focus], #book:not(:has(.bk-page[data-focus])) .bk-page:not([hidden])';
 // The groups drawn on the page shown, each top-level group a scrap unit (bookunits.js), by group
 export const clipped = page =>
   page.evaluate(() => {
@@ -11,11 +15,15 @@ export const clipped = page =>
       .flatMap(p => [...p.querySelectorAll('.bk-unit')].map(u => Number(u.dataset.unit)))
       .sort((a, b) => a - b);
   });
-// A group's unit (g: its id; null: the page's first) picked with Select, by a click or a tap (how), and the button named
-// on Select's bar pressed the same way: its Delete, its Move to page…
+// A group's unit (g: its id; null: the page's first) picked with Select, by a click or a tap (how), in the opened scrap
+// while one is open, and the button named on Select's bar pressed the same way: its Delete, its Move to page…
 export async function fromBar(page, g, name, how = 'click') {
   await page.locator('#book [data-island=tools] [data-mode=select]')[how]();
-  const unit = page.locator(`#book .bk-page:not([hidden]) .bk-unit${g == null ? '' : `[data-unit="${g}"]`}`).first(),
+  const unit = page
+      .locator(SHOWN)
+      .first()
+      .locator(`.bk-unit${g == null ? '' : `[data-unit="${g}"]`}`)
+      .first(),
     press = await shownPoint(page, unit);
   assert.ok(press, 'a point of the unit shows on the page');
   if (how === 'tap') await page.touchscreen.tap(...press);
@@ -70,20 +78,29 @@ export const stamp = page =>
   });
 // Points on the page shown (page px, the seed's pages at 0, 0) on the screen. With a unit's id: points in that unit's
 // own px, as the store keeps its things, moved to where the masonry put it (bookunits.js): a unit the page doesn't show
-// fails.
+// fails. While a scrap is open, on it: its things are in its own px from 0, 0.
 export const onPaper = (page, points, unit = null) =>
   page.evaluate(
-    ([points, unit]) => {
-      const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
-      const r = shown.getBoundingClientRect(),
+    ([points, unit, selector]) => {
+      const shown = document.querySelector(selector),
+        r = shown.getBoundingClientRect(),
         k = r.width / shown.offsetWidth,
         card = unit === null ? null : shown.querySelector(`.bk-unit[data-unit="${unit}"]`),
         [ox, oy] = unit === null ? [0, 0] : [parseFloat(card.style.left), parseFloat(card.style.top)];
       return points.map(([x, y]) => [r.left + (x + ox) * k, r.top + (y + oy) * k]);
     },
-    [points, unit],
+    [points, unit, SHOWN],
   );
-// A column of the screen (x) in a unit's own px, as the store keeps its ink: onPaper's, the other way.
+// How many screen px a px of the page shown is (its zoom).
+export async function zoomOf(page) {
+  const [[x0], [x1]] = await onPaper(page, [
+    [0, 0],
+    [1, 0],
+  ]);
+  return x1 - x0;
+}
+// A column of the screen (x) in a unit's own px, as the store keeps its ink (null: in the page shown's px, an opened
+// scrap's own): onPaper's, the other way.
 export async function inUnit(page, unit, x) {
   const along = [0, 1].map(dx => [dx, 0]),
     [[x0], [x1]] = await onPaper(page, along, unit);
@@ -152,7 +169,7 @@ export async function inSight(page, on, id, at) {
     id,
     page: on,
   });
-  await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${id}"]`).waitFor();
+  await page.locator(SHOWN).first().locator(`.bk-unit[data-unit="${id}"]`).waitFor();
   let was = '';
   return until(async () => {
     const points = await onPaper(page, at, id),

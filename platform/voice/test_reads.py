@@ -6,7 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import reads
 
-REPORT = """(the report of 2026-10-25T20:40:16Z)
+WRITTEN = '(the report of 2026-10-25T20:40:16Z, written 34 min ago)'  # (hq report's first line)
+REPORT = f"""{WRITTEN}
 # Server status
 == memory
 Mem: 15613 used 6176
@@ -107,20 +108,31 @@ class Report(unittest.TestCase):
         self.assertEqual(argv, ['hq', 'report'])
         self.assertIn('(the opening) (2 lines)\n== memory (1 lines)\n== work (the latest 30) (2 lines)', text)
         (ok, text), _ = self.report({'section': 'WORK'})
-        self.assertEqual(text, '== work (the latest 30)\njob 18510 bolt done\njob 18511 bolt queued')
+        self.assertEqual(text, f'{WRITTEN}\n== work (the latest 30)\njob 18510 bolt done\njob 18511 bolt queued')
         (ok, text), _ = self.report({'find': '18511'})
-        self.assertEqual(text, '== work (the latest 30)\njob 18511 bolt queued')
+        self.assertEqual(text, f'{WRITTEN}\n== work (the latest 30)\njob 18511 bolt queued')
         self.assertFalse(self.report({'section': 'nothing like it'})[0][0])
+
+    def test_every_answer_says_when_the_report_was_written(self):
+        """A report that missed its writes reads as old, not live: a section, a find, the list and a find with no line
+        each start with the report's time and age."""
+        for a in ({}, {'section': 'work'}, {'find': '18511'}, {'find': 'job 24358'}, {'section': 'voice', 'find': 'turn'}):
+            (ok, text), _ = self.report(a)
+            self.assertTrue(ok, text)
+            self.assertEqual(text.split('\n', 1)[0], WRITTEN, a)
+        long = REPORT.replace('job 18510 bolt done\n', ''.join(f'job {i} ' + 'x' * 1000 + '\n' for i in range(200)))
+        (ok, page), _ = self.report({'section': 'work', 'from': 60}, long)
+        self.assertTrue(page.startswith(f'{WRITTEN}\njob '), page[:120])
 
     def test_what_changed_since_a_time_by_its_hunks(self):
         """git names a hunk by the heading above it, so a change on a section's first line comes in the hunk of the
         section before: it's found by its own heading too."""
         before = REPORT.replace('Mem: 15613 used 6176\n', ''.join(f'Mem line {i}\n' for i in range(6)))
         after = before.replace('Mem line 1', 'Mem line one').replace('job 18510 bolt done', 'job 18510 bolt merged')
-        changed = '# What changed\n' + diff(before, after)
+        changed = f'{WRITTEN}\n# What changed\n' + diff(before, after)
         (ok, text), argv = self.report({'since': '2026-10-25T20:00Z', 'section': 'work'}, changed)
         self.assertEqual(argv, ['hq', 'report', '--since', '2026-10-25T20:00Z'])
-        self.assertEqual(text, '@@ -10,3 +10,3 @@ == memory\n == work (the latest 30)\n-job 18510 bolt done\n'
+        self.assertEqual(text, f'{WRITTEN}\n@@ -10,3 +10,3 @@ == memory\n == work (the latest 30)\n-job 18510 bolt done\n'
                          '+job 18510 bolt merged\n job 18511 bolt queued')
         (ok, text), _ = self.report({'since': '2026-10-25T20:00Z', 'section': 'memory'}, changed)
         self.assertIn('+Mem line one', text)

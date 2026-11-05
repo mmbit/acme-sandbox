@@ -2,11 +2,12 @@
 // played Notebook seeded as dev mode's (notebook.mjs open): a lone picture is a scrap of its own, and the bar's
 // Move to page… and Delete take it. Move to page… takes any pick: everything on the page, or one line of a drawing,
 // lifted out of it onto a new page from the list's end. On a phone, every button of that bar on the paper and on one
-// line, held sideways too, the bar over the picture.
+// line, held sideways too, the bar over the picture. Each in its scrap opened from the grid (bookscrapopen.js), where
+// Select picks: the grid itself takes no pick.
 import assert from 'node:assert/strict';
 import { group, ids, open } from './notebook.mjs';
-import { inSight, tool } from './notebookscreen.mjs';
-import { DESKTOP, until } from './kit.mjs';
+import { inSight, onPaper, tool } from './notebookscreen.mjs';
+import { DESKTOP, openScrap, until } from './kit.mjs';
 
 const PHONE = { width: 390, height: 844 },
   // (held sideways the book opens beside HQ, its paper about 340 px high: the bar's rows go over the picture)
@@ -36,11 +37,12 @@ async function loneFromBar(browser, c) {
   const { page, play, errors, done } = await open(browser, c, DESKTOP, { hasTouch: false, deviceScaleFactor: 1 });
   const bar = name => page.locator('#book .bk-sel-bar').getByRole('button', { name, exact: true });
   const pick = async () => {
+    await opened(page, SHOT);
     await tool(page, 'Select');
     await page.mouse.click(...(await middle(page, play)));
   };
   try {
-    // picked with Select, its bar moves it to another page, and Undo brings it back
+    // picked with Select in its opened scrap, its bar moves it to another page, and Undo brings it back
     await pick();
     await bar('Move to page…').click();
     await page.locator(`#book .bk-move-pages [data-page="${SECOND}"]`).click();
@@ -80,8 +82,9 @@ async function partToNewPage(browser, c) {
     before = pages(),
     lines = n => group(play, DRAWING)?.ink.length === n;
   try {
+    await opened(page, DRAWING);
     await tool(page, 'Select');
-    const [from, to] = await inSight(page, NEWEST, DRAWING, aloneBox(group(play, DRAWING).ink));
+    const [from, to] = await onPaper(page, aloneBox(group(play, DRAWING).ink));
     await page.mouse.move(...from);
     await page.mouse.down();
     await page.mouse.move(...to, { steps: 8 });
@@ -129,6 +132,7 @@ async function barOnPhone(browser, c, screen = PHONE) {
     folded: upright,
   });
   try {
+    await opened(page, SHOT, { tap: at => page.touchscreen.tap(...at) });
     await tool(page, 'Select');
     await page.touchscreen.tap(...(await middle(page, play)));
     await page.locator('#book .bk-sel-bar').getByRole('button', { name: 'Move to page…', exact: true }).waitFor();
@@ -161,8 +165,16 @@ async function barOnPhone(browser, c, screen = PHONE) {
   }
 }
 
-// The lone picture's middle on the screen, its unit slid into view: the store keeps it in its unit's own px
+// A scrap opened from the grid by its card (tap: a click unless given), unless it's open already
+async function opened(page, gid, pen = { tap: ([x, y]) => page.mouse.click(x, y) }) {
+  if (await page.locator('#book .bk-sheet').isVisible()) return;
+  // (its card slid into view on the grid first)
+  await inSight(page, NEWEST, gid, [[0, 0]]);
+  const { gid: was } = await openScrap(page, pen, gid);
+  assert.equal(was, gid, 'the scrap tapped is the one opened');
+}
+// The lone picture's middle on the screen, in its opened scrap: the store keeps it in its unit's own px
 async function middle(page, play) {
   const p = group(play, SHOT).pictures[0];
-  return (await inSight(page, NEWEST, SHOT, [[p.x + p.w / 2, p.y + p.h / 2]]))[0];
+  return (await onPaper(page, [[p.x + p.w / 2, p.y + p.h / 2]]))[0];
 }

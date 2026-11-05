@@ -9,8 +9,9 @@ export const GAP = 48;
 // Round the grid, at scale 1: off the page's edges
 export const MARGIN = 24;
 
-// The least a page's columns are drawn at to fit one more: a scrap's 14 px words no smaller than about 12.5 px
-export const LEAST = 0.9;
+// The least a page's columns are drawn at to fit one more: a scrap's 14 px words no smaller than about 11 px, so an
+// upright iPad holds two (a scrap is opened to draw on, bookscrapopen.js).
+export const LEAST = 0.8;
 // The most they're drawn at: their own size. A page wider than its columns keeps the rest as paper at its right, so a
 // note's words are never bigger than the screen's other type
 export const MOST = 1;

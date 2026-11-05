@@ -1,18 +1,17 @@
 // book-check.mjs's stories of our scraps on a sketch page (the Ink README, "Our scraps"; shell/ink/bookpage.js photos,
-// bookwrite.js, bookselect.js, bookunitcards.js, sketchcanvas.js), at realbook.mjs's sizes with their blur: an iPhone
-// upright and an iPad on its side. My journal's sketch page holds a scrap and a drawing from yesterday, and two scraps
-// come today, as the pin flow brings them:
+// bookwrite.js, bookselect.js, bookunitcards.js), at realbook.mjs's sizes with
+// their blur: an iPhone upright and an iPad on its side. My journal's sketch page holds a scrap and a drawing from
+// yesterday, and two scraps come today, as the pin flow brings them:
 //   - the look: each photo taped straight onto its post-it, one paper with its own shadow, no card under the photo;
-//   - a stroke starts anywhere: started on a scrap's photo and on its words, by finger (as a fresh device's finger
-//     draws) and by Pencil, it's ink on that scrap, drawn on top of what it crosses;
-//   - our scraps are fixed: Select on a scrap's photo picks it whole and moves nothing, the page holding still, and its
-//     room's handle dragged down opens room, the scrap below moving down with it, never one note under another (one
-//     beside it, on a wide page, staying);
-//   - dates: today's first scrap has today's date just above it, and free drawing today puts no date on the page.
-// Recorded with --shots.
+//   - a stroke starts anywhere: in the scrap opened by the Pencil's tap, started on its photo and on its words by
+//     Pencil, it's ink on that scrap, drawn on top of what it crosses;
+//   - our scraps are fixed: there too, Select on a scrap's photo picks it whole and moves nothing, the page holding
+//     still;
+//   - dates: today's scraps have today's date just above them, across the page's columns.
+// Recorded with --shots. (No room or handle under a scrap, no free drawing)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pixelsIn, toChapter, until } from './kit.mjs';
+import { closeScrap, openScrap, pixelsIn, toChapter, until } from './kit.mjs';
 import { SIZES, opened } from './realbook.mjs';
 import { inputs } from './hands.mjs';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
@@ -52,11 +51,11 @@ const SEED = {
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function tapedStories(c) {
   return {
-    'our scraps on an iPhone: taped onto their post-it, a stroke starts on a photo or its words, nothing in them moves, the handle opens room, a later day dated':
+    'our scraps on an iPhone: taped onto their post-it, a stroke starts on a photo or its words, nothing in them moves, a later day dated':
       browser => taped(browser, c, 'iphone'),
-    'our scraps on an iPad on its side: taped onto their post-it, a stroke starts on a photo or its words, nothing in them moves, the handle opens room, a later day dated':
+    'our scraps on an iPad on its side: taped onto their post-it, a stroke starts on a photo or its words, nothing in them moves, a later day dated':
       browser => taped(browser, c, 'ipad'),
-    'our scraps on an iPad mini upright: taped onto their post-it, a stroke starts on a photo or its words, nothing in them moves, the handle opens room, a later day dated':
+    'our scraps on an iPad mini upright: taped onto their post-it, a stroke starts on a photo or its words, nothing in them moves, a later day dated':
       browser => taped(browser, c, 'ipad-upright'),
   };
 }
@@ -82,12 +81,12 @@ async function taped(browser, c, name) {
     dated(name, await p.evaluate(datesOf, ids));
     const hands = await inputs(p),
       kept = id => store.route('/api/notebooks/pages/groups', { page: 1 }).groups.find(g => g.id === id);
-    // (a fresh device's finger draws; once the Pencil has drawn, a finger moves the page)
-    for (const type of ['touch', 'pen'])
-      for (const on of ['photo', 'words']) await startsOn(p, c, hands, kept, { name, type, on, id: ids[0] });
-    await freeDrawing(p, hands, name, ids);
+    // (in the scrap opened by the Pencil's tap, where the pen draws and a finger pans)
+    const pen = { tap: at => hands.stroke('pen', [at]) };
+    await openScrap(p, pen, ids[0]);
+    for (const on of ['photo', 'words']) await startsOn(p, c, hands, kept, { name, type: 'pen', on, id: ids[0] });
     await fixed(p, c, hands, name, ids);
-    await roomOpened(p, c, name, ids);
+    await closeScrap(p, pen);
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`taped-${name}-failed`, p);
@@ -168,10 +167,10 @@ function datesOf(ids) {
 function dated(name, { days, scraps }) {
   const said = JSON.stringify({ days, scraps });
   assert.equal(days.length, 1, `${name}: one date past the page's head's, today's: ${said}`);
+  // (a masonry's date across its columns, over today's first scrap: bookunits.js headers)
   const [d] = days,
-    [first] = scraps;
-  assert.ok(Math.abs(d.x - first.x) < 30, `${name}: the date at today's first scrap's left: ${said}`);
-  assert.ok(d.bottom <= first.top && first.top - d.bottom < 30, `${name}: the date just above it: ${said}`);
+    top = Math.min(...scraps.map(s => s.top));
+  assert.ok(d.bottom <= top + 0.5 && top - d.bottom < 40, `${name}: the date just above today's scraps: ${said}`);
 }
 
 // A line started on a scrap's photo (low in it, on its plain ground) or on its words, by finger or Pencil: ink on that
@@ -202,13 +201,16 @@ async function startsOn(p, c, hands, kept, { name, type, on, id }) {
 }
 // (in the page) Where a line starts on a scrap: low in its photo, on the picture's plain ground; or in its words
 function spotOn({ g, on }) {
-  const u = document.querySelector(`#book .bk-unit[data-unit="${g}"]`).getBoundingClientRect();
+  // (the opened scrap's page, the grid's under it)
+  const shown =
+      document.querySelector('#book .bk-page[data-focus]') ?? document.querySelector('#book .bk-page:not([hidden])'),
+    u = shown.querySelector(`.bk-unit[data-unit="${g}"]`).getBoundingClientRect();
   if (on === 'words') {
-    const w = document.querySelector(`#book .bk-words[data-g="${g}"] .bk-scrap-words`).getBoundingClientRect();
+    const w = shown.querySelector(`.bk-words[data-g="${g}"] .bk-scrap-words`).getBoundingClientRect();
     return { x: w.left + w.width / 2, y: w.top + w.height / 2 };
   }
   // (the photo as the page lays it now, or on the old code the top of the unit, where its picture was painted)
-  const ph = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-photo')]
+  const ph = [...shown.querySelectorAll('.bk-photo')]
     .map(e => e.getBoundingClientRect())
     .find(r => r.top >= u.top - 1 && r.top < u.bottom) ?? {
     left: u.left + 10,
@@ -221,7 +223,9 @@ function spotOn({ g, on }) {
 // (in the page) The topmost thing at a point, the ink's canvases asked too: 'inked canvas' when a canvas is on top
 // there and the page's canvases hold ink at it (another unit's clear canvas may lie over the one that holds it)
 function topmostAt([x, y]) {
-  const canvases = [...document.querySelectorAll('#book .bk-page:not([hidden]) canvas.bk-ink')];
+  const shown =
+      document.querySelector('#book .bk-page[data-focus]') ?? document.querySelector('#book .bk-page:not([hidden])'),
+    canvases = [...shown.querySelectorAll('canvas.bk-ink')];
   for (const cv of canvases) cv.style.pointerEvents = 'auto';
   const el = document.elementFromPoint(x, y);
   for (const cv of canvases) cv.style.pointerEvents = '';
@@ -244,20 +248,6 @@ function topmostAt([x, y]) {
     return `${Math.round(b.left)},${Math.round(b.top)} ${cv.width}x${cv.height} k${k.toFixed(2)}: ${Math.max(...data.filter((_, i) => i % 4 === 3))}`;
   });
   return inked ? 'inked canvas' : `canvas without ink there (${near.join('; ')})`;
-}
-
-// A Pencil's line on bare paper below today's scraps: free drawing puts no date on the page
-async function freeDrawing(p, hands, name, ids) {
-  const at = await p.evaluate(g => {
-    const r = document.querySelector(`#book .bk-unit[data-unit="${g}"]`).getBoundingClientRect();
-    return { x: r.left + 40, y: Math.min(r.bottom + 60, innerHeight - 160) };
-  }, ids[1]);
-  await hands.stroke(
-    'pen',
-    [0, 1, 2, 3, 4, 5, 6].map(k => [at.x + k * 14, at.y + (k % 2) * 12]),
-  );
-  await p.waitForTimeout(1500);
-  dated(name, await p.evaluate(datesOf, ids));
 }
 
 // Select on a scrap's photo, dragged: the scrap is picked whole, with no handles, and nothing moves, the page holding
@@ -285,63 +275,17 @@ function placesOf(ids) {
     const r = el.getBoundingClientRect();
     return [Math.round(r.left), Math.round(r.top)];
   };
+  // (the opened scrap's page, the grid's under it)
+  const shown =
+    document.querySelector('#book .bk-page[data-focus]') ?? document.querySelector('#book .bk-page:not([hidden])');
   return {
-    units: ids.map(g => box(document.querySelector(`#book .bk-unit[data-unit="${g}"]`))),
-    photos: [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-photo')].map(box),
-    picked: document.querySelectorAll('#book .bk-page:not([hidden]) .bk-sel').length,
-    handles: [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-sel-handle')].filter(h => h.offsetWidth)
-      .length,
+    units: ids.map(g =>
+      box(
+        shown.querySelector(`.bk-unit[data-unit="${g}"]`) ?? document.querySelector(`#book .bk-unit[data-unit="${g}"]`),
+      ),
+    ),
+    photos: [...shown.querySelectorAll('.bk-photo')].map(box),
+    picked: shown.querySelectorAll('.bk-sel').length,
+    handles: [...shown.querySelectorAll('.bk-sel-handle')].filter(h => h.offsetWidth).length,
   };
-}
-
-// The first of today's scraps' room dragged down by its handle: the room opens and the scrap below moves down with it,
-// never under it, in the store too; a scrap beside it stays
-async function roomOpened(p, c, name, ids) {
-  // (a handle under the bar's island scrolled up into reach first)
-  const bar = await p.locator('#book .bk-bar').boundingBox(),
-    low = await p.locator(`#book .bk-room-handle[data-unit="${ids[0]}"]`).boundingBox();
-  if (bar && low.y + low.height + 160 > bar.y) {
-    await p.mouse.move(low.x + low.width / 2, 300);
-    await p.mouse.wheel(0, 300);
-    await p.waitForTimeout(800);
-  }
-  const handle = await p.locator(`#book .bk-room-handle[data-unit="${ids[0]}"]`).boundingBox(),
-    before = await p.evaluate(feet, ids),
-    stored = () =>
-      p
-        .context()
-        .notebook.route('/api/notebooks/pages/groups', { page: 1 })
-        .groups.find(g => g.id === ids[1]).place,
-    was = stored(),
-    from = [handle.x + handle.width / 2, handle.y + handle.height / 2];
-  // (a mouse: a pointer the browser has, which the handle captures, in WebKit too)
-  await p.mouse.move(...from);
-  await p.mouse.down();
-  for (let k = 1; k <= 10; k++) await p.mouse.move(from[0], from[1] + k * 15);
-  await p.mouse.up();
-  await p.waitForTimeout(1200);
-  const after = await p.evaluate(feet, ids),
-    said = JSON.stringify({ before, after });
-  await c.shot(`taped-${name}-room`, p);
-  assert.ok(after[0].bottom > before[0].bottom + 80, `${name}: the room dragged taller: ${said}`);
-  // A scrap beside it (a wide page) stays where it is
-  if (before[1].left >= before[0].right || before[1].right <= before[0].left) {
-    assert.deepEqual(after[1], before[1], `${name}: the scrap beside it stays: ${said}`);
-    assert.deepEqual(stored(), was, `${name}: the store keeps the scrap beside it where it was`);
-    return;
-  }
-  // (the scrap below as far from its foot as before: never pulled under it. Pinned before its words were measured, the
-  // first can start a little over the next as it lands: that's the landing's, not the handle's.)
-  assert.ok(
-    Math.abs(after[1].top - after[0].bottom - (before[1].top - before[0].bottom)) < 3,
-    `${name}: the scrap below moved down with the room, never pulled under it: ${said}`,
-  );
-  await until(() => stored()?.y > (was?.y ?? Infinity) + 60, `${name}: the store keeps the scrap below moved down`);
-}
-// (in the page) Each scrap's box on the screen
-function feet(ids) {
-  return ids.map(g => {
-    const r = document.querySelector(`#book .bk-unit[data-unit="${g}"]`).getBoundingClientRect();
-    return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
-  });
 }

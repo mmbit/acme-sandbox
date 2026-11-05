@@ -1,5 +1,5 @@
 // node --test src/notebookguestshelf.test.ts   (Ink 1.1's guests: a lasting guest and a week's review round, invited
-// from the work, each with one link to their shelf of project books; the asks for them counted red until they write on
+// from the work, each with one link to their shelf of project books; the asks for them counted red until they answer
 // one; a round's access ending after its week.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,7 +81,7 @@ test('a lasting guest and a round guest each come in by one link to a shelf of p
   assert.match(open.headers.get('location')!, new RegExp(`^https://${HELLO.replace(/\./g, '\\.')}/__preview\\?s=`));
 });
 
-test('an ask for a guest waits in red on their page and the book, until they write on it', async () => {
+test('an ask for a guest waits in red on their page and the book, until they press Answer on it', async () => {
   const made = await share('Noor Jansen', 'noor@example.org', true);
   const guest = await signIn(shelfOf(made, 'Noor Jansen'));
   const scrap = await h.board('/api/notebooks/groups/create', {
@@ -107,6 +107,13 @@ test('an ask for a guest waits in red on their page and the book, until they wri
     body: JSON.stringify({ id: copy.id, since: copy.updated, texts: typed('Yes, twice') }),
   });
   assert.equal(written.status, 200, await written.text());
+  assert.equal((await guest.shelf()).books[0].asks, 1, 'written on, not answered yet');
+  const answered = await fetch(`${h.base}${api}/groups/answer`, {
+    method: 'POST',
+    headers: { cookie: guest.cookie, origin: ORIGIN, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: copy.id }),
+  });
+  assert.equal(answered.status, 200, await answered.text());
   shelf = await guest.shelf();
   assert.equal(shelf.books[0].asks, 0, 'answered: all read');
 });

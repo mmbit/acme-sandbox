@@ -46,7 +46,7 @@ test('a phone-width page has one column, at its own size, on the page', () => {
 });
 
 test("the book's page beside HQ, on an iPad or a desktop: one column at its own size, the rest paper at its right", () => {
-  for (const width of [430, 500, 560, 600]) {
+  for (const width of [430, 500, 560, 580]) {
     const page = layout(units, width);
     assert.equal(page.columns, 1);
     assert.equal(page.scale, MOST, `${width} px: scale ${page.scale}`);
@@ -81,9 +81,18 @@ test('a 4K-wide page has ten columns or more', () => {
 });
 
 // (the narrowest book's paper, the masonry's width: 400 px of book less its page block, its tools and the page's
-// insets, on a tablet's keys and a desktop's: booklayout.js BOOK.min, book.css, bookunits.js)
-test("the narrowest book's page gives up the margin at its right before its notes' size", () => {
+// insets, on a tablet's keys and a desktop's: booklayout.js BOOK.min, book.css, bookunits.js; 310 and 314 px)
+test("the narrowest book's page keeps both margins round its column, at LEAST of its size or more", () => {
   for (const width of [310, 314]) {
+    const page = layout(units, width);
+    assert.equal(page.columns, 1);
+    assert.ok(page.scale >= LEAST - 1e-9, `${width} px: scale ${page.scale}`);
+    assert.ok(atLeft(page, width), `${width} px: both margins`);
+  }
+});
+
+test("a page narrower than a column at LEAST with both margins gives up the margin at its right before its notes' size", () => {
+  for (const width of [widthFor(1) * LEAST - 16, widthFor(1) * LEAST - 4]) {
     const page = layout(units, width),
       [p] = page.places;
     assert.equal(page.columns, 1);
@@ -222,7 +231,7 @@ const under = (all, id, line) => {
 test('a unit that follows stays right under the one before it, at every column count', () => {
   const page = [scraps[0], { id: 'line', h: 40, follows: true }, ...scraps.slice(1)];
   for (const n of [1, 2, 3, 4]) {
-    const { places, columns } = layout(page, widthFor(n));
+    const { places, columns } = layout(page, widthFor(n) * LEAST);
     assert.equal(columns, n);
     assert.ok(under(places, 'A', 'line'), `${n} columns: ${JSON.stringify(places)}`);
   }

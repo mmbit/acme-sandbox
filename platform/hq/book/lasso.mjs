@@ -5,10 +5,10 @@
 // on the same page, at a Pencil's rate, each frame's work timed, the marker
 // fill it cut through still one even colour. And the marker scribbled back and
 // forth over one small place for ten seconds, as the board coloured in a tongue, at a Pencil's rate: each frame's work
-// and the lift timed, the fill one even colour.
+// and the lift timed, the fill one even colour. The face is a scrap, opened by the Pencil's tap on its card, for each.
 import assert from 'node:assert/strict';
-import { freePage, paperBox, savedWhere } from './mouse.mjs';
-import { MINI, pressAlong } from './kit.mjs';
+import { freePage, savedWhere } from './mouse.mjs';
+import { MINI, openScrap, pressAlong, until } from './kit.mjs';
 import { bookOnTouch } from './start.mjs';
 import { MARKERS, MARKER_ALPHA } from '../shell/ink/bookinkmath.js';
 
@@ -29,9 +29,11 @@ async function lasso(browser, c) {
   free.ink.push(...face());
   const { context, page, errors } = await bookOnTouch(browser, c);
   try {
+    const [g] = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups,
+      { gid, sheet: paper } = await openScrap(page, { tap: at => pressAlong(page, [at]) }, g.id);
+    assert.equal(gid, g.id, "the face's scrap opened");
     await page.locator('#book .bk-strip').getByRole('button', { name: 'Select', exact: true }).tap();
-    const drawn = await page.locator('#book canvas.bk-ink').first().boundingBox(),
-      paper = await paperBox(page);
+    const drawn = await page.locator('#book .bk-page[data-focus] canvas.bk-ink').first().boundingBox();
     const started = Date.now();
     await pressAlong(page, loopRound(drawn, paper), { lift: false });
     const loopMs = Date.now() - started;
@@ -70,16 +72,16 @@ async function rubbed(browser, c) {
   free.ink.push(...face());
   const { context, page, errors } = await bookOnTouch(browser, c);
   try {
+    const paper = await opened(page, c, free);
     await page.locator('#book .bk-strip').getByRole('button', { name: 'Eraser', exact: true }).tap();
     const at = await page.evaluate(onScreen, rub());
     const before = await inked(page),
       twiceBefore = await page.evaluate(markerTwice, FACE_MARKER);
-    const paper = await paperBox(page);
     assert.ok(
       at.every(
         ([x, y]) => x > paper.x + 40 && x < paper.x + paper.width - 60 && y > paper.y && y < paper.y + paper.height,
       ),
-      'the rub is on the paper, clear of the tools',
+      'the rub is on the opened scrap, clear of the tools',
     );
     await pressAlong(page, at.slice(0, 1), { lift: false });
     const took = await page.evaluate(timedAlong, { at, MOVES, MOVE_PX });
@@ -117,14 +119,14 @@ async function scribbled(browser, c) {
   // (at the iPad mini's own two device px a CSS px: a fill's work is mostly its pixels)
   const { context, page, errors } = await bookOnTouch(browser, c, MINI, { deviceScaleFactor: 2 });
   try {
+    const paper = await opened(page, c, free);
     await markerInHand(page);
-    const at = await page.evaluate(onScreen, tongue()),
-      paper = await paperBox(page);
+    const at = await page.evaluate(onScreen, tongue());
     assert.ok(
       at.every(
         ([x, y]) => x > paper.x + 40 && x < paper.x + paper.width - 60 && y > paper.y && y < paper.y + paper.height,
       ),
-      'the scribble is on the paper, clear of the tools',
+      'the scribble is on the opened scrap, clear of the tools',
     );
     const ink = free.ink.length,
       twiceBefore = await page.evaluate(markerTwice, MARKERS[0].color);
@@ -153,6 +155,13 @@ async function scribbled(browser, c) {
     await context.close();
   }
 }
+// The face's scrap opened by the Pencil's tap on its card: its sheet's box (the grid takes no ink)
+async function opened(page, c, free) {
+  const [g] = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups,
+    { gid, sheet } = await openScrap(page, { tap: at => pressAlong(page, [at]) }, g.id);
+  assert.equal(gid, g.id, "the face's scrap opened");
+  return sheet;
+}
 // The marker picked in the pen's card (the pen in use tapped again), its card put away again (the pen and the marker are
 // one key on the tools: bookpalette.js.)
 async function markerInHand(page) {
@@ -166,9 +175,9 @@ async function markerInHand(page) {
   await page.keyboard.press('Escape');
   await card.waitFor({ state: 'detached' });
 }
-// (in the page) Page px on the screen, from the unit's canvas: its place on the page and on the screen
+// (in the page) Page px on the screen, from the opened scrap's canvas: its place on the page and on the screen
 function onScreen(points) {
-  const canvas = document.querySelector('#book canvas.bk-ink'),
+  const canvas = document.querySelector('#book .bk-page[data-focus] canvas.bk-ink'),
     r = canvas.getBoundingClientRect(),
     k = r.width / parseFloat(canvas.style.width);
   const [left, top] = [parseFloat(canvas.style.left), parseFloat(canvas.style.top)];
@@ -210,12 +219,16 @@ async function timedAlong({ at, MOVES, MOVE_PX }) {
   const { own: lift, shown } = await timed(() => window.__lift());
   return { work, idle: idle.sort((a, b) => a - b)[10], lift, shown };
 }
-// What differs once the page is painted whole (Undo and Redo on the bar, which paint all of it again): inkAgainst's
+// What differs once the page is painted whole (Undo and Redo, the opened scrap's with the tools, which paint all of it
+// again): inkAgainst's
 async function asWhole(page) {
   await page.evaluate(inkAgainst, true);
-  const bar = page.locator('#book .bk-bar');
+  const bar = page.locator('#book .bk-scrap-history');
+  // (once its ink shows changed: an Undo on an opened scrap may slide to what it changes first)
   const tap = async name => {
+    const was = await inked(page);
     await bar.getByRole('button', { name, exact: true }).tap();
+    await until(async () => (await inked(page)) !== was, `${name} paints the scrap again`);
     await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
     return page.evaluate(inkAgainst, false);
   };
@@ -226,7 +239,7 @@ async function asWhole(page) {
 // differ, most: the most a pixel's ink differs (its alpha), box: where }
 function inkAgainst(keep) {
   const now = new Map();
-  for (const canvas of document.querySelectorAll('#book canvas.bk-ink')) {
+  for (const canvas of document.querySelectorAll('#book .bk-page[data-focus] canvas.bk-ink')) {
     const k = canvas.width / parseFloat(canvas.style.width),
       [left, top] = [parseFloat(canvas.style.left), parseFloat(canvas.style.top)],
       { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
@@ -264,17 +277,17 @@ function inkAgainst(keep) {
 function markerTwice(color) {
   const want = [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16));
   let n = 0;
-  for (const canvas of document.querySelectorAll('#book canvas.bk-ink')) {
+  for (const canvas of document.querySelectorAll('#book .bk-page[data-focus] canvas.bk-ink')) {
     const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
     for (let i = 0; i < data.length; i += 4)
       if (data[i + 3] > 150 && want.every((v, c) => Math.abs(data[i + c] - v) < 20)) n++;
   }
   return n;
 }
-// The inked pixels on the page's canvases
+// The inked pixels on the opened scrap's canvases
 const inked = page =>
   page.evaluate(() =>
-    [...document.querySelectorAll('#book canvas.bk-ink')].reduce((n, canvas) => {
+    [...document.querySelectorAll('#book .bk-page[data-focus] canvas.bk-ink')].reduce((n, canvas) => {
       const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
       for (let i = 3; i < data.length; i += 4) if (data[i] > 24) n++;
       return n;

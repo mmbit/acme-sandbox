@@ -380,14 +380,14 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .stage .sized[data-device=desktop] { border-radius: 6px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--on-deep) 45%, transparent); }
 #viewer .stage iframe { display: block; border: 0; background: #fff; transform: scale(var(--scale, 1)); transform-origin: 0 0; }
 #viewer .stage:not(.headed) iframe { width: 100% !important; height: 100% !important; }
-/* The stage's choices on the bar: the device's size, the notebook over the frames or beside them, and the QR code. With
-   the open notebook over the frames, the bar and what drops from it keep clear of it (--book-over, shell/ink/book.js). */
+/* The stage's choices on the bar: the device's size and the QR code. With the open notebook over the frames, the bar and
+   what drops from it keep clear of it (--book-over, shell/ink/book.js). */
 #viewer .bar { margin-right: var(--book-over, 0px); }
-#viewer .sharebox, #viewer .qrcard { margin-right: var(--book-over, 0px); }
+#viewer :is(.sharebox, .qrcard, .options) { margin-right: var(--book-over, 0px); }
 #viewer .bar .choices { flex: none; display: flex; align-items: center; gap: 12px; }
 #viewer .bar .choices .seg { display: flex; gap: 4px; }
 #viewer .bar .choices .seg button { padding: 0 10px; font-size: 14px; }
-@container page (max-width: 760px) { #viewer .bar .choices .seg button { padding: 0 7px; font-size: 13px; } #viewer .bar .share span { display: none; } }
+@container page (max-width: 760px) { #viewer .bar .choices .seg button { padding: 0 7px; font-size: 13px; } }
 #viewer .bar .qr { padding: 0; }
 #viewer .bar .qr svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 #viewer .qrcard { position: absolute; z-index: 1; top: calc(var(--sat) + 44px); right: calc(var(--sar) + 8px); width: min(400px, calc(100% - 16px)); display: flex; gap: 16px; align-items: center;
@@ -396,9 +396,31 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .qrcard .pair-qr { flex: none; width: 160px; height: 160px; }
 #viewer .qrcard p { margin: 6px 0 0; line-height: 1.35; }
 #viewer .qrcard .dim { color: var(--muted); font-size: 13px; }
-/* Share for outside notes: a quiet button on the bar, and its small form dropping over the page's top */
-#viewer .bar .share .ico { width: 16px; height: 16px; fill: currentColor; }
-@container page (max-width: 400px) { #viewer .bar .share span { display: none; } }
+/* More options: a quiet key on the bar, its menu dropping under it in the frame the share box and the QR card wear, its
+   rows the book's options' (shell/viewermore.js). The notebook's layouts are pictures in thin lines, one tile each, the
+   picked one pressed in gold as the bar's choices are. Share is a row under them. */
+#viewer .bar .more svg { width: 22px; height: 22px; fill: currentColor; }
+#viewer .bar .more[aria-expanded=true] { background: var(--gold); color: var(--on-accent); }
+#viewer .options { position: absolute; z-index: 1; top: calc(var(--sat) + 44px); right: calc(var(--sar) + 52px); display: grid; gap: 6px; min-width: 200px; padding: 6px;
+  border-radius: var(--r-lg, 14px); background: var(--paper); color: var(--ink); border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-xl); font-size: 16px; }
+#viewer .options[hidden] { display: none; }
+#viewer .options .layouts { display: flex; gap: 6px; padding: 4px 4px 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); }
+#viewer .options [data-book] { flex: 1; display: grid; place-items: center; min-height: 56px; padding: 6px; border: var(--bw) solid var(--line); border-radius: var(--r);
+  background: var(--cream); color: var(--ink); box-shadow: var(--shadow-sm); cursor: pointer; }
+#viewer .options [data-book][aria-checked=true] { background: var(--gold); color: var(--on-accent); }
+#viewer .options [data-book]:active { transform: var(--press); box-shadow: var(--shadow-press); }
+#viewer .options [data-book] svg { display: block; width: auto; height: 40px; fill: none; stroke: currentColor; stroke-width: 1; shape-rendering: geometricPrecision; }
+#viewer .options [data-book] svg .screen { stroke-opacity: .45; }
+#viewer .options [data-book] svg .frame { fill: currentColor; fill-opacity: .1; }
+#viewer .options [data-book] svg .tab { fill: none; } #viewer .options [data-book] svg .tab.on { fill: currentColor; }
+#viewer .options [data-book] svg .book { fill: currentColor; fill-opacity: .14; }
+#viewer .options [data-book] svg .shadow { fill: currentColor; fill-opacity: .3; stroke: none; }
+#viewer .options [data-book] svg .ruled { stroke-opacity: .55; }
+#viewer .options .share { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px; border-radius: 10px; cursor: pointer; }
+#viewer .options .share svg { width: 18px; height: 18px; }
+#viewer .options :is(.share, [data-book]):focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+@media (hover: hover) { #viewer .options .share:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); } }
+/* Share's small form drops over the page's top */
 /* The share box's parts, so it reads at a glance. The kinds, and the days before the
    first invite, are each one segmented control, the picked one raised off a quiet track. The people are a framed list with
    Send link and Remove quiet beside each. The invite form is its own group with Invite its one filled button. End now is last, in red words. */
@@ -850,6 +872,7 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 .intercom .call .guest-card .guest-link { flex: 1 0 100%; font-size: 12px; overflow-wrap: anywhere; color: inherit; }
 .intercom .call .guest-card button { min-height: 40px; padding: 0 14px; font-size: 14px; border: var(--bw) solid var(--line); background: var(--cream); color: var(--ink); }
 .intercom .call .guest-card button[type=submit] { background: var(--ink); color: var(--paper); }
+.intercom .call .guest-card button.guest-leave { background: var(--ink); color: var(--paper); } /* (hanging up with guests: callguest.js askHangUp.) */
 .intercom .call .pics { display: flex; gap: 8px; margin: 0 0 14px; padding: 0 0 2px; list-style: none; overflow-x: auto; }
 .intercom .call .pics[hidden] { display: none; }
 .intercom .call .pics li { flex: none; width: 84px; }
@@ -1404,9 +1427,11 @@ body.keys.keys .mailmove .act[aria-pressed=true] { transform: var(--key-down); b
 .req .questions .qd { display: block; margin-top: 2px; font-size: 14px; color: var(--muted); line-height: 1.35; }
 .req .questions .qa { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .req .questions .chip { min-width: 72px; background: var(--paper); white-space: normal; } /* (a long option wraps inside its field on a phone) */
-/* a pick-many: its options one under the other, each on (ticked) or off */
+/* a pick-many: its options one under the other, each a tick box, ticked or not (questions.js, the class tick) (the box) */
 .req .questions li[data-many] .qa { flex-direction: column; align-items: stretch; } .req .questions li[data-many] .chip { text-align: left; }
-.req .questions li[data-many] .chip::before { content: ''; display: inline-block; width: 1.2em; } .req .questions li[data-many] .chip.on::before { content: '✓'; }
+.req .questions .chip.tick { display: flex; align-items: center; gap: 10px; }
+.req .questions .chip.tick::before { content: ''; flex: none; width: 18px; height: 18px; line-height: 18px; text-align: center; font-weight: 700; border: 2px solid currentColor; border-radius: 4px; }
+.req .questions .chip.tick.on::before { content: '✓'; }
 .req .questions .qa > input { width: 100%; } .req .questions .num { display: flex; align-items: center; gap: 8px; }
 .req .questions .num input { width: 8em; } .req .questions .unit { font-weight: 600; }
 .req .questions + .photos, .req .questions ~ #answer { margin-top: 16px; }

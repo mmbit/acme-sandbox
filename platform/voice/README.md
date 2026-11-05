@@ -45,6 +45,21 @@ Live calls with the team, streamed both ways (`server.py`). One call is one WebS
   (a call out, below) comes in the same way: its ticket answers with the call out's number.
 - **The join link's page**: `/voice/join` (`room.py`), public through Caddy and gated by the link's token, which the
   coordinator trades for the call out (`join-ticket`). One room per call out, up to 6 people, below.
+- **A guest carrying the board's call**: `/voice/guest`, public through Caddy and only from HQ's own origin. The board's
+  Hang up with guests on its call's page (people who scanned its code) asks first, and Leave sends `{type: 'leave'}`:
+  the line holds the call for `HOLD` as at a drop (`Call.board_left`) and tells the coordinator the board is away
+  (`call-away`). A guest's room then offers the call on their own device, after the AI and transcript notice; their
+  page trades a one-time ticket from their session (`guest-ticket`) for the call and their name, and its connection
+  takes the call's line as a reconnect does (`guest_call`, `Call.carried`). Their words are labelled with their name,
+  and the agent hears they're a guest and never the board (`CARRIED_WORDS`) in a fresh session that knows the call so
+  far and has only the call's own tools (`Call.retooled`, guard.py `GUEST`): the page's notes, drawing on it,
+  prototypes, its own notes and hanging up. No built-in tool, nothing of the company's looked up and nothing that acts
+  for the board, as on a call out. Its briefing is the guest's own (`call-context` with `guest`, their name: the
+  coordinator's `guestPrompt`): who the agent is, that the guest carries the call, how to talk, the call's notes page
+  and prototypes, and nothing of the company's state; the restart's recap keeps the call so far. While the board is away the line's tools that act for it or show its
+  screen answer `AWAY_WORDS` (`BOARD_ONLY`), and the call's token reaches no hq route at the coordinator. The board
+  calling the agent again comes back into the call (`held`), the guest's device closed with 4002 (`Call.board_back`,
+  `BOARD_BACK_WORDS`), and its session has all its tools and the board's briefing again. The guest's hang-up ends it.
 
 The loop: Silero VAD cuts the board's words at pauses, Parakeet v3 transcribes them, a warm Claude session per
 call answers (streamed; it reads what a job reads but has no shell: the company's files, every branch and the status report, the web, and its own tools (Trust, below) (a call out: its partner tools only, below); its prompt from the coordinator: who the agent is, the team, what's going on,
@@ -76,16 +91,20 @@ Piper says "AI" right). HQ's caption and the transcript keep the figures
 Several people in the board's room, one microphone (`voices.py`): on the
 board's HQ calls each piece the VAD cuts gets a voiceprint (TitaNet-Large through sherpa-onnx, beside its
 transcription: about 0.07 s a second of audio) and goes to the voice it sounds most like. The first voice heard is the
-board's; a piece of 1.5 s or more that is clearly unlike every voice so far (`NEW`) opens "Voice 2", and so on, no
-cap. Until a second voice is heard, nothing changes: the agent's messages and the transcript are as on any call. From
+board's, its print started by a piece of 1.5 s or more (a word or two before it is the board's, by name). Two pieces of
+1.5 s or more that are clearly unlike every voice so far (`NEW`), not unlike each other and within 30 s of speech of
+each other (`STRAY_SECONDS`) open "Voice 2", and so on, no cap: one such piece alone (a laugh, a word to the cat, a
+raised voice), or two a long talk apart, goes to the closest voice, and a hum ("uhm") goes to whoever spoke last
+. Until a second voice is heard, nothing changes: the agent's messages and the transcript are as on any call. From
 then on each line starts with its speaker ("Board: ...", "Voice 2: ..."), and the agent hears once what that means
 (act on the board's word; name a voice with `name_voice` once it knows who it is, which also swaps two names when
 someone else spoke first). A guest the board adds on the call screen (HQ's Add a guest) reaches the line by name
 (`{type: 'guest', name}`, again after a reconnect), and the agent hears with its next message that they're in the room
 and its part while the two talk (listen, keep their thinking on the page, speak up now and then), before their voice
 opens or if it never does (`Voices.joined`). Short words ("yes") go to the
-closest voice, so a new voice's first words can land on the board's. Nothing is stored but a saved voice (below). At hang-up the log says how many voices
-and how unlike the others each opened (`call: ada voices: 2 (opened at 0.21)`), the numbers to tune `NEW` by. The
+closest voice, so a new voice's first words can land on the board's. Nothing is stored but a saved voice (below). At hang-up the log says how many voices,
+how unlike the others each opened and each stray piece was (`call: ada voices: 2 (opened at 0.21), strays at 0.30`),
+the numbers to tune `NEW` by, and the call times keep that line across deploys. The
 phone and a call out's room have none (one caller; a microphone each).
 
 Saved voices: when the board asks, the agent enrols someone in the room (or
@@ -103,8 +122,9 @@ only while the voice still sounds like it (`MATCH`).
 server: not in a log, the browser, an agent's read or the off-site backup.
 
 A design session (`design.py`): the board's call as a brainstorm at the
-table. HQ's Design session key starts one (the hello's `design: true`), or the agent makes a call one when someone asks
-(`design_session`, which sends HQ `{type: 'design'}`: it opens the call's page as a free sketch page). The agent hears
+table. HQ has one call key: the agent makes a call one when someone asks (`design_session`, which sends HQ
+`{type: 'design'}`: it opens the call's page as a free sketch page), and an ordinary call again with `off: true` (its
+hand down, the page as it is). The agent hears
 once how to take part (`DESIGN_WORDS`: no turns, `say_nothing` the usual reply, silence is thinking; keep an
 organised list of ideas and small sketches on the page, have prototypes built in the background, no tasks until the
 end, then the list and who does what as they agree it), with the hello's message or the tool's answer, and again in a restarted
@@ -120,16 +140,26 @@ the line reads it from the stream (`SAY_NOTHING_TOOL`), says nothing more of the
 steps, so the tick only ever holds a reply someone waits on. `prototype` with a `brief` instead of a page starts a
 builder (`Call.build`): the CLI once on the call's seat, no tools, no HQ token, `BUILD_EFFORT`, the builder's own
 `BUILD_WORDS`, the version before under that name to build on. Its page is saved as the agent's would be, and the line
-raises the agent's hand with its name and version (`Design.built`, `HAND_WORDS['built …']`); a failed one the agent
-hears of with its next message. The call's end cancels a build under way.
+raises the agent's hand with its name and version (`Design.built`, `HAND_WORDS['built …']`); for a failed one too, with
+why (`HAND_WORDS['failed …']`): never a blank reason, since a stopped build's `TimeoutError` has no words of its own.
+The builder's CLI streams (`stream-json`), so one still going at `BUILD_SECONDS` says how far it got (`Progress`: no
+answer, still thinking, or how many KB of its page it wrote after how long thinking), and the voice log has the same for
+one that lands. The call's end cancels a build under way. One version per round of feedback, not per remark
+: `DESIGN_WORDS` asks the agent to gather what's said about a prototype until
+the round is done (they move on, or ask for it), then brief it all as one version, say so in a sentence, and give the
+change in a line (`about`, with the brief), which goes on the version's slip and into its hand's words. A next brief
+under a name whose version is still building is refused (`BUILD_TOOL_WORDS['building']`): it would build on the
+version before and lose this one's changes.
 
-Made once they're done. A whole sentence is often followed by more (call #262:
-a card for the first sentence, then a second for the rest). The line still hands the agent each pause Smart Turn hears
-as finished, so a short answer comes quickly and its words are taken back if they go on (`cut_in`). What the agent
-makes can't be, so in a session its making asks on the socket (`MAKES`: draw_picture, mark_notes, change_note, try,
-prototype, write_down) wait in `Call.done` until the room is quiet `MAKE_QUIET` since the last words (longer after a
-piece that sounded unfinished), nothing heard still to answer or on its way and the pen at rest. Talking on first takes
-the turn back with their words: nothing is made (`MADE_WORDS`) and the agent hears the whole thought as one message.
+Made once they're done. A whole sentence is often followed by more: a
+correction, the rest of the idea. The line still hands the agent each pause Smart Turn hears as finished, so a short
+answer comes quickly and its words are taken back if they go on (`cut_in`). What the agent makes can't be, so in a
+session its making asks on the socket (`MAKES`: draw_picture, mark_notes, change_note, try, prototype, write_down) wait
+in `Call.room_done` until the room is quiet `MAKE_QUIET_SECONDS` since the last words (longer after a piece that
+sounded unfinished), nothing heard still to answer or on its way and the pen at rest. Talking on first takes the turn
+back with their words: nothing is made (`MADE_WORDS`) and the agent hears the whole thought as one message. Sound with
+no words (a fan, music) never lets the room go quiet: after `MAKE_MOST_SECONDS` it's made all the same, and the agent
+hears with its answer that it was made early (`MADE_EARLY_WORDS`).
 
 Talking over the agent (`Call.hear`): the reply plays on while the line makes sure it's the board. It stops as soon
 as the words read as an interruption (`stray()`, English, Dutch and German): a word that means stop ("wait", "no",
@@ -188,11 +218,11 @@ and the turn goes as it would have, with one log line, and an agent that has see
 board's HQ page says its screen is shown, hears it couldn't be read (its moments come with the next turn). HQ's page
 says whether the board's screen is `shown`, `paused` or `off` (`{type: 'screen', state}` on the call's WebSocket) as
 that changes and each time the line picks up, so the line knows a share at once, not only from a screen-turn that came
-in time, and the agent can't ask to see a screen that's shown (call #258: a turn's screen-turn failed 19 s into a
-share, and the agent said it saw nothing). With a watch-along on, the turn's message carries, in front of
-the caller's words, the coordinator's briefing until the session has had it, then the moments since the agent's last
-turn as lines (`#12 17:03:12 tapped "Add to basket" (button)`), and, after any shared pictures, a picture of the screen
-as their turn ended when it changed since the last one the session has.
+in time (one can fail or come late while a share is on), and the agent can't
+ask to see a screen that's shown. With a watch-along on, the turn's message carries, in front of the caller's words,
+the coordinator's briefing until the session has had it, then the moments since the agent's last turn as lines
+(`#12 17:03:12 tapped "Add to basket" (button)`), and, after any shared pictures, a picture of the screen as their turn
+ended when it changed since the last one the session has.
 
 Screen pictures count against the same 20 MB
 as shared ones, and a call has at most 40 of them, the screen tool's included; past either, lines only, and the agent
@@ -262,8 +292,12 @@ long message may exist nowhere else until the board stops. If the line restarts 
 when it starts again. A deploy doesn't recreate the line while a call is on: the line keeps a file per live call in
 `/data/live`, and `infra/sync.sh` waits until there's none touched in the last 5 minutes (its status report goes on
 meanwhile). The line touches a call's file every 30 s while the call's audio (or HQ's pings) still comes and the call
-is in use (`watch_live`). A call whose line sent nothing for 2 minutes (a connection that hung, a page that froze) is
-ended, and its connection closed by its own route: HQ's page hears it's gone, the phone's stream and a room close. A
+is in use (`watch_live`). A phone call or a room whose line sent nothing for 2 minutes (a connection that hung) is
+ended, and its connection closed by its own route: the phone's stream and a room close. HQ's call whose page sent
+nothing for 2 minutes (a page that froze, a connection that hung) is dropped, not ended: the line closes that connection
+as any drop (not `gone`, so a page that wakes reconnects), and holds the call for `HOLD` for the page or a new dial to
+come back into it. A held call stays live meanwhile, so a deploy doesn't cut a call the board is on its way back to
+. A
 call with nothing on it for 20 minutes (no words heard, no pen on the board's screen, no reply or build of the agent's
 at work) stays on but stops holding deploys: a page left open, or a room whose mixer sends only silence, is ended by the
 next deploy, and its transcript handed over when the line starts again. A word or a stroke holds deploys again. Every
@@ -308,6 +342,12 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   list as a message item, handled, so the follow-up doesn't send it again: it checks the words against the
   transcript, and corrects or withdraws them if they were misheard. A job this call queued takes `add`; one not
   running or on Codex is the follow-up's.
+- `page(words)`: the CEO's only (the coordinator refuses anyone else's call): what the board settles goes on the CEO's
+  page (`hq pad add -`, the coordinator's `pad.ts` addToPad, on its own route: the only page route a call's token
+  reaches) at once, so a check or job that runs before the follow-up knows it. The words go at the end of the page as
+  it is now, never a whole page from the briefing, so a job's rewrite during the call stays, and a job's rewrite from
+  a copy older than the call's words is refused; each version is kept with the call's number, and the follow-up folds
+  them in when it rewrites the page whole.
 - `manage(command)`: run one of hq's management commands as its words (`["cancel", "123", "why"]`).
   `hq_tools.py`'s `MANAGE` defines the commands and subcommands. Others are refused before hq runs.
   The coordinator opens their routes to the call token (`server.ts` `MANAGE_ROUTES`) and applies its

@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-// A design session's page on two iPads, on the real coordinator: the call's page a sketch page (callnotes.ts openFor
-// design), an iPad that scanned the call's QR code with a name (callguests.ts) and the board's HQ both open it as a
-// canvas, each one's stroke is kept where it was drawn, hers reaches the agent by her name, her cookie opens nothing of
-// HQ, and the agent's drawing lands in the board's sight at once. Screenshots
-// with --shots.
+// A design session's page on two iPads, on the real coordinator: the call's page, a grid of scraps like every page,
+// opened by an iPad that scanned the call's QR code with a name (callguests.ts) and by the board's HQ, each one's
+// stroke kept, hers reaches the agent by her name, her cookie opens nothing of HQ, and the agent's drawing lands in
+// the board's sight at once. Screenshots with --shots.
 //   node platform/hq/design-check.mjs [--shots dir]
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
@@ -99,10 +98,9 @@ async function openHq(page) {
 }
 
 try {
-  // A design session: the call's page made a sketch page as the call starts (HQ's calldraw.js asks with design: true)
+  // A design session: the call's page, as the call starts (HQ's calldraw.js)
   const { call } = await h.liveCall('juno');
-  const callPage = said(await h.board('/api/notebooks/call', { call, design: true })).page;
-  assert.equal(callPage.sketch, true);
+  const callPage = said(await h.board('/api/notebooks/call', { call })).page;
   // An iPad scans the call's QR code and gives a name once
   const { link } = said(await h.board('/api/calls/guest', { call, lang: 'nl' }));
   assert.match(new URL(link).pathname, /^\/guest\/scan\/nl\/[A-Za-z0-9_-]{43}$/);
@@ -127,35 +125,31 @@ try {
   await board.waitForTimeout(1500);
   await shot('1-board-ipad-sketch', board);
 
-  // Each draws anywhere: far to the right and low on the page, where a notes page's column would never put it. On a
-  // canvas the mark keeps the place it was drawn (a place in the store), on notes it would be laid in the masonry.
+  // Each draws on the page
   await penLoop(guest, '#book', 520, 700);
   await penLoop(board, 'body', 880, 450); // (the open book's paper: the right half on an iPad on its side)
-  const placed = async by => {
+  const drawnBy = async by => {
     for (let i = 0; i < 60; i++) {
       const gr = (said(await h.board(`/api/notebooks/pages/groups?page=${callPage.id}`)).groups ?? []).find(x =>
         by(x.by),
       );
-      if (gr?.place) return gr;
+      if (gr) return gr;
       await new Promise(r => setTimeout(r, 250));
     }
     return null;
   };
-  const hers = await placed(by => /^guest:\d+$/.test(by));
-  assert.ok(hers, "the iPad's stroke on the design page wasn't kept where it was drawn");
+  const hers = await drawnBy(by => /^guest:\d+$/.test(by));
+  assert.ok(hers, "the iPad's stroke on the design page wasn't kept");
   await shot('2-board-ipad-drawn', board);
-  const boards = await placed(by => by === 'board');
-  assert.ok(boards, "the board's stroke on the design page wasn't kept where it was drawn");
+  const boards = await drawnBy(by => by === 'board');
+  assert.ok(boards, "the board's stroke on the design page wasn't kept");
   assert.equal(said(await h.voice(`drawn?id=${hers.id}&call=${call}`)).who, 'Esmee');
   await guest.waitForTimeout(800);
   await shot('2-guest-ipad-drawn', guest);
   await shot('2-board-ipad-drawn', board);
 
-  // The agent draws a picture while the board looks at the page (at its top, both strokes in sight): it lands in what
-  // the board sees at once, and the store keeps it there, never at the masonry's place under everything, out of sight
-  // (call #262: the board waited half a minute for the card).
-  // (the board's book opened as wide as the screen lets it: room in sight beside the strokes, and the masonry's place
-  // under everything below the screen's foot)
+  // The agent draws a picture while the board looks at the page: it lands in what the board sees at once.
+  // (the board's book opened as wide as the screen lets it.)
   await board.evaluate(
     w => localStorage.setItem('hq.book.landscape', JSON.stringify({ mode: 'open', book: w })),
     LANDSCAPE.width,
@@ -199,19 +193,9 @@ try {
   assert.ok(shown, "the agent's card wasn't on the board's screen within 2 s");
   await board.waitForTimeout(2500);
   await shot('3-board-ipad-card', board);
-  const kept = (said(await h.board(`/api/notebooks/pages/groups?page=${callPage.id}`)).groups ?? []).find(
-    x => x.id === card,
-  );
-  // (the page at its top at the board's zoom: its px the screen's, the title's band over it)
-  assert.ok(kept?.place, "the card's place wasn't kept by the store");
-  assert.ok(
-    kept.place.y < LANDSCAPE.height - 120,
-    `the agent's card was put out of the board's sight, at ${JSON.stringify(kept.place)}`,
-  );
-
   for (const o of opened) assert.deepEqual(o.errors, []);
   console.log(
-    `PASS design session: a sketch page on both iPads, each one's stroke kept where drawn (${JSON.stringify(hers.place)}, ${JSON.stringify(boards.place)}), hers heard as Esmee's; the agent's card in sight at once and kept there (${JSON.stringify(kept.place)})`,
+    `PASS design session: the call's page on both iPads, each one's stroke kept (#${hers.id}, #${boards.id}), hers heard as Esmee's; the agent's card #${card} in sight at once`,
   );
 } finally {
   for (const o of opened) await o.context.close();
