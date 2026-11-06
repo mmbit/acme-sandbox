@@ -1,6 +1,6 @@
 // node --test src/schedule.test.ts   (company/schedule.yaml in the test company; tick() is what the server runs every
 // minute, here at a time of the test's)
-import { test, mock } from 'node:test';
+import { test, mock, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
@@ -106,4 +106,95 @@ test('a show in shows.yaml runs as its producer, from the show routine; Run now 
   const job = (await h.claim('claude'))!;
   assert.equal(job.agent, 'bolt');
   assert.equal(job.prompt, `${base}\n\nOur own additions:\nThe show: \`digest\` in company/shows.yaml.`);
+});
+
+// ---- an entry for each agent (each: agent).
+// org.yaml's desks for a test, and again later in it: each department's agents (an id, or "id:engine"), with the rest of
+// the test company's chart (the board, roles, alumni) as it is
+const desks = (t: TestContext, departments: Record<string, string[]>) => {
+  const file = `${h.repo}/company/org.yaml`, before = readFileSync(file, 'utf8');
+  const seat = (a: string) => { const [id, engine = 'claude'] = a.split(':'); return `      - { id: ${id}, name: ${id}, engine: ${engine} }\n`; };
+  const desk = ([id, agents]: [string, string[]]) => `  - id: ${id}\n    name: ${id}\n    agents:\n${agents.map(seat).join('')}`;
+  const write = (seated: Record<string, string[]>) =>
+    writeFileSync(file, before.replace(/^departments:\n[\s\S]*?(?=^roles:)/m, `departments:\n${Object.entries(seated).map(desk).join('\n')}\n`));
+  write(departments);
+  t.after(() => writeFileSync(file, before));
+  return write;
+};
+const weekOfNov2 = Date.parse('2026-11-01T23:00:00Z');   // Monday 2 November 00:00 in Amsterdam
+// Ticks every hour of a week, at half past, from a Monday 00:00 in Amsterdam: the hour into the week each agent's run came
+function tickWeek(title: string, monday: number, before = (_hour: number) => {}) {
+  const came = new Map<string, number>();
+  for (let hour = 0; hour < 168; hour++) {
+    before(hour);
+    tick(new Date(monday + hour * 36e5 + 30 * 60e3));
+    for (const run of titles(new RegExp(`^${title} \\(`))) {
+      const agent = run.match(/ ([a-z0-9-]+)\)$/)![1];
+      if (!came.has(agent)) came.set(agent, hour);
+    }
+  }
+  return came;
+}
+
+test('an entry for each agent runs once a week for every agent on a desk, spread over the week, and again the next', async t => {
+  writeFileSync(`${h.repo}/company/shows.yaml`, '');
+  desks(t, { executive: ['juno'], platform: ['bolt', 'lark', 'chime'], care: ['poppy:api'], security: ['nib:codex'] });
+  const lead = await h.start({ agent: 'bolt' });   // a lead with a team member in Platform, whom HQ shows on its desk
+  assert.equal((await h.worker('team', { job: lead.id, lead: 'bolt', id: 'scout', name: 'scout', parent: 'bolt', state: 'working' })).status, 200);
+  schedule('- { id: memory, agent: juno, at: weekly, each: agent, title: Memory, routine: morning-round, code: MEMORY }');
+  const came = tickWeek('Memory', weekOfNov2);
+  assert.deepEqual(titles(/^Memory/), ['juno', 'bolt', 'lark', 'chime', 'nib'].map(a => `Memory (2026-11-02 ${a})`),
+    'one each, never the team member, the alumni or the board; Poppy (on an engine no seat runs) is skipped, Nib after her still runs');
+  // six on the desks: one every 28 hours from Monday 00:00
+  assert.deepEqual(['juno', 'bolt', 'lark', 'chime', 'nib'].map(a => came.get(a)), [0, 28, 56, 84, 140]);
+  const runs = (h.jobs.listJobs() as any[]).filter(j => /^Memory/.test(j.title)).sort((a, b) => a.id - b.id);
+  assert.deepEqual(runs.map(j => j.agent), ['juno', 'bolt', 'lark', 'chime', 'nib'], "each its agent's own job");
+  tick(new Date(weekOfNov2 + 7 * 864e5 + 30 * 60e3));
+  assert.deepEqual(titles(/^Memory/).slice(5), ['Memory (2026-11-09 juno)'], 'the next week starts again');
+  await h.finish(lead);
+});
+
+test("a hire or a departure that moves the agents' moments mid-week runs nobody twice", async t => {
+  writeFileSync(`${h.repo}/company/shows.yaml`, '');
+  const seat = desks(t, { executive: ['juno'], platform: ['bolt', 'lark', 'chime'] });
+  schedule('- { id: moved, agent: juno, at: weekly, each: agent, title: Moved, prompt: x }');
+  const came = tickWeek('Moved', weekOfNov2 + 14 * 864e5, hour => {
+    if (hour === 60) seat({ executive: ['juno', 'fern'], platform: ['bolt', 'lark', 'chime'] });   // Wednesday noon: the others' moments move later
+    if (hour === 100) seat({ executive: ['fern'], platform: ['bolt', 'lark', 'chime'] });   // Friday 04:00: Juno leaves, and they move earlier
+  });
+  assert.deepEqual(titles(/^Moved/).map(title => title.match(/ ([a-z]+)\)$/)![1]).sort(), ['bolt', 'chime', 'fern', 'juno', 'lark']);
+  assert.equal(came.get('fern'), 60, 'the hire, whose moment had passed, runs at once');
+});
+
+test("HQ says an entry for each agent runs weekly and when the next agent's run comes, and it has no Run now", async t => {
+  writeFileSync(`${h.repo}/company/shows.yaml`, '');
+  desks(t, { executive: ['juno'], platform: ['bolt', 'lark', 'chime'] });
+  schedule('- { id: words, agent: juno, at: weekly, each: agent, title: Words, prompt: x, model: claude-sonnet-5-5 }');
+  const monday = new Date('2026-10-26T02:00:00Z'), sunday = new Date('2026-11-01T22:00:00Z');   // 03:00 and 23:00 in Amsterdam
+  assert.deepEqual([(await shown(monday)).words.when, (await shown(monday)).words.next], ['weekly, each agent', 'due now']);
+  tick(monday);
+  // four on the desks: Bolt's moment is Monday 00:00 + 42 hours
+  assert.deepEqual([(await shown(monday)).words.next, (await shown(monday)).words.soon], ['tomorrow 18:00', 1440 + 18 * 60]);
+  tick(sunday);
+  assert.deepEqual(titles(/^Words/), ['juno', 'bolt', 'lark', 'chime'].map(a => `Words (2026-10-26 ${a})`), 'missed moments run late within the week');
+  assert.equal((await shown(sunday)).words.next, 'tomorrow 00:00');
+  assert.equal((runNow('words') as [number, string])[0], 400);
+  const run = (await h.claim('claude'))!;
+  assert.deepEqual([run.title, run.agentInfo.model], ['Words (2026-10-26 juno)', 'claude-sonnet-5-5']);
+});
+
+test('an entry that sets `each: agent` or `at: weekly` without the other, or with `with:`, is left out and never runs', async t => {
+  writeFileSync(`${h.repo}/company/shows.yaml`, '');
+  desks(t, { executive: ['juno'], platform: ['bolt'] });
+  const logged = t.mock.method(console, 'error', () => {});
+  schedule(
+    '- { id: half-at, agent: juno, at: weekly, title: Half, prompt: x }',
+    '- { id: half-each, agent: juno, at: "07:00", each: agent, title: Half, prompt: x }',
+    '- { id: meeting, agent: juno, at: weekly, each: agent, with: [bolt], title: Half, code: HALF, prompt: x }',
+    '- { id: whole, agent: juno, at: weekly, each: agent, title: Whole, prompt: x }',
+  );
+  tickWeek('Half', weekOfNov2 + 21 * 864e5);
+  assert.deepEqual(titles(/^Half/), []);
+  assert.deepEqual(Object.keys(await shown(new Date())), ['whole']);
+  assert.ok(logged.mock.calls.some(c => /^Schedule entry half-at: `each: agent` takes `at: weekly`/.test(c.arguments[0])));
 });

@@ -19,6 +19,10 @@ import { REPO_DIR } from './config.ts';
 // code: the word of its runs' task code (jobcodes.ts), each entry its own, which no queuer may claim (jobcodes.ts
 // standingWords); a show's from shows.yaml. Without one, each run's agent names its own; a meeting's (with:) has no one
 // to name it, so an entry with `with:` needs one.
+// each: "agent" runs the entry once a week (`at: weekly`) for every agent on a department's desk in org.yaml, each its
+// own job at its own moment in the week, spread by its place in org.yaml (schedule.ts deskMoments). The entry's agent
+// owns its routine's project. It goes with `at: weekly`, and only with it, and takes no `with:` (one job per agent, not a
+// meeting): an entry that sets one without the other is logged and left out, so it never runs (eachSet).
 export type Entry = {
   id: string;
   agent: string;
@@ -34,6 +38,7 @@ export type Entry = {
   with?: string[];
   code?: string;
   project?: string;
+  each?: 'agent';
 };
 
 // The entries: schedule.yaml's, and one per show in shows.yaml (On Air, shared/routines/show.md), whose job the show's
@@ -49,7 +54,7 @@ const read = <T>(name: string): T[] => {
   }
 };
 export const entries = (): Entry[] => [
-  ...read<Entry>('schedule.yaml'),
+  ...read<Entry>('schedule.yaml').filter(eachSet),
   ...read<Show>('shows.yaml').map(s => ({
     id: `show-${s.id}`,
     agent: s.producer ?? s.hosts?.[0],
@@ -60,6 +65,15 @@ export const entries = (): Entry[] => [
     prompt: `The show: \`${s.id}\` in company/shows.yaml.`,
   })),
 ];
+
+// Whether an entry's `each:`, `at:` and `with:` go together (above).
+function eachSet(e: Entry) {
+  if ((!e.each && e.at !== 'weekly') || (e.each === 'agent' && e.at === 'weekly' && !e.with)) return true;
+  console.error(
+    `Schedule entry ${e.id}: \`each: agent\` takes \`at: weekly\` and no \`with:\`, and \`at: weekly\` takes \`each: agent\``,
+  );
+  return false;
+}
 
 // A routine's project (schedule.ts keepProjects): the one its entry names (`project:`), else the entry's own id, named
 // after its first entry's title and owned by its agent

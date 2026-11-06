@@ -8,7 +8,7 @@ import { freePage, paperBox } from './mouse.mjs';
 import { microphone, voiceServed, SAID } from './voice.mjs';
 import { playLine } from './call.mjs';
 import { press } from './bar.mjs';
-import { DESKTOP, MINI, UPRIGHT, QUIET_MS, middleOf, openScrap, pressAlong, say, ui } from './kit.mjs';
+import { DESKTOP, MINI, UPRIGHT, QUIET_MS, openScrapInMiddle, pressAlong, say, ui } from './kit.mjs';
 import { hands, mouseOf } from './hands.mjs';
 import { PREVIEW, previewServed } from './preview.mjs';
 import { watchedPage } from './start.mjs';
@@ -114,8 +114,7 @@ async function callTapped(page, cancel = false) {
 // The book's mic tapped, on a scrap opened first by the mouse in the paper's middle where none is (the mic an opened
 // scrap's tool)
 async function micTapped(page) {
-  if (!(await page.locator('#book[data-scrap-open]').count()))
-    await openScrap(page, mouseOf(page), undefined, middleOf(await paperBox(page)));
+  if (!(await page.locator('#book[data-scrap-open]').count())) await openScrapInMiddle(page, mouseOf(page));
   await press(page, 'Voice note');
 }
 // A finger's pointer event as Safari hands it over, on what's at its point

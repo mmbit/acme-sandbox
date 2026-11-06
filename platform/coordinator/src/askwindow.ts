@@ -1,6 +1,6 @@
 // The window of work drawn from the board's ask, as it's queued: the claim pauses work in the way only for work with one.
 // (its messages say deliverable, the board's word for a thread)
-import { db } from './db.ts';
+import { db, prepared } from './db.ts';
 import { ceo } from './company.ts';
 import * as messages from './messages.ts';
 import * as windows from './windows.ts';
@@ -43,20 +43,20 @@ export function sourceOf(queuer: { id: number; call?: boolean }, handsOutItem: b
 // The window a thread has or serves: its own, else the earliest of the open threads that need it, at any depth, through
 // open threads only (a done one's needs order nothing: threadorder.ts needsOpen), as the claim orders by needs. Null:
 // nothing timed waits on it.
+// Each serving thread's window is read up its own deadline_from line (as projects.ts findThread), never through
+// thread_windows, which works out every thread's: the projects view asks once per open thread with no window (5 ms each
+// at 2,500 threads, 0.14 s a view). A line that breaks or loops gives none, as the view leaves it out.
 export function servedWindow(thread: string | null) {
   if (!thread) return null;
-  return (
-    (db
-      .prepare(
-        `with recursive serving(id) as (select $thread union select n.thread from thread_needs n join serving s on n.needs = s.id
-      join threads o on o.id = n.thread and o.status = 'open')
-    select t.id thread, w.deadline from threads t join serving s on s.id = t.id
-      join thread_windows w on w.id = t.id where t.status = 'open' and w.deadline is not null
-      order by w.deadline, t.id limit 1`,
-      )
-      .get({ thread }) as { thread: string; deadline: number } | undefined) ?? null
-  );
+  return (prepared(SERVED).get({ thread }) as { thread: string; deadline: number } | undefined) ?? null;
 }
+const SERVED = `with recursive serving(id) as (select $thread union select n.thread from serving s
+    cross join thread_needs n on n.needs = s.id cross join threads o on o.id = n.thread where o.status = 'open'),
+  line(serving, id, deadline_from) as (select t.id, t.id, t.deadline_from from serving s cross join threads t
+      on t.id = s.id where t.status = 'open'
+    union select l.serving, t.id, t.deadline_from from line l cross join threads t on t.id = l.deadline_from)
+  select l.serving thread, w.deadline from line l cross join threads w on w.id = l.id
+  where l.deadline_from is null and w.deadline is not null order by w.deadline, l.serving limit 1`;
 
 // The window --by puts on the job's thread: never later than one it has (a deliverable's agreed time isn't loosened by
 // the work that serves it: hq window moves it). Undefined: it keeps its own.

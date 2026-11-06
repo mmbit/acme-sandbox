@@ -20,14 +20,14 @@ import type { SeatState } from '../hq/seatwords.ts';
 import { handedUpLines, lighterLine, lightLines } from './lighter.ts';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
-import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { keepRenders } from './renders.ts';
 import { keepScreens } from './screens.ts';
 import { agentEnv, redact, redactJson, PROFILE_BRANCH, workRunsOn, BRANCH_CONFIG, REVIEW_STRIP, claudeArgs, codexAskArgs, SIGN_IN } from './safety.ts';
 import { TOUCHUP_LINES, FetchUnreachedError, answerMainMerge, branchLines, gitFlow, pinnedGitEnv, runAs } from './git.ts';   // (pinnedGitEnv)
 import { pushThrew, snagged, type Landing } from './landing.ts';
 import { see as account, engineStarted, relaunched, report, spentOn, type Spent } from './spent.ts';
-import { handOut, masked, plainName, type Files, type Folders, type Snap } from './copyback.ts';
+import { remask, plainName, type Files, type Folders } from './jobmemory.ts';
 import { roomTurns } from './roomturns.ts';
 import { capacityCapture, capacitySample } from './capacity.ts';
 import { CLAUDE_RECHECK_MS, pacedUntil, paceTo, reserveFor, seatRunLimit, windowUsed } from './pace.ts';
@@ -1524,7 +1524,8 @@ function parkRun(seat: Seat, job: Job, me: Me) {
   }
 }
 
-// Claude's auto memory, shared by work jobs.
+// A Claude auto memory folder no job reads or writes (a job's memory is its own: jobmemory.ts). Its starts and trash age
+// out (takeVolumes), and backups copy the folder while it's there (infra/backup.py).
 const MEMORY = '/seats/shared/claude/projects/-work-repo/memory';
 
 // A slot's uid with the env its git and file commands run with: the job's home, nothing else.
@@ -1536,7 +1537,7 @@ type Me = ReturnType<typeof slotAgent>;
 
 async function settle(seat: Seat, job: Job, me: Me, status?: string) {
   const { dir, home } = jobDirs(WORK, job.id);
-  // (a work job's memory copy stays in its home, with it: copyback.ts)
+  // (a work job's memory stays in its home, with it: jobmemory.ts)
   assertOwned();
   try { keepSignIn(me, seat, home, job.id); } catch (err) { log(`job #${job.id}: ${cliOf(seat)} sign-in:`, err); }
   handed.delete(job.id);
@@ -1559,18 +1560,16 @@ async function settle(seat: Seat, job: Job, me: Me, status?: string) {
 }
 
 // Text the worker sends out on its own goes through the coordinator's mask first (secrets.redact: a key's value
-// becomes its name), the memory a job is handed included (copyback.ts masked).
+// becomes its name), a job's own memory included (jobmemory.ts remask).
 const mask = async (text: string) => {
   const maskedText = (await hq.report('redact', { text })).text;
   if (typeof maskedText !== 'string') throw new Error('The coordinator gave no masked text');
   return maskedText;
 };
 
-const realDir = (p: string) => { try { return lstatSync(p).isDirectory() && realpathSync(p) === p; } catch { return false; } };
-
 // Each run: the job's config in its home (or the one a reviewer is asked again in: askHome, slots.ts). Codex gets the
-// seat's sign-in (Claude's comes on a pipe: SIGN_IN); a Claude work job gets a copy of the shared memory, its own from
-// then on (copyback.ts), a reviewer none (nothing another job wrote reaches a verdict that way).
+// seat's sign-in (Claude's comes on a pipe: SIGN_IN); a Claude work job keeps its own memory, masked again as it resumes
+// (jobmemory.ts).
 async function prepareHome(seat: Seat, job: Job, me: Me, home = jobDirs(WORK, job.id).home) {
   const { dir } = jobDirs(WORK, job.id);
   runAs(me, 'mkdir', ['-p', '-m', '700', `${home}/tmp`, `${home}/.claude`, `${home}/.codex`]);
@@ -1578,17 +1577,14 @@ async function prepareHome(seat: Seat, job: Job, me: Me, home = jobDirs(WORK, jo
   const auth = cliOf(seat) === 'codex' ? readAs(keeper, `${seatDir(seat.id)}/auth.json`) : undefined;
   if (auth !== undefined) { runAs(me, 'sh', ['-c', 'umask 077 && cat > "$1"', 'sh', `${home}/.codex/auth.json`], auth); handed.set(job.id, auth); refreshes.handOut(runRefreshes(job.id), seat.id, auth); }
   if (CLIS[cliOf(seat)]) handOutSignIn(me, seat, home, job.id);
-  if (cliOf(seat) === 'claude' && runModeOf(job).sharesMemory) {
-    // One it can't mask isn't handed out, and its copy is removed; one that can't be removed throws: the job doesn't
-    // start with it
-    const out = await masked(memoryFolders(me, job, dir, home), mask);
-    if (out) try { handOut(out); } catch (err) { log(`job #${job.id}: memory:`, err); }
-  }
+  // (a copy that can't be listed or masked is removed; one that can't be removed or rewritten throws: the job doesn't
+  // start with it)
+  if (cliOf(seat) === 'claude' && runModeOf(job).keepsMemory) await remask(memoryFolder(me, job, dir, home), mask);
 }
 
-// A memory folder's plain .md files, each read as `who`, so a planted symlink or odd name is skipped: the first 500
-// by name, and every name there. Undefined if it can't be listed.
-function memoryFiles(who: Me | typeof keeper, path: string): Snap | undefined {
+// A memory folder's plain .md files, each read as the slot, so a planted symlink or odd name is skipped: the first 500
+// by name. Undefined if it can't be listed.
+function memoryFiles(who: Me, path: string): Files | undefined {
   let names: string[];
   try { names = runAs(who, 'find', [path, '-maxdepth', '1', '-type', 'f', '-name', '*.md', '-printf', '%f\\n']).split('\n'); }
   catch { return undefined; }
@@ -1598,16 +1594,14 @@ function memoryFiles(who: Me | typeof keeper, path: string): Snap | undefined {
     const text = readAs(who, `${path}/${n}`);
     if (text !== undefined) files.set(n, text);
   }
-  return { files, names: new Set(names) };
+  return files;
 }
 
 const MEMORY_START = `${MEMORY}-start`, MEMORY_TRASH = `${MEMORY}-trash`;
-// A work job's memory copy (copyback.ts), the shared memory read as the keeper and the copy as the slot, so nothing the
-// job planted (a symlink, a huge file) is followed.
-function memoryFolders(me: Me, job: Job, dir: string, home: string): Folders {
+// A work job's memory (jobmemory.ts), read as the slot, so nothing the job planted (a symlink, a huge file) is followed.
+function memoryFolder(me: Me, job: Job, dir: string, home: string): Folders {
   const copy = `${home}/.claude/projects/${project(dir)}/memory`;
   return {
-    shared: () => realDir(MEMORY) ? memoryFiles(keeper, MEMORY) : { files: new Map(), names: new Set() },
     copy: () => memoryFiles(me, copy),
     // A folder the job locked (chmod 500, on the copy or a folder above it) is unlocked first, as the slot: GNU chmod
     // skips symlinks inside the folder, and the slot can only change what's its own.
@@ -2244,12 +2238,12 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
 
 // How a job's run differs by its kind: a reviewer's (review, consolidate) judges one commit, a meeting's seat and a try
 // run leave their outcome in HQ, and a quick run (the coordinator's quickruns.ts) gives one answer within its turn on
-// the chat slot. Every Claude run but a reviewer's and a quick run's shares the agent's memory (copyback.ts), and only
-// a run that may change its branch has lines to count and commits.
+// the chat slot. Every Claude run but a reviewer's and a quick run's keeps its own memory (jobmemory.ts), and only a run
+// that may change its branch has lines to count and commits.
 function runModeOf(job: Job) {
   const reviewing = job.kind === 'review' || job.kind === 'consolidate', meeting = job.kind === 'meeting', trying = job.kind === 'try';
   const quickRun = job.quickReply ? { until: job.quickReplyUntil! } : undefined;
-  return { reviewing, meeting, trying, quickRun, sharesMemory: !reviewing && !quickRun, changesBranch: !reviewing && !meeting && !trying && !quickRun };
+  return { reviewing, meeting, trying, quickRun, keepsMemory: !reviewing && !quickRun, changesBranch: !reviewing && !meeting && !trying && !quickRun };
 }
 type RunMode = ReturnType<typeof runModeOf>;
 

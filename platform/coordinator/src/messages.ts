@@ -20,7 +20,7 @@ import * as sorting from './sorting.ts';
 import * as ledger from './ledger.ts';
 import { codeOf } from './jobcodes.ts';
 import { oneTaskThread } from './made.ts';
-import { GUEST, PARTNER } from './outsidewords.ts';
+import { outsideJob } from './outsidewords.ts';
 
 // offered: when a hook last took it (not yet acknowledged); depth: how many message-made jobs lie behind its sender's
 // job (0: a job nobody's message started); lapsed: its job ended unread, and the chain was too long to start another;
@@ -126,8 +126,8 @@ export function send(from: From, to: string, text: string, only?: number, held?:
 }
 
 // A guest's step (guests.ts) for the agent who wrote the request, as one line of JSON (`text`): queued for the agent's
-// running Claude job (the request's own first), or a job titled `title`. A guest ticks several items in a row: while
-// that job hasn't started, the next step joins it. No hq say back (the guest isn't a colleague) and no bubble in HQ (the
+// running Claude job (the request's own first), or a job titled `title` on a deliverable of its own (outsideJob). A
+// guest ticks several items in a row: while that job hasn't started, the next step joins it. No hq say back (the guest isn't a colleague) and no bubble in HQ (the
 // card shows it).
 export function fromGuest(to: string, item: number, from: number | null, title: string, text: string) {
   const job = db.prepare(`select id from jobs where agent = ? and status = 'running' and kind = 'work' and engine = 'claude'
@@ -230,19 +230,6 @@ function toJob(id: number, into?: number) {
   sortLater(job, m);
   return { job };
 }
-// Outside words (a guest's steps, a linked company's urgent messages) as one job per source until it starts, its preamble
-// first (outsidewords.ts). A linked company's is urgent (workspaceentries.ts wake).
-function outsideJob(m: Message) {
-  const [column, source, preamble] = m.guest ? (['guest', m.guest, GUEST] as const) : (['partner', m.partner, PARTNER] as const);
-  const waiting = db.prepare(`select j.id from messages x join jobs j on j.id = x.became where x.${column} = ? and x.recipient = ? and x.id != ?
-    and j.status = 'queued' and j.session is null order by x.id desc limit 1`).get(source, m.recipient, m.id) as { id: number } | undefined;
-  const job = waiting?.id ?? createJob({ agent: m.recipient, title: m.title ?? `Message from ${m.sender}`, prompt: preamble }).id;
-  db.prepare('update messages set became = ? where id = ?').run(job, m.id);
-  const steps = db.prepare('select text from messages where became = ? order by id').all(job) as { text: string }[];
-  db.prepare('update jobs set prompt = ?, urgent = urgent or ? where id = ?').run(`${preamble}\n\n${steps.map(x => x.text).join('\n')}`, m.partner ? 1 : 0, job);
-  return { job, ...(waiting ? { added: true } : {}) };
-}
-
 // A message marked before 31 Oct as holding a customer's details (messages.customers) keeps its check in the brief its
 // words go into: that job is marked as the message was (jobs.ts holdsCustomerData). Nothing marks a message now.
 const keepsMark = (m: Message, job: number) => {

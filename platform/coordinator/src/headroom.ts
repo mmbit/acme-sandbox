@@ -7,7 +7,8 @@ import {
   lastWindowReadingId,
   changedWindowReadings,
 } from './seatobservations.ts';
-import { mixRates, type MixRate, type MixInterval } from './workmix.ts';
+import { mixRates, type MixRate } from './workmix.ts';
+import { pricedInterval, runMilliseconds, type Interval, type Reading } from './seatgains.ts';
 import { seatStatuses } from './seatstatus.ts';
 
 const HOUR_MS = 3_600_000,
@@ -22,15 +23,6 @@ type SeatRow = {
   state: string;
   five_hour: number | null;
   five_hour_resets: number | null;
-  week: number | null;
-  week_resets: number | null;
-};
-type Reading = {
-  seat: string;
-  at: number;
-  reported: number;
-  util: number | null;
-  resets: number | null;
   week: number | null;
   week_resets: number | null;
 };
@@ -139,15 +131,6 @@ export function fillRates(at = Date.now()): Map<string, FillRates> {
 // priced once each (`priced`): an interval is kept once a later reading follows it (a minute's reading is rewritten
 // until the minute ends) and every run that overlaps it has ended (an open run ends now, or at its last heartbeat once
 // its worker is lost). A read prices only the readings after the kept ones.
-type Interval = MixInterval & {
-  from: number;
-  known: number; // (when the later of its readings was reported)
-  hours: number;
-  five: number;
-  fiveHours: number;
-  week: number;
-  weekHours: number;
-};
 type Totals = Measurement & { five: number; week: number };
 // (covers: the time from which a seat's kept intervals are all there)
 type Kept = { last: Reading; intervals: Interval[]; covers: number };
@@ -193,14 +176,25 @@ function readingRates(at: number, seat?: string) {
 // The server's start (forecast.ts start): the readings priced ahead of the first read, AHEAD_MS of them at a time with a
 // turn of the event loop between, so the first play after a restart doesn't price two weeks at once (a third of a second,
 // held). The kept intervals come out as one read's. A read meanwhile prices the rest itself, and this stops there.
+// Then each seat's work mix is fitted (workmix.ts mixRates), a seat a turn: the first fit reads every interval's kinds,
+// all seats' at once in the first play's seats-and-capacity part otherwise (0.35 s at 26,000 jobs and 7 seats with a
+// reading a minute; 0.6-1.0 s live, under a deploy's load).
 const AHEAD_MS = 6 * HOUR_MS;
 export async function priceAhead(now = Date.now()) {
   for (let at = now - 2 * WEEK_MS + AHEAD_MS; at > pricedAt; at = Math.min(at + AHEAD_MS, now)) {
     forgetMoved();
     pricedAt = at;
     for (const { id } of seatRows()) seatIntervals(id, at, at - 2 * WEEK_MS, true);
-    if (at === now) return;
+    if (at === now) return fitAhead(now);
     await new Promise(setImmediate);
+  }
+}
+async function fitAhead(now: number) {
+  for (const { id } of seatRows()) {
+    await new Promise(setImmediate);
+    // (a read since fitted them itself, for its later time)
+    if (pricedAt > now) return;
+    mixRates(seatIntervals(id, now, now - 2 * WEEK_MS, true), id);
   }
 }
 
@@ -310,7 +304,6 @@ const readingsAfter = (seat: string, quota: 'five' | 'week', after: number, at: 
   }));
 
 type RunRow = { id: number; seat: string | null; started: string };
-type Run = { started: number; ended: number | null; kind: string };
 const runsAfter = (seat: string, after: number, at: number) =>
   (
     db
@@ -325,60 +318,6 @@ const runsAfter = (seat: string, after: number, at: number) =>
     started: Date.parse(run.started),
     ended: run.ended === null ? null : Date.parse(run.ended),
   }));
-
-// The run time a seat has worked up to each time asked, in ms, the times asked in order: one sweep over its runs' starts
-// and ends, an open run's end `at`.
-function runMilliseconds(runs: Run[], at: number) {
-  const events = runs
-    .flatMap(run => [
-      { at: run.started, kind: run.kind, change: 1 },
-      { at: Math.min(run.ended ?? at, at), kind: run.kind, change: -1 },
-    ])
-    .sort((a, b) => a.at - b.at);
-  let index = 0,
-    previous = events[0]?.at ?? 0;
-  const active: Record<string, number> = {},
-    total: Record<string, number> = {};
-  const advance = (to: number) => {
-    for (const [kind, count] of Object.entries(active)) total[kind] = (total[kind] ?? 0) + count * (to - previous);
-    previous = to;
-  };
-  return (to: number) => {
-    while (index < events.length && events[index].at <= to) {
-      const event = events[index++];
-      advance(event.at);
-      active[event.kind] = (active[event.kind] ?? 0) + event.change;
-    }
-    advance(to);
-    return { ...total };
-  };
-}
-
-// The usage gained between two readings, per window, counted only where both readings have it and no reset falls between.
-function pricedInterval(before: Reading, reading: Reading, mix: Record<string, number>): Interval {
-  const hours = Object.values(mix).reduce((sum, elapsed) => sum + elapsed, 0);
-  const gained = (used: 'util' | 'week', reset: 'resets' | 'week_resets') => {
-    const gain = reading[used] !== null && before[used] !== null ? reading[used] - before[used] : null;
-    const counted =
-      gain !== null &&
-      gain >= 0 &&
-      reading[reset] === before[reset] &&
-      !(before[reset] !== null && before[reset] <= reading.at);
-    return counted ? [gain, hours] : [0, 0];
-  };
-  const [five, fiveHours] = gained('util', 'resets'),
-    [week, weekHours] = gained('week', 'week_resets');
-  return {
-    from: before.at,
-    known: Math.max(before.reported, reading.reported),
-    hours,
-    five,
-    fiveHours,
-    week,
-    weekHours,
-    mix,
-  };
-}
 
 function measuredRates(totals: Map<string, Totals>, mixes: Map<string, Record<string, MixRate>>) {
   return new Map(

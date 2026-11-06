@@ -291,6 +291,8 @@ test('weekly token scores keep the original split, exclude missing usage, and ex
   assert.match(output.out, /Estimate confidence: high. Three close examples/);
   assert.match(output.out, /Later revision: .*Estimate confidence: low/);
   assert.match(output.out, /Estimate confidence: not recorded/);
-  assert.match(output.out, /Confidence high, work time: .*together 1 of what they took/);
-  assert.match(output.out, /Confidence high, token work: .*together 2 of what they took/);
+  // Each score says how many tasks it covers
+  assert.match(output.out, /Confidence high, work time: 2 tasks: .*together 1 of what they took/);
+  assert.match(output.out, /Confidence high, token work: 1 task: .*together 2 of what they took/);
+  assert.match(output.out, /Confidence low, work time: no eligible estimates/);
 });

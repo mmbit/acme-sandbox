@@ -87,10 +87,13 @@ async function swungOpen(p, c) {
   judged(failed, () => seen.forEach(f => out(f, 'swinging open')));
   // (landed, they fold in from past the screen's edge: never further out than folded on the way)
   await until(() => p.evaluate(() => window.__landed.length >= 40), 'the frames after the landing');
+  // (the fold, a finger's ribbon: bookmarks.css --bk-mk-fold, a px to spare.)
+  const fold = await p.evaluate(() =>
+    parseFloat(getComputedStyle(document.querySelector('#book .bk-marks')).getPropertyValue('--bk-mk-fold')),
+  );
   for (const f of await p.evaluate(() => window.__landed))
     for (const t of f.tabs)
-      // (the fold 27 px, a finger's ribbon: bookmarks.css --bk-mk-fold.)
-      judged(failed, () => assert.ok(t.right <= 28, `${t.chapter} folding in as it lands, ${t.right} px out`));
+      judged(failed, () => assert.ok(t.right <= fold + 1, `${t.chapter} folding in as it lands, ${t.right} px out`));
   await atRest(p);
   await c.shot('bookmarksfold-phone-landed', p);
   for (const t of await tabs(p))

@@ -331,6 +331,19 @@ export async function openScrap(page, pen, gid, at) {
   await page.waitForFunction(() => !document.querySelector('#book .bk-lift[data-flying]'));
   return { gid: opened, sheet: await sheet.boundingBox() };
 }
+// A scrap opened by a tap (pen: as openScrap's) in the middle of the book's paper: the card lying there, or a new scrap
+// on bare paper. As openScrap, its group id and sheet's box.
+export const openScrapInMiddle = async (page, pen) =>
+  openScrap(page, pen, undefined, middleOf(await page.locator('#book .bk-desk').boundingBox()));
+// Where the tools' island starts on the screen, the end of what's written on the paper: its left side, or the paper's
+// right side where none shows (the grid's).
+export const toolsLeft = page =>
+  page.evaluate(() => {
+    const strip = document.querySelector('#book .bk-strip');
+    return strip.checkVisibility()
+      ? strip.getBoundingClientRect().left
+      : document.querySelector('#book .bk-desk:not(.bk-turn-picture *)').getBoundingClientRect().right;
+  });
 // The opened scrap put back by its sheet's Klaar, tapped with the pen, the grid shown again
 export async function closeScrap(page, pen) {
   await pen.tap(middleOf(await page.locator('#book .bk-sheet-keys .bk-sheet-done').boundingBox()));

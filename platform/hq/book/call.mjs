@@ -147,10 +147,11 @@ async function noteOnTheCall(s) {
   await s.shot(s.named('book-call-note'), page);
 }
 
-// The call's notes page, made as it was picked up: the mark goes on it, never a second page.
+// The call's notes page, made as it was picked up: the mark goes on it, never a second page. (this story's posts only:
+// a worker plays parts of both engines on one store, an earlier one's call page among its posts)
 function onTheNotesPage(s, note) {
   assert.equal(note.page, s.notesPage, "the call's page is its notes page");
-  const made = s.posts.filter(p => p.path === '/api/book/page/new' && p.body.kind === 'call');
+  const made = s.posts.slice(s.from).filter(p => p.path === '/api/book/page/new' && p.body.kind === 'call');
   assert.equal(made.length, 0, 'no second page at its first mark');
 }
 const notes = s => s.posts.filter(p => p.path === '/api/book/note');

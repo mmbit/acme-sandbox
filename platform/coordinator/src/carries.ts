@@ -14,7 +14,8 @@ const SEEN = 'carries.seen';
 const SHA = /^[0-9a-f]{40}$/;
 // How much of each check's report goes in the fix's brief: the keeper runs the checks again for the rest
 const REPORT_CHARS = 8_000;
-type Commit = { sha: string; parents: string[] };
+// `code`: whether it changes anything a push's checks run on, as the worker reads it (its mainline.ts)
+type Commit = { sha: string; parents: string[]; code?: boolean };
 const CHECKS = ['gates', 'tests'] as const;
 type CheckName = (typeof CHECKS)[number];
 // What the worker's finish of a check job says: the commit and main before it, and each check's outcome
@@ -34,8 +35,12 @@ export function mainMoved(given: { commits?: unknown; after?: unknown; lost?: un
   const since =
     !seen || given.lost === seen ? 0 : given.after === seen ? line.length : line.findIndex(c => c.sha === seen);
   if (since === -1) return { checks: [], seen };
-  const outside = line.slice(0, since).reverse();
-  const checks = outside.filter(c => !mergedByHq(c.sha) && !hasChecks(c.sha)).map(c => queueChecks(c.sha));
+  const outside = line
+    .slice(0, since)
+    .reverse()
+    .filter(c => !mergedByHq(c.sha));
+  for (const c of line) if (outside.includes(c) || hasChecks(c.sha)) keepKind(c);
+  const checks = outside.filter(c => !hasChecks(c.sha)).map(c => queueChecks(c.sha));
   if (seen && given.lost === seen) checks.push(queueLost(seen, line[0].sha));
   remember(SEEN, line[0].sha);
   return { checks };
@@ -74,7 +79,11 @@ const lineOf = (commits: unknown) => {
   if (!Array.isArray(commits) || !commits.length) return undefined;
   const line = commits as Commit[];
   const valid = line.every(
-    c => SHA.test(String(c?.sha)) && Array.isArray(c.parents) && c.parents.every(p => SHA.test(p)),
+    c =>
+      SHA.test(String(c?.sha)) &&
+      Array.isArray(c.parents) &&
+      c.parents.every(p => SHA.test(p)) &&
+      (c.code === undefined || typeof c.code === 'boolean'),
   );
   return valid ? line : undefined;
 };
@@ -82,6 +91,13 @@ const lineOf = (commits: unknown) => {
 const mergedByHq = (sha: string) => !!db.prepare('select 1 from prs where merged_as = ?').get(sha);
 
 const hasChecks = (sha: string) => !!db.prepare('select 1 from jobs where carry = ?').get(sha);
+
+// What the commit changes, kept before its check is queued and sized (predictions.ts recordQueued), and for any commit
+// on the line with a check already, so that check counts among its kind's. A commit's changes never change: the first
+// word stands.
+const keepKind = (c: Commit) =>
+  c.code !== undefined &&
+  db.prepare('insert or ignore into carry_commits (sha, code) values (?, ?)').run(c.sha, c.code ? 1 : 0);
 
 // One check job, the keeper's, which the worker runs with no agent
 function queueChecks(sha: string) {

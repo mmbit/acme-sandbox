@@ -2937,6 +2937,88 @@ class Proc:
         self.returncode = -9
 
 
+class Streamed:
+    """A call agent's CLI whose events come when the test puts them (put): what it was sent is in `sent`."""
+    def __init__(self):
+        self.sent, self.events, self.returncode = [], asyncio.Queue(), None
+        self.stdin = NS(write=lambda b: self.sent.append(json.loads(b)), drain=lambda: asyncio.sleep(0))
+        self.stderr = NS(readline=lambda: asyncio.sleep(60, b''))
+
+    def put(self, *events):
+        for event in events:
+            self.events.put_nowait(json.dumps(event).encode() + b'\n')
+
+    @property
+    def stdout(self):
+        return NS(readline=self.events.get)
+
+    async def wait(self):
+        return self.returncode
+
+    def stops(self):
+        return [m for m in self.sent if m['type'] == 'control_request']
+
+
+STARTED = {'type': 'stream_event', 'event': {'type': 'message_start', 'message': {}}}
+ENDED = {'type': 'result', 'subtype': 'error_during_execution', 'is_error': True}
+
+
+class CacheKept(unittest.IsolatedAsyncioTestCase):
+    """The board talking on stops turns before the model has started on them (Agent.interrupt): once the blocks sent
+    since the last request that streamed fill half the API's cache lookback, a turn stops only once its request
+    streams, so the call's prefix stays cached."""
+    async def asyncSetUp(self):
+        self.agent = server.Agent('juno', 'nl')
+        self.agent.proc = self.cli = Streamed()
+
+    async def turn(self, pictures):
+        """A turn with this many pictures, stopped as the board talks on before its request streamed: whether the
+        stop went at once."""
+        pictures = [{'type': 'image/jpeg', 'data': JPEG}] * pictures
+        replying = asyncio.create_task(self.drain(self.agent.ask('En nu?', pictures)))
+        while not self.agent.busy:  # (its message is with the CLI)
+            await asyncio.sleep(0)
+        stops = len(self.cli.stops())
+        self.agent.interrupt()
+        at_once = len(self.cli.stops()) > stops
+        self.cli.put(*([] if at_once else [STARTED]), ENDED)
+        await replying
+        return at_once
+
+    async def drain(self, reply):
+        async for _ in reply:
+            pass
+
+    async def test_a_turn_stopped_before_its_request_streams_stops_at_once_while_the_cache_is_near(self):
+        self.assertTrue(await self.turn(2))
+        self.assertTrue(await self.turn(2), 'eight blocks since the cache: room for the next message')
+
+    async def test_turns_stopped_one_after_another_stop_once_a_request_streams(self):
+        self.assertEqual([await self.turn(3) for _ in range(4)], [True, False, True, False], 'five blocks a turn')
+        self.assertEqual(len(self.cli.stops()), 4, 'every turn stopped')
+
+
+class OwnVoices(unittest.TestCase):
+    """The company's own Piper voices, company/voices at the line's start (with_own_voices)."""
+
+    def test_a_broken_file_is_left_out_and_a_line_voice_keeps_the_lines(self):
+        def load(path):
+            if Path(path).read_bytes() != b'voice':
+                raise RuntimeError('not an onnx model')
+            return path
+
+        line = {'alex': 'line alex'}
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(server, 'PiperVoice', NS(load=load)):
+            for name, data in (('vera.onnx', b'voice'), ('broken.onnx', b'garbage'), ('alex.onnx', b'voice'),
+                               ('vera.onnx.json', b'{}')):
+                (Path(d) / name).write_bytes(data)
+            with contextlib.redirect_stdout(io.StringIO()) as said:
+                pipers = server.with_own_voices(line, Path(d))
+        self.assertEqual(pipers, {'alex': 'line alex', 'vera': f'{d}/vera.onnx'})
+        self.assertEqual(line, {'alex': 'line alex'})
+        self.assertIn('voice broken.onnx not loaded', said.getvalue())
+
+
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
 class Restart(unittest.IsolatedAsyncioTestCase):
     """The call agent dies mid-reply and the line starts a new one: it's still the same call, with one token, from the
@@ -3017,6 +3099,23 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(b['request'], b['token'], b.get('walk')) for b in contexts],
                          [(31, '', True), (31, 't1', None), (0, '', None), (31, '', None), (31, '', None)])
 
+    async def test_an_agents_voice_in_a_language_is_a_piper_voice_the_line_has(self):
+        """call-context's voices (org.yaml's, company.ts voicesOf) give the agent's voice by language: the line keeps
+        the ones it has a Piper voice for (its own or the company's, company/voices) and speaks the language's own voice
+        for any other"""
+        given = self.coordinator
+
+        def coordinator(method, path, body=None):
+            got = given(method, path, body)
+            if path.split('?')[0] == 'call-context':
+                got['voices'] = {'nl': 'alex', 'de': 'nobody', 'fr': 'alex', 'en': ['alex']}
+            return got
+        self.coordinator = coordinator
+        call = self.call()
+        await call.start()
+        self.assertEqual(call.brain.voices, {'nl': 'alex'})
+        call.end()
+
     async def test_a_restarted_call_agent_stays_on_the_same_call(self):
         call = self.call()
         await call.start()
@@ -3032,6 +3131,71 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b['token'] for b in end], ['t1'])
         self.assertEqual(end[0]['lines'][-2:], ['Board: Can you build the page?', 'Juno: Yes, I will build it.'])
         self.assertEqual(self.live, set(), 'no token outlives the call')
+
+    # A renewed session keeps the call's language, and HQ's call screen says it's renewed until the fresh one is up,
+    # also when the lost turn asks it nothing.
+    def dutch_call(self, events):
+        async def send_event(event):
+            events.append(event)
+        return self.make_call(lambda x: asyncio.sleep(0), send_event, lambda: asyncio.sleep(0), 'juno', 'nl')
+
+    def notices(self, events):
+        return [e['text'] for e in events if e.get('type') == 'notice']
+
+    async def test_a_reply_lost_on_a_dutch_call_is_said_in_dutch_and_the_fresh_session_goes_on_in_dutch(self):
+        events = []
+        call = self.dutch_call(events)
+        await call.start()
+        await call.answer('Kun je de pagina bouwen?', None)  # (the session dies: a new one)
+        self.assertTrue(call.brain.recap.endswith(server.RECAP_GOES_ON.format(language='Dutch')))
+        self.assertEqual(call.lines[-1], 'Juno: ' + server.LOST['nl'])
+        self.assertEqual(self.notices(events), ['De sessie van Juno wordt vernieuwd: zo terug.', ''],
+                         'the notice goes once the fresh session is up, though nothing is asked of it')
+        call.end()
+
+    async def test_a_call_with_no_transcript_is_renewed_with_no_line_on_its_language(self):
+        call = self.dutch_call([])
+        call.objected = True
+        await call.start()
+        await call.answer('Kun je de pagina bouwen?', None)
+        self.assertNotIn(server.RECAP_GOES_ON.format(language='Dutch'), call.brain.recap)
+        self.assertIn('there is none', call.brain.recap)
+        call.end()
+
+    async def test_a_quiet_renewal_lost_mid_reply_says_nothing_and_its_notice_goes(self):
+        events = []
+        call = self.dutch_call(events)
+        await call.start()
+        await call.answer('', None, ahead=True)  # (renew_when_quiet's turn; the session dies)
+        self.assertEqual(len(self.started), 2, 'renewed')
+        self.assertFalse([line for line in call.lines if line.startswith('Juno:')], 'nothing said')
+        self.assertEqual(self.notices(events), ['De sessie van Juno wordt vernieuwd: zo terug.', ''])
+        call.end()
+
+    async def test_a_stop_held_for_a_lost_session_is_not_the_fresh_ones(self):
+        """A turn stopped before its request streamed waits for it to stream (Agent.interrupt): the session dies first,
+        and the fresh session's first turn goes on unstopped."""
+        async def drain(reply):
+            async for _ in reply:
+                pass
+        self.procs = [Streamed(), Streamed()]
+        agent = server.Agent('juno', 'nl', wiring=self.wiring)
+        await agent.start()
+        agent.unstreamed = server.CACHE_LOOKBACK // 2  # (turns stopped one after another before their requests streamed)
+        asking = asyncio.create_task(drain(agent.ask('En nu?')))
+        while not agent.busy:
+            await asyncio.sleep(0)
+        agent.interrupt()
+        self.assertEqual(self.started[0].stops(), [], 'held')
+        self.started[0].events.put_nowait(b'')  # (the CLI ends mid-reply)
+        with self.assertRaises(RuntimeError):
+            await asking
+        await agent.start()
+        replying = asyncio.create_task(drain(agent.ask('En nu?')))
+        self.started[1].put(STARTED, {'type': 'stream_event', 'event': {'delta': {'type': 'text_delta', 'text': 'Ja.'}}},
+                            {'type': 'result', 'subtype': 'success'})
+        await replying
+        self.assertEqual(self.started[1].stops(), [])
 
     async def test_a_held_transcript_reaches_hq_at_the_start_and_one_hq_refused_on_the_next_sweep(self):
         """The line holds a cut-off call's transcript (its file, no live call): it goes to HQ whole as the line starts.
@@ -3830,7 +3994,8 @@ class Restart(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_worker_moved_the_line_to_a_seat_with_room_mid_turn_so_it_asks_again_there(self):
         """If another seat has room, the call uses it: the worker puts its token here (voiceSeat), and the line's turn
-        that hit the limit goes again on a fresh session that knows the call so far. The board hears only the answer."""
+        that hit the limit goes again on a fresh session that knows the call so far. The board hears only the answer,
+        and HQ's call screen says the session is renewed until the fresh one has the turn."""
         moved = lambda: self.paths.seat.write_text('seat with room')
         self.procs = [Proc([LIMITED], then=moved), Proc(['Yes, I will build it.'])]
         call = self.recording_call()
@@ -3838,7 +4003,8 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         await call.answer('Can you build the page?', None)
         self.assertEqual(self.signed, ['seat', 'seat with room'])
         self.assertEqual(call.lines, ['Board: Can you build the page?', 'Juno: Yes, I will build it.'])
-        self.assertFalse([e for e in self.events if e.get('type') == 'notice'], 'nothing to say: it answered')
+        notices = [e['text'] for e in self.events if e.get('type') == 'notice']
+        self.assertEqual(notices, ["Juno's session is being renewed: back in a moment.", ''])
         call.end()
 
     async def test_a_picture_asked_again_on_the_new_seat_goes_with_it(self):
@@ -4484,6 +4650,31 @@ class Screen(Juno):
         self.assertNotIn(server.SCREEN_WORDS['full'], ' '.join(self.brain.asked))
         self.assertEqual(self.call.picture_bytes, len(JPEG) + 20 * len(SHOT(100)))
         self.assertEqual(self.picture_events(), [(17, 'received', None), (17, 'seen', None), (17, 'seen', None), (17, 'seen', None)])
+
+    # A full session is renewed at the first quiet moment, in a turn that says nothing, so the board's next words go to
+    # a fresh session; HQ's call screen says it's renewed until the fresh one has the call.
+    async def test_a_full_session_is_renewed_at_the_next_quiet_moment_and_says_nothing(self):
+        recaps = self.sessions()
+        self.call.lang = 'nl'
+        await self.call.start()
+        for n in range(1, 41):
+            self.turns = NS(pop=lambda _, n=n: self.on(n, [], n))
+            await self.call.answer(f'En nu {n}?', None)
+        said = list(self.call.lines)
+        self.assertEqual((len(recaps), self.call.screen['pictures']), (1, 40), 'full, not renewed yet')
+        self.call.quiet = 100  # (the board has been quiet a while, and Juno's last answer has played)
+        await asyncio.sleep(0.2)
+        CLOCK[0] = self.call.until + 2 * server.SHOWN_SECONDS
+        await asyncio.sleep(0.3)
+        await self.settle()
+        self.assertEqual(len(recaps), 2, 'renewed in the quiet moment')
+        self.assertIn(server.AHEAD_WORDS, self.brain.asked[-1])
+        self.assertFalse([line for line in self.call.lines[len(said):] if line.startswith('Juno:')], 'nothing said')
+        self.assertEqual([e['text'] for e in self.events if e.get('type') == 'notice'],
+                         ['De sessie van Juno wordt vernieuwd: zo terug.', ''])
+        await self.call.answer('En nu?', None)
+        self.assertEqual(len(recaps), 2, "the board's words go to the fresh session: no renewal while it waits")
+        self.assertEqual(self.call.lines[-1], 'Juno: ' + REPLY)
 
     def picture_events(self):
         return [(e['id'], e['state'], e.get('why')) for e in self.events if e.get('type') == 'picture']

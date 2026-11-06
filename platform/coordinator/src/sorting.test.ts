@@ -371,6 +371,55 @@ test("HQ's work made in no deliverable waits for the CEO to place it, but the CE
   }
 });
 
+// A guest's steps are answered on their own: a deliverable of their own in the open project of the job that wrote the
+// request, else of its agent's own, else of the CEO's, never held for a sort nor behind another deliverable's tasks
+// still to start.
+test("a guest's steps run on a deliverable of their own in the request's project, held by no sort or task order", async () => {
+  const file = `${h.repo}/company/projects.yaml`;
+  writeFileSync(file, `requireThread: true\n${readFileSync(file, 'utf8')}`);
+  try {
+    const messages = await import('./messages.ts');
+    const wrote = h.queue({ agent: 'kit', thread: 'game/world', title: 'Ask the portfolio admin for one Meta code' });
+    const first = h.queue({ agent: 'kit', thread: 'game/world', title: 'The first round, once the code is in' });
+    db.prepare('update jobs set not_before = ? where id = ?').run(Date.now() + 86_400_000, first);
+    db.prepare("update jobs set status = 'done' where id = ?").run(wrote);
+    const guests = await import('./guests.ts');
+    const note = { sections: [{ items: [{ kind: 'info', title: 'x' }] }] };
+    const request = (by: number, agent: string) =>
+      (guests.write({ id: by, agent }, 'Jo', 'Meta', note) as { id: number }).id;
+    const meta = request(wrote, 'kit');
+    const step = (text: string) => messages.fromGuest('kit', meta, wrote, 'Jo on: Meta', text);
+    const asked = step('{"event":"question"}');
+    assert.equal(asked.state, 'job');
+    assert.equal(h.job(asked.job).thread, `game/job-${asked.job}`);
+    assert.equal(step('{"event":"done"}').job, asked.job, 'a later step joins it before it starts');
+    assert.equal(held(asked.job), undefined, 'no sort holds it');
+    assert.equal(await claimable(asked.job), true, 'it starts, while game/world waits');
+    assert.equal(h.job(first).status, 'queued');
+    // a request no job in a deliverable wrote: its agent's own project
+    const loose = h.queue({ agent: 'wren', title: 'Ask about the doors' });
+    const owned = messages.fromGuest('wren', request(loose, 'wren'), loose, 'Jo on: Doors', '{"event":"done"}').job;
+    assert.equal(h.job(owned).thread, `game/job-${owned}`);
+    // a request written in a project closed since, by an agent who owns none: the CEO's
+    const ceoProject = h.dueThread().split('/')[0];
+    const { ceo } = await import('./company.ts');
+    const plan = await import('./plan.ts');
+    assert.equal(
+      typeof plan.newProject({ id: 'past', name: 'Past', owner: 'wren', code: 'PS' }, ceo(), () => true),
+      'object',
+    );
+    projects.createThread({ project: 'past', name: 'Old', goal: 'It shipped', slug: 'old' });
+    const old = h.queue({ agent: 'dex', thread: 'past/old', title: 'Ask about the old shelf' });
+    db.prepare("update jobs set status = 'done' where id = ?").run(old);
+    assert.deepEqual(plan.done('past/old', 'wren'), { ok: true });
+    assert.deepEqual(plan.projectDone('past', 'wren'), { ok: true });
+    const placed = messages.fromGuest('dex', request(old, 'dex'), old, 'Jo on: Shelf', '{"event":"done"}').job;
+    assert.equal(h.job(placed).thread, `${ceoProject}/job-${placed}`);
+  } finally {
+    writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
+  }
+});
+
 // A linked company's urgent message wakes our executive now (workspaceentries.ts wake), at once or once the session it
 // went to ended without reading it (messages.ts jobEnded): its job crosses seat pacing and no sort holds urgent work,
 // whoever's it is. A guest's step and a colleague's message wait as they did.

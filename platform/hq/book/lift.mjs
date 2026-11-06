@@ -106,8 +106,13 @@ async function lifted(c, page, ring) {
   };
 }
 // The page told to keep the lift's flight in window.__flight: where it's asked to land, each rect it's aimed at on the
-// way, its layer's box each frame, when it's gone, and every book:landed.
-const watchFlight = page =>
+// way, its layer's box each frame and where its flight ends (finish), when it's gone, and every book:landed.
+async function watchFlight(page) {
+  await watchAims(page);
+  await watchLayer(page);
+}
+// (where it's asked to land, each rect it's aimed at on the way, its layer's box each frame, and every book:landed)
+const watchAims = page =>
   page.evaluate(() => {
     const f = (window.__flight = { path: [], gone: false });
     document.addEventListener(
@@ -136,21 +141,39 @@ const watchFlight = page =>
           f.path.push({ x: b.x, y: b.y, w: b.width, h: b.height });
           requestAnimationFrame(sample);
         };
-        // (gone when it leaves the page: headless WebKit's frames come far apart, and the next may come long after it's
-        // gone.)
         requestAnimationFrame(sample);
-        const left = new MutationObserver(() => {
-          if (document.querySelector('review-lift')) return;
-          f.gone = true;
-          left.disconnect();
-        });
-        left.observe(document.documentElement, { childList: true, subtree: true });
       },
       { once: true },
     );
     f.landed = [];
     document.addEventListener('book:landed', e =>
       f.landed.push({ id: e.detail.id, page: e.detail.page, group: e.detail.group }),
+    );
+  });
+// (its layer's box where its flight ends, before lift.js takes it off: the frames seen on a loaded worker may stop short
+// of it; and gone when it leaves the page: headless WebKit's frames come far apart, and the next may come long after
+// it's gone.)
+const watchLayer = page =>
+  page.evaluate(() => {
+    const f = window.__flight;
+    document.addEventListener(
+      'pencil:landing',
+      () => {
+        let ending = false;
+        const left = new MutationObserver(() => {
+          const layer = document.querySelector('review-lift');
+          if (layer && !ending)
+            ending = layer.getAnimations()[0]?.finished.then(() => {
+              const b = layer.getBoundingClientRect();
+              f.finish = { x: b.x, y: b.y, w: b.width, h: b.height };
+            });
+          if (layer) return;
+          f.gone = true;
+          left.disconnect();
+        });
+        left.observe(document.documentElement, { childList: true, subtree: true });
+      },
+      { once: true },
     );
   });
 // The book open on the scrap's page, showing the scrap: its picture on the paper
@@ -214,20 +237,24 @@ async function endsOnItsInk(page, { from, land, ends, picture }, what) {
     `${what}: it ends where the page draws its ink (${json(flown)}, drawn ${json(drawn)}; aimed first at ${json(land)})`,
   );
 }
-// The layer moved from the ink towards where it lands: halfway through its frames it's nearer there than it started
-function towards({ from, land, path, up }, what) {
+// The layer moved from the ink towards where it lands: halfway through its frames it's nearer there than it started,
+// and its flight ends there. Where it lands is the rect the book aimed it at last (ends): its first aim is the page's next
+// place, bent on the way to the scrap's photo once the page has it.
+function towards({ from, ends, path, finish, up }, what) {
   assert.ok(path.length >= 1 || up, `${what}: a flight of its own`);
-  // On a loaded worker Save's photo, cut as the ink flies, can hold every frame of the flight up: its path is judged
-  // where its frames are seen, and said when they aren't.
+  const to = centre(ends),
+    away = p => Math.hypot(centre(p).x - to.x, centre(p).y - to.y),
+    start = Math.hypot(centre(from).x - to.x, centre(from).y - to.y);
+  assert.ok(
+    away(finish) < Math.max(24, start * 0.15),
+    `${what}: it ends where it lands (${Math.round(away(finish))} px off)`,
+  );
+  // On a loaded worker Save's photo, cut as the ink flies, can hold every frame of the flight up: its way there is
+  // judged where its frames are seen, and said when they aren't.
   if (path.length < 4)
     return console.log(`     ${what}: the flight's frames unseen (${path.length}), its path not judged`);
-  const to = centre(land),
-    away = p => Math.hypot(centre(p).x - to.x, centre(p).y - to.y),
-    start = Math.hypot(centre(from).x - to.x, centre(from).y - to.y),
-    mid = away(path[Math.floor(path.length / 2)]),
-    last = away(path.at(-1));
+  const mid = away(path[Math.floor(path.length / 2)]);
   assert.ok(mid < start, `${what}: halfway it's nearer the book (${Math.round(mid)} px from ${Math.round(start)})`);
-  assert.ok(last < Math.max(24, start * 0.15), `${what}: it ends where it lands (${Math.round(last)} px off)`);
 }
 // Nothing of the lift left over HQ: its layer gone, and nothing drawn
 async function clean(page, what) {

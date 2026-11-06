@@ -48,7 +48,7 @@ import room
 import turns
 from voices import VOICE_WORDS, Voices
 from voices import ENROL_WORDS, FORGET_WORDS, NAME_LENGTH
-from design import ABOUT_LENGTH, DESIGN_TOOL_WORDS, HAND_PAUSE_SECONDS, HAND_TOOL_WORDS, Design
+from design import ABOUT_LENGTH, DESIGN_TOOL_WORDS, HAND_PAUSE_SECONDS, HAND_TOOL_WORDS, LANGUAGES, Design
 from design import DESIGN_OPEN_SECONDS, MADE_EARLY_WORDS, MADE_WORDS, MAKE_MOST_SECONDS, MAKE_QUIET_SECONDS, MAKES
 from design import (BRIEF_MOST, BUILD_EFFORT, BUILD_SECONDS, BUILD_TOOL_WORDS, BUILD_WORDS, Progress, build_ask,
                     built_page, prototype_key)
@@ -366,7 +366,27 @@ def cant_answer(name, why, until=0, tz='UTC', lang='en', again=False, now=now_ms
     reason = words['until'].format(t=clock(until, tz, lang, now)) if why == 'limit' and until else words.get(why, words['error'])
     return words['again' if again else 'first'].format(name=name, why=reason)
 
+# What HQ's call screen shows while the agent's session is renewed (restart), until the fresh one has the call: a
+# renewal takes seconds, and without it the board can't tell a quiet agent from a line that's gone.
+RENEWING = {'en': "{name}'s session is being renewed: back in a moment.",
+            'nl': 'De sessie van {name} wordt vernieuwd: zo terug.',
+            'de': 'Die Sitzung von {name} wird erneuert: gleich zurück.'}
+# The end of a fresh session's first message, after the call so far (restart). The fresh session has none of its own
+# replies, only their transcript lines among the recogniser's (which turns a word of the room's into English now and
+# then), and can take the call for a bilingual one and say its answer again in English.
+RECAP_GOES_ON = ("\n(The call goes on in {language}, as it was. Everyone heard your lines above: carry on from where "
+                 "the call is, and never say any of them again, in {language} or in a translation.)")
+# The first message of a session renewed at a quiet moment (Call.renew_when_quiet): nothing was said, and the line says
+# nothing of what it writes.
+AHEAD_WORDS = ("(Nobody said anything: your session was renewed at a quiet moment, so it's ready when they speak "
+               "again. There's nothing to answer, and nothing you write now is said.)")
+# What the agent says when its session was lost mid-reply and a fresh one took over (renew): the reply is gone.
+LOST = {'en': 'Sorry, I lost my train of thought there. Could you say that again?',
+        'nl': 'Sorry, ik was even de draad kwijt. Kun je dat nog eens zeggen?',
+        'de': 'Entschuldigung, ich habe gerade den Faden verloren. Kannst du das noch einmal sagen?'}
 
+# How many blocks back from a request's newest message the API looks for a prefix it has cached (Agent.interrupt;
+CACHE_LOOKBACK = 20
 # What Agent.ask yields once the model has the message: its first request started
 DELIVERED = object()
 # What it yields as each later response in the same turn starts (the model's answer to its tool steps' results)
@@ -412,6 +432,37 @@ SAID = {}
 PIPERS = {name: PiperVoice.load(str(MODELS / f'{model}.onnx'))
           for name, model in (('alex', 'nl_NL-alex-medium'), ('thorsten', 'de_DE-thorsten-medium'),
                               ('kerstin', 'de_DE-kerstin-low'))}
+
+
+def with_own_voices(pipers, folder):
+    """pipers and the company's own Piper voices, trained on its own data: each <name>.onnx with its .onnx.json in
+    folder, by its file's name (an agent's org.yaml voices name one for a language). A file that won't load leaves the
+    voice out and the line up; one named like a voice the line has leaves the line's."""
+    own = {}
+    for f in sorted(folder.glob('*.onnx')):
+        name = f.name.removesuffix('.onnx')
+        if name in pipers:
+            continue
+        try:
+            own[name] = PiperVoice.load(str(f))
+        except Exception as e:  # noqa: BLE001 (a broken file is the company's, never the line's start)
+            print(f'voice {f.name} not loaded: {e}', flush=True)
+    return {**pipers, **own}
+
+
+PIPERS = with_own_voices(PIPERS, Paths().repo / 'company/voices')  # (the deployed checkout's)
+
+
+def line_voices(voices):
+    """An agent's voices by language (call-context's, org.yaml's) that are Piper voices the line has: one it doesn't, a
+    company file not deployed yet, leaves the language's own, and the log says so."""
+    have = {k: v for k, v in voices.items() if k in ('nl', 'de', 'en') and isinstance(v, str) and v in PIPERS}
+    for lang, name in voices.items():
+        if have.get(lang) != name:
+            print(f'voice {name!r} for {lang!r} is not on the line: the language\'s own is spoken', flush=True)
+    return have
+
+
 # Letters Pocket TTS reads as a word of the language: "AI" was "een ei" in Dutch and "eine Key" in German, KI "Key"
 # too. Spelled as said, read back right through the phone 6 times in 6 ("aa-ie") and 5 in 6 ("Ka-I"); never with dots
 # ("A.I."), where it stops as at a sentence's end. Piper reads "AI" right as it is.
@@ -706,6 +757,9 @@ class Agent:
     kind = 'board'
     def __init__(self, agent, lang, request=0, phone=False, callout=0, walk=False, wiring=Wiring()):
         self.agent, self.lang, self.request, self.busy, self.token, self.call = agent, lang, request, False, '', 0
+        # the turn's first request has begun streaming (answering), a stop waits for that (held), and the blocks sent
+        # since the last request that streamed (unstreamed): interrupt
+        self.answering, self.held, self.unstreamed = False, False, 0
         self.walk = walk  # a walk-through of the request's work (call-context)
         self.wiring = wiring  # what the call is wired to (Call's)
         self.phone = phone  # on the phone line: no screen, so no pictures
@@ -714,6 +768,7 @@ class Agent:
         self.key = ''  # the call's key for HQ's picture uploads (pictures.ts)
         self.screen = None  # the line's screen socket and this session's key, on a call with a screen (Call.screen_key)
         self.voice = VOICE
+        self.voices = {}  # its voice in a language where it has another (call-context)
         self.respell = {}  # the company's words respelt for the speech engines, by language (brand.yaml speech.respell)
         self.recap = ''  # a restarted session's first message carries the call so far (Call.answer)
         # whether a Claude seat has room (the coordinator's reading, said at pickup: Call.greet), the company's clock, and
@@ -742,6 +797,7 @@ class Agent:
         prompt, self.token, self.call = ctx['prompt'], ctx.get('token', ''), int(ctx.get('call') or 0)
         self.key = str(ctx.get('key') or '')
         self.voice = v if isinstance(v := ctx.get('voice'), str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', v) else VOICE
+        self.voices = line_voices(ctx.get('voices') or {})
         self.respell = ctx.get('respell') or {}
         model, effort = (v if isinstance(v, str) and PICK.fullmatch(v) else d for v, d in ((ctx.get('model'), MODEL), (ctx.get('effort'), EFFORT)))
         words = lambda key, most: ' '.join(str(ctx.get(key) or '').split())[:most]  # (one line)
@@ -755,6 +811,7 @@ class Agent:
         paths = self.wiring.paths
         self.signed, self.resets = seat_token(paths.seat), 0
         session = str(uuid.uuid4())  # (its records go when it ends: watch)
+        self.held, self.unstreamed = False, 0  # (a fresh session's cache starts at its briefing, and nothing's stopped)
         signs = sign_in_pipe(self.signed)  # (on a pipe, not in its env: guard.py)
         try:
             # (self.tz: the call's company.timeZone, for hq's times)
@@ -804,7 +861,8 @@ class Agent:
             raise RuntimeError(f'the call agent is gone (exit {self.proc.returncode})')
         self.proc.stdin.write((json.dumps(msg) + '\n').encode())
         await self.proc.stdin.drain()
-        self.busy, t0, first, tool = True, self.wiring.monotonic(), None, None
+        self.unstreamed += len(msg['message']['content']) + 1  # (and the CLI's own line if it's stopped)
+        self.busy, self.answering, t0, first, tool = True, False, self.wiring.monotonic(), None, None
         # Where the first seconds go: the turn's first request's tokens (input,
         # cache read, cache write: message_start), and the thinking before the first words (when it began, how long
         # it ran)
@@ -825,6 +883,9 @@ class Agent:
                 d, block = ev.get('delta', {}), ev.get('content_block', {})
                 if ev.get('type') == 'message_start' and usage is None:
                     usage = ev.get('message', {}).get('usage') or {}
+                    self.answering, self.unstreamed = True, 0
+                    if self.held:  # (stopped before the model had the message: it has it now, and its cache with it)
+                        self.stop()
                     yield DELIVERED
                 elif ev.get('type') == 'message_start':
                     yield RESPONSE
@@ -862,7 +923,7 @@ class Agent:
                 if [s for s in e.get('mcp_servers', []) if s.get('status') != 'connected']:
                     print(f'call agent ({self.agent}): hand-on tools not connected: {e["mcp_servers"]}', flush=True)
             elif e.get('type') == 'result':
-                self.busy = False
+                self.busy = self.held = False
                 if e.get('is_error') and e.get('subtype') != 'error_during_execution':  # (that one is an interrupt)
                     print(f'call agent ({self.agent}): {e.get("subtype")}: {str(e.get("result"))[:200]}', flush=True)
                 # a turn stopped before its first words has no first-words time: it says so, so it isn't counted as one
@@ -883,10 +944,23 @@ class Agent:
                 return
 
     def interrupt(self):
-        """Stops the reply being written (the session keeps what it heard)."""
-        if self.busy:
-            self.proc.stdin.write((json.dumps({'type': 'control_request', 'request_id': f'stop-{time.monotonic()}',
-                                               'request': {'subtype': 'interrupt'}}) + '\n').encode())
+        """Stops the reply being written (the session keeps what it heard). The API reads a prefix from its cache only
+        after a response to it began streaming, and looks back at most CACHE_LOOKBACK blocks for one. Turns stopped
+        before their request streamed, one after another as the board talks on, add their messages and pictures with
+        nothing cached, until a request finds no cached prefix and writes the whole call again: on a long call, 20 s and
+        more before the model begins, long enough for the next words to stop it too. So once the blocks sent since the
+        last request that streamed fill half the lookback (the other half is the next message's: its words, pictures
+        and the screens'), a turn whose request hasn't streamed yet stops once it has (held), and its prefix is
+        cached."""
+        if self.busy and not self.answering and self.unstreamed >= CACHE_LOOKBACK // 2:
+            self.held = True
+        elif self.busy and not self.held:
+            self.stop()
+
+    def stop(self):
+        self.held = False
+        self.proc.stdin.write((json.dumps({'type': 'control_request', 'request_id': f'stop-{time.monotonic()}',
+                                           'request': {'subtype': 'interrupt'}}) + '\n').encode())
 
     def kill(self):
         """Stops the session, for a restart: the call goes on."""
@@ -1336,6 +1410,8 @@ class Call:
         self.latest, self.waited = 0.0, 0  # the latest it came all call, and how many answers waited (the hang-up line)
         self.pen = None       # the board's Pencil: 'down', or when it was last lifted (PEN_REST_SECONDS)
         self.noticed = None   # why the agent couldn't answer, as the line last said it (until a reply gets through)
+        self.renewing = False  # HQ's call screen says the session is renewed (RENEWING), until the fresh one has the call
+        self.ahead = None  # the wait for a quiet moment to renew a full session in (renew_when_quiet)
         # Hung up: after end(), no turn or agent starts and the transcript isn't written
         self.ended = False
         # When the call's line last sent anything: its audio, or HQ's ping (watch_live).
@@ -1489,6 +1565,8 @@ class Call:
         words = ''
         # (a design session's words first, started from HQ's key.)
         async for delta in self.brain.ask('\n\n'.join(filter(None, (self.design.told(), HELLO)))):
+            if delta is DELIVERED:
+                await self.renewed()
             if type(delta) is str:
                 words += delta
         words = ' '.join(words.split())
@@ -1545,6 +1623,7 @@ class Call:
             print(f'call: {self.agent} could not restart the call agent: {again!r}', flush=True)
         else:
             if not self.ended:  # (hung up while it started: Agent.start launched nothing)
+                await self.renewed()  # (it's up: a lost reply's turn asks it nothing)
                 return True
         if not self.ended:
             await self.unanswered('error', 0, stop, turn)
@@ -1744,7 +1823,7 @@ class Call:
             return await self.drop('error')
         name, until = self.agent.capitalize(), until if isinstance(until, (int, float)) and until > 0 else 0
         words = cant_answer(name, why, until, self.brain.tz, self.lang, again=self.noticed == why, now=self.wiring.now)
-        self.noticed = why
+        self.noticed, self.renewing = why, False  # (its notice takes the renewal's place)
         at = f", until {datetime.fromtimestamp(until / 1000, timezone.utc).strftime('%H:%M')} UTC" if until else ''
         print(f'call: {self.agent} can\'t answer ({why}{at}): the line says so', flush=True)
         self.write(f'(The line, not {name}: {words})')
@@ -1767,11 +1846,23 @@ class Call:
         self.screen['bytes'] += sum(len(picture['data']) for picture in screens)
         so_far = ('The call so far, from speech recognition:\n' + '\n'.join(lines) if not self.objected else
                   "They asked us to keep no transcript, so there is none. Your notes so far: " + ('; '.join(self.notes) or 'none'))
-        self.brain.recap = f'({why} {so_far})' + lost
+        goes_on = '' if self.objected else RECAP_GOES_ON.format(language=LANGUAGES.get(self.lang, self.lang))
+        self.brain.recap = f'({why} {so_far})' + lost + goes_on
         self.design.fresh()
         self.screen['heard'].clear()  # (the new session has heard none of it, nor the coordinator's briefing)
         self.new_screen_key()
+        if not self.noticed:  # (a notice on why it couldn't answer stays until a reply gets through)
+            self.renewing = True
+            await self.send_event({'type': 'notice', 'text': RENEWING.get(self.lang, RENEWING['en']).format(
+                name=self.agent.capitalize())})
         await self.brain.start()
+
+    async def renewed(self):
+        """The fresh session has the call (its first request started, or it's up after a lost reply: renew): HQ's call
+        screen no longer says it's renewed."""
+        if self.renewing:
+            self.renewing = False
+            await self.send_event({'type': 'notice', 'text': ''})
 
     def crowded(self, look):
         """Whether the session is full before this turn: it holds SCREEN_PICTURES of the screen (whether or not the screen
@@ -2517,7 +2608,7 @@ class Call:
         await self.clear()
         await self.send_event({'type': 'state', 'state': 'listening'})
 
-    async def answer(self, text, before, taken_back_message='', at=None):
+    async def answer(self, text, before, taken_back_message='', at=None, ahead=False):
         if before and not before.done():
             if self.last is not None:  # (a care call's opening counts as heard up to here)
                 self.last.setdefault('cut', self.wiring.monotonic())
@@ -2544,7 +2635,9 @@ class Call:
                 self.write(f"{note['note']['who']}: (drew #{note['note']['n']} on the call's notes page)")
             else:  # (a guest's pen on a prototype, by their name.)
                 self.write(f"{note['note'].get('by') or 'Board'}: (drew note {note['note']['n']} on {note['note']['url']})")
-        turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
+        turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at,
+                            # (a renewal ahead of time says nothing: renew_when_quiet)
+                            'quiet': ahead}
         spoke, asked, worded_at = self.spoke, self.wiring.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)
         text = unhesitating(text, self.lang)
@@ -2568,6 +2661,8 @@ class Call:
                    f'whole message instead.) {text}')
         if shared and not ask:
             ask = f"(I've shared {'a picture' if len(shared) == 1 else f'{len(shared)} pictures'} on screen.)"
+        if ahead:
+            ask = AHEAD_WORDS
         # (the board's answers to the agent's asks first, then the screen's words, then the notes' before the words)
         # (driving)
         ask = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask)))
@@ -2606,6 +2701,7 @@ class Call:
                         if delta is DELIVERED:  # (the pictures are seen only once the model has them)
                             delivered = True
                             await self.seen(shown)
+                            await self.renewed()
                             continue
                         if delta is RESPONSE:
                             worded = False
@@ -2683,7 +2779,7 @@ class Call:
             if self.ended:
                 return
             if renewed and not turn.get('quiet'):  # (a turn it passed had nobody waiting.)
-                said = "Sorry, I lost my train of thought there. Could you say that again?"
+                said = LOST.get(self.lang, LOST['en'])
                 await self.say(said, stop, turn)
         else:
             if not delivered:  # (HQ keeps 'received' for them: the model has them with the next request)
@@ -2700,6 +2796,26 @@ class Call:
             self.timed(turn, spoke, asked, worded_at)
         if await self.ended_turn(said.strip(), stop, turn) and turn.get('bye') and not self.ended:
             self.leaving = asyncio.create_task(self.leave(turn))
+        if self.full() and not (self.ahead and not self.ahead.done()):
+            self.ahead = asyncio.create_task(self.renew_when_quiet())
+
+    def full(self):
+        """Whether the session can't take another picture of the screen: the next turn renews it (crowded)."""
+        return not self.ended and self.crowded({'pictures': []})
+
+    async def renew_when_quiet(self):
+        """The session is full, so the next turn would renew it while the board waits for the answer. It's renewed at
+        the first quiet moment instead (as unprompted() waits for one, with nothing for the agent to answer), in a turn
+        that says nothing (AHEAD_WORDS): the fresh session has the call, and its cache, before the board speaks again.
+        If the board speaks first, its turn renews the session as before."""
+        calm = self.wiring.monotonic()
+        while self.full():
+            await asyncio.sleep(0.1)
+            if not self.idle() or self.inking() or self.pictures or self.answers():
+                calm = self.wiring.monotonic()
+            elif self.wiring.monotonic() - calm >= SHOWN_SECONDS:
+                self.turn = asyncio.create_task(self.answer('', self.turn, ahead=True))
+                return
 
     def timed(self, turn, spoke, asked, worded_at):
         """Where a care call's reply's wait went, counted from the caller's last word (numbers only, for call-times.sh):

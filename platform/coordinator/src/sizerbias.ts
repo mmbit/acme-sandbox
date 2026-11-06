@@ -21,6 +21,7 @@ export type Bias = { usual: number; slow: number; jobs: number; own: boolean };
 
 // The done clean jobs of the last two weeks that had a given size before they ended, by who gave it: [given, took] in ms.
 // A job whose latest size is the CEO's revision (sizes.ts revised) is left out: the bias is that of guesses at queue time.
+// A job's adjusted time (adjusted.ts) is a forecast of its cost now, not what it took: the pair keeps the measurement.
 export function measured(now: number, pool: PastJob[]) {
   const since = new Date(now - WINDOW_MS).toISOString();
   const ids = (db.prepare('select distinct job from sizes where at > ?').all(since) as { job: number }[]).map(

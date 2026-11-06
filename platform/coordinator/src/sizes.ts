@@ -4,7 +4,7 @@ import { readBudget, readSizing, type TokenBudget } from './tokenbudget.ts';
 import { createHash } from 'node:crypto';
 import { readConfidence, type Confidence } from './confidence.ts';
 import { columnsOf, db, once, redacted, redactedJson } from './db.ts';
-import { ceo } from './company.ts';
+import { ceo, roles } from './company.ts';
 import { publish } from './events.ts';
 import { ORIGIN, cleanPastJobs, pastJobs, type JobOrigin } from './matching.ts';
 import { MODEL as SIZER } from './smallmodel.ts';
@@ -164,7 +164,9 @@ const shown = ({ id: _id, ...row }: Row & { id?: number }): GivenSize => ({
 });
 
 // A saved estimate is revised by whoever knows: the agent running the job, which knows first that it's bigger, and the
-// CEO, for any queued or running planned work or HQ's fix and merge rounds. Each
+// CEO, for any queued or running planned work or HQ's fix and merge rounds, and the estimates role (org.yaml's
+// roles.estimates), whose weekly check re-sizes queued work that leans on past jobs a process change made stale.
+// Each
 // revision says why, on the feed and in the CEO's summary (threats.ts resized). HQ's other jobs (a notice, the board's
 // answer) and carry checks play from history: a size would make one planned work (matching.ts ORIGIN). Earlier
 // estimates remain in history.
@@ -190,10 +192,10 @@ export function setSize(job: number, time: string, why: string, by: string, now 
       `job #${job} is HQ's own (a notice, an answer or a carry check): the play sizes it from history`,
     );
   const byRunningAgent = found.status === 'running' && by === found.agent;
-  if (!byRunningAgent && by !== ceo())
+  if (!byRunningAgent && by !== ceo() && by !== roles().estimates)
     return refused(
       403,
-      `the agent running job #${job} or the CEO re-sizes it: tell ${found.agent} what you know (hq say)`,
+      `the agent running job #${job}, the CEO or the estimates role re-sizes it: tell ${found.agent} what you know (hq say)`,
     );
   if (!why.trim()) return refused(400, 'give the reason the saved estimate needs changing');
   if (!sizing.budget) return refused(400, 'give time, tokens, feedback_rounds and confidence as JSON');

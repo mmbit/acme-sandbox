@@ -1,9 +1,10 @@
 // Main's line along its first parents, told to HQ each time main moves (worker.ts tellMain), so a commit that reached it
 // outside a pull request HQ merged still gets a push's checks (the coordinator's carries.ts, worker.ts carryChecks).
-type Commit = { sha: string; parents: string[] };
+// `code`: whether it changes anything a push's checks run on (checkedChange), which sizes its carry check
+type Commit = { sha: string; parents: string[]; code?: boolean };
 export type ToldMain = { commits: Commit[]; after?: string; lost?: string };
 
-// 100 commits are about 15 KB, under HQ's 20 KB a request (shared/routes JSON_MAX)
+// 100 commits are about 16 KB, under HQ's 20 KB a request (shared/routes JSON_MAX)
 export const MAIN_LINE = 100;
 
 // Main's last commits, unless its tip is `told` already. A line that doesn't reach the last commit HQ heard of gets HQ's
@@ -28,3 +29,20 @@ export async function tellMainLine(
   }
   return line[0].sha;
 }
+
+// What a push's checks (shared/gates) spend their time on: the gates lint and type-check code, and the tests run every
+// suite of each area a change touches (suites.ts changeAt, areaOf, SUITES). The worker runs from platform/worker alone
+// (infra/worker.sh), so their rules are read again here, and mainline.test.ts holds them to shared/gates'.
+const CODE = /\.(ts|js|mjs|cjs|css|html)$|(^|\/)(package|tsconfig)\.json$/;
+const TEST_FILE = /\.test\.(ts|js|mjs)$|(^|\/)test_[^/]*\.(py|sh)$/;
+function areaOf(path: string) {
+  const parts = path.split('/');
+  if (parts.length === 1) return '.';
+  const depth = /^(platform|shared|kits|products)$/.test(parts[0]) && parts.length > 2 ? 2 : 1;
+  return parts.slice(0, depth).join('/');
+}
+// The areas holding tests among a tree's files
+export const testedAreas = (files: string[]) => new Set(files.filter(f => TEST_FILE.test(f)).map(areaOf));
+// Whether a change to these paths gets more than a few seconds of the checks: a code file, or one in an area with tests
+export const checkedChange = (paths: string[], tested: Set<string>) =>
+  paths.some(path => CODE.test(path) || tested.has(areaOf(path)));

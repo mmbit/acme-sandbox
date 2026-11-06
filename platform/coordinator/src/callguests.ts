@@ -18,6 +18,7 @@
 //   - Each mark on the call's page, theirs or the board's from any screen, reaches the call's agent as it rests, with who
 //     drew it (ink/callmarks.ts markForVoice, through HQ's calldraw.js and the voice line).
 //   - The call ended, their session and the page close to them: the page goes in with the call, as every call's does.
+//     12 months on, their name and part of it go (callguestsweep.ts).
 //   - The board can leave the call to them (HQ's Leave, the voice line's 'leave'): the line holds it, and their room shows
 //     a call bar (bookguestcall.js) that says again that the agent is an AI and the call is written down, and carries
 //     the call on their own device, its microphone and speaker, with a one-time ticket for their session (voiceTicket,
@@ -51,12 +52,12 @@ import * as watchalong from './watchalong.ts';
 type CallGuest = { id: number; call: number; guest: string; link: string; added: string };
 
 // What the join page says before they join, in each language the guest desk has: the walk-through note's notice, word
-// for word, then what their pen does on the call
+// for word, then what their pen does on the call. Their name and part go after 12 months (callguestsweep.ts).
 const WORDS = {
   en: {
     title: (agent: string) => `Call with ${agent}`,
     text: (agent: string) =>
-      `${agent} is an AI assistant. We keep a written transcript of this call, never its sound. If you show your screen, ${agent} sees this call’s page and the prototypes you open on it live, never another tab or app or what you type. The transcript notes what you open, where you scroll and tap, and that you type, never what. Nothing else of it is kept. Pause stops it at any time. What you draw on the call’s page, ${agent} sees too, and it stays with the call’s notes. Your device stays muted: the call runs through the other device.`,
+      `${agent} is an AI assistant. We keep a written transcript of this call, never its sound. We delete your name and your part of it after 12 months. If you show your screen, ${agent} sees this call’s page and the prototypes you open on it live, never another tab or app or what you type. The transcript notes what you open, where you scroll and tap, and that you type, never what. Nothing else of it is kept. Pause stops it at any time. What you draw on the call’s page, ${agent} sees too, and it stays with the call’s notes. Your device stays muted: the call runs through the other device.`,
     privacy: 'How we handle it',
     name: 'Your name',
     badName: 'Type your name to join: a few letters.',
@@ -68,7 +69,7 @@ const WORDS = {
   nl: {
     title: (agent: string) => `Gesprek met ${agent}`,
     text: (agent: string) =>
-      `${agent} is een AI-assistent. We houden een geschreven verslag van dit gesprek bij, nooit het geluid. Als je je scherm laat zien, kijkt ${agent} live mee op de pagina van dit gesprek en de prototypes die je erop opent, nooit naar een ander tabblad of andere app of naar wat je typt. Het verslag noemt wat je opent, waar je scrolt en tikt, en dat je typt, maar nooit wat. Verder wordt er niets van bewaard. Met Pauze stopt het meteen. Wat je op de pagina van het gesprek tekent, ziet ${agent} ook, en het blijft bij de aantekeningen van het gesprek. Je apparaat blijft stil: het gesprek loopt via het andere apparaat.`,
+      `${agent} is een AI-assistent. We houden een geschreven verslag van dit gesprek bij, nooit het geluid. Je naam en jouw deel ervan wissen we na 12 maanden. Als je je scherm laat zien, kijkt ${agent} live mee op de pagina van dit gesprek en de prototypes die je erop opent, nooit naar een ander tabblad of andere app of naar wat je typt. Het verslag noemt wat je opent, waar je scrolt en tikt, en dat je typt, maar nooit wat. Verder wordt er niets van bewaard. Met Pauze stopt het meteen. Wat je op de pagina van het gesprek tekent, ziet ${agent} ook, en het blijft bij de aantekeningen van het gesprek. Je apparaat blijft stil: het gesprek loopt via het andere apparaat.`,
     privacy: 'Hoe we daarmee omgaan',
     name: 'Je naam',
     badName: 'Typ je naam om mee te doen: een paar letters.',
@@ -79,7 +80,7 @@ const WORDS = {
   de: {
     title: (agent: string) => `Gespräch mit ${agent}`,
     text: (agent: string) =>
-      `${agent} ist eine KI. Wir führen ein schriftliches Protokoll dieses Gesprächs, nie eine Tonaufnahme. Wenn du deinen Bildschirm zeigst, sieht ${agent} die Seite dieses Gesprächs und die Prototypen, die du darauf öffnest, live, nie einen anderen Tab oder eine andere App oder was du tippst. Das Protokoll nennt, was du öffnest, wo du scrollst und tippst, und dass du etwas eingibst, aber nie was. Sonst wird nichts davon gespeichert. Mit Pause stoppt es sofort. Was du auf die Seite des Gesprächs zeichnest, sieht ${agent} auch, und es bleibt bei den Notizen des Gesprächs. Dein Gerät bleibt stumm: das Gespräch läuft über das andere Gerät.`,
+      `${agent} ist eine KI. Wir führen ein schriftliches Protokoll dieses Gesprächs, nie eine Tonaufnahme. Deinen Namen und deinen Teil davon löschen wir nach 12 Monaten. Wenn du deinen Bildschirm zeigst, sieht ${agent} die Seite dieses Gesprächs und die Prototypen, die du darauf öffnest, live, nie einen anderen Tab oder eine andere App oder was du tippst. Das Protokoll nennt, was du öffnest, wo du scrollst und tippst, und dass du etwas eingibst, aber nie was. Sonst wird nichts davon gespeichert. Mit Pause stoppt es sofort. Was du auf die Seite des Gesprächs zeichnest, sieht ${agent} auch, und es bleibt bei den Notizen des Gesprächs. Dein Gerät bleibt stumm: das Gespräch läuft über das andere Gerät.`,
     privacy: 'So gehen wir damit um',
     name: 'Dein Name',
     badName: 'Schreib deinen Namen, um mitzumachen: ein paar Buchstaben.',

@@ -13,8 +13,9 @@ no extra error checking or handling.
   foundation's `company:` marker keeps one). A comment that says why, where the why isn't obvious.
 - Only real code: never decks, ads, demos, films, research or one-off scripts.
 - Foundation code (platform/, infra/, shared/): mark each change `company: job #<n>, not upstream yet`, and skip
-  files a foundation merge changed in the last week (git log --author=Overseer --since='1 week ago' -- <file>):
-  another company may be mid-refactor.
+  files a foundation merge changed in the last week: another company may be mid-refactor. Carries are signed by the
+  Overseer or by Claude, so match both:
+  `git log --author='Overseer\|noreply@anthropic.com' --since='1 week ago' -- <file>`.
 - Stay out of the way: skip any file an open job or pull request touches (hq jobs, hq report).
 - A bug you find isn't this pass's work: queue it for the owner (check hq jobs <owner> first).
 - If a convention in CODE_STYLE.md doesn't fit the area, fix the guide in the same pull request.

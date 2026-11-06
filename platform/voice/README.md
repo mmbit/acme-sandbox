@@ -126,7 +126,8 @@ table. HQ has one call key: the agent makes a call one when someone asks (`desig
 `{type: 'design'}`: it opens the call's page as a free sketch page), and an ordinary call again with `off: true` (its
 hand down, the page as it is). The agent hears
 once how to take part (`DESIGN_WORDS`: no turns, `say_nothing` the usual reply, silence is thinking; keep an
-organised list of ideas and small sketches on the page, have prototypes built in the background, no tasks until the
+organised list of ideas and small sketches on the page, a note of its own per topic drawn as the talk goes, never one
+crammed note at the end, so the page reads back later topic by topic (board, call 275), have prototypes built in the background, no tasks until the
 end, then the list and who does what as they agree it), with the hello's message or the tool's answer, and again in a restarted
 session. Its raised hand (`raise_hand`, with what it's about): HQ shows it on the call screen and the bubble with a
 soft beep (`{type: 'hand', up}`); the line gives the agent a turn of its own once the room has been quiet
@@ -225,8 +226,16 @@ the coordinator's briefing until the session has had it, then the moments since 
 ended when it changed since the last one the session has.
 
 Screen pictures count against the same 20 MB
-as shared ones, and a call has at most 40 of them, the screen tool's included; past either, lines only, and the agent
-hears once that pictures have stopped.
+as shared ones, and a session holds at most 40 of them, the screen tool's included. A full session is renewed
+(`compact`): a fresh one whose first message has the call so far in words, each older picture as its moments' line, the
+board's shared pictures again, the screen as it is now, and a line saying the call goes on in its language, as it was,
+with nothing said again or translated (`RECAP_GOES_ON`: the fresh session has its earlier replies only as transcript
+lines, among the recogniser's English slips). The line renews a full session at the first quiet moment after the turn
+that filled it (`renew_when_quiet`, waiting as unprompted pictures do), in a turn of its own that says nothing
+(`AHEAD_WORDS`), so the board's next words reach a fresh session whose briefing is cached; if the board speaks first,
+its turn renews it. Any renewal shows on HQ's call screen as a notice in the call's language (`RENEWING`, `{type:
+'notice'}`) until the fresh session's first request has started, or, after a lost reply (`renew`), until it's up; a notice
+on why the agent can't answer takes its place.
 
 Paused, the agent hears once that the caller paused showing their screen, and
 gets nothing more (the tool refuses too) until it's on again.
@@ -274,8 +283,11 @@ too: `read_notes` lists what's on it, `mark_notes` draws a rectangle, ellipse, l
 `change_note` changes its own note's words, or moves or deletes anything there, none of it a step the board's Undo
 takes back: that takes back only the board's own (board, call 174). `draw_picture` puts a drawing of the agent's own
 there, a diagram or a chart it writes as SVG, which the coordinator draws in the company's look (`drawing.ts`, theme/hq.yaml
-`drawing`) and lays at the page's end as a picture the board can draw on; the picture comes back to the agent with its
-line, so it sees what the board sees. `prototype` saves a throwaway page of the agent's own (one HTML page, everything
+`drawing`) and lays at the page's end as a picture the board can draw on. Its words are fitted to the shapes they're
+in first (`drawingfit.ts`: measured in the type they're drawn in, wrapped, a little smaller or the shape grown round
+them, the picture widened to hold what reaches past it), so no text runs out of its box (board, call 275); the picture
+comes back to the agent with its line, what was fitted and any words that still cover each other, so it sees what the
+board sees. `prototype` saves a throwaway page of the agent's own (one HTML page, everything
 inline) with the call, its next version under a name it has already (`POST prototype`: the coordinator's
 `callprototypes.ts`, which takes its picture and shows it on the call's page and their screens.); its picture comes back with its line and the call's number, which a
 colleague's quick job needs to save one for the call with `hq prototype --call <n>`. The socket's line limit fits a prototype's page (`ASK_BYTES`).
@@ -581,6 +593,14 @@ the model answered). The call's first line gives its briefing's size (`briefing 
 always thinks when it judges it useful (Opus 5.5 can't turn thinking off; effort is the lever, `low` here), and the
 briefing asks it to answer without deliberating. The call agent doesn't load the checkout's CLAUDE.md: the briefing has
 AGENTS.md already (it was 5 KB more in every first request).
+The cache holds only while each request starts within 20 blocks (`CACHE_LOOKBACK`) of one whose response began
+streaming: the API writes a prefix to its cache once a response streams, and looks back no further for one. A turn the
+board talks on over is stopped (`Agent.interrupt`), and one stopped before its request streamed leaves its message and
+pictures uncached. Turns stopped one after another that way once ran past the lookback: every later request read only the
+briefing from the cache and wrote the whole call again, 100,000 to 170,000 tokens and 10 to 21 s before the model began,
+long enough for the board's next words to stop it too, for minutes. So once the blocks since the last request that
+streamed fill half the lookback, a stop waits until the turn's request streams (`held`), and the next turn reads the
+call from the cache.
 `infra/call-times.sh` keeps these lines across redeploys, and the server status shows the last 7 days (the daily model
 check reads them). It also keeps a line per turn from the call agents' own session records (`turns.py`, logged as each
 session ends: `call: session <id> turn <n> on <model>: tokens …; thinking until 1.8 s (230 tokens); then words …`),

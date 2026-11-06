@@ -32,7 +32,7 @@ export async function report(ask: taskaudit.AuditAsk) {
   const turn = latency.turns('hq estimate --accuracy');
   const tasks = await taskaudit.report(window, turn);
   await turn('the diagnostic pool', pastJobsSoon());
-  const { ways, byThread, bySchedule } = replayed(`${days}/${ask.until ?? 'live'}`, window);
+  const { ways, byThread, bySchedule, carries } = replayed(`${days}/${ask.until ?? 'live'}`, window);
   await turn('the matching diagnostics');
   await latency.exclude(scrubbed()); // (the titles read after a save's scrub: db.ts scrubSaved)
   const kept = db.prepare(KEPT).all(since, window.until) as Kept[];
@@ -47,7 +47,7 @@ export async function report(ask: taskaudit.AuditAsk) {
       ),
       eta: etas(kept.filter(k => !k.merged_at || k.merged_at < window.until)),
     },
-    ...{ matching: ways, matching_by_thread: byThread, matching_by_schedule: bySchedule },
+    ...{ matching: ways, matching_by_thread: byThread, matching_by_schedule: bySchedule, matching_carries: carries },
   };
 }
 
@@ -172,9 +172,11 @@ function replayed(key: string, window: { since: string; until: string }) {
 // The jobs done before each one was queued are the first of them all by when they finished, found once per job: every
 // way matches against that same list, so matching.ts's work on a pool (its groups, its titles' index) is done once.
 function replay(since: string, until: string) {
-  // (a copy: the pool is shared)
+  // (a copy: the pool is shared). Each job at its measured time: the replay is of the matching as it was, before any
+  // adjustment existed, scored against what happened (adjusted.ts).
   const all = pastJobs()
     .filter(j => j.origin !== 'carry' && !isPrivate(j))
+    .map(j => (j.adjusted ? { ...j, adjusted: null } : j))
     .sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
   const tried = all.filter(j => j.finished >= since && j.finished < until).slice(-REPLAYED);
   const countBefore = new Map(
@@ -208,7 +210,26 @@ function replay(since: string, until: string) {
   });
   const byThread = replayByThread(tried, before);
   const bySchedule = replayBySchedule(tried, all, before);
-  return { ways: found, byThread, bySchedule };
+  return { ways: found, byThread, bySchedule, carries: replayCarries(since, until) };
+}
+// The carry checks done since, each sized from the carry checks done before it was queued: on its own kind, the way HQ
+// matches now (matching.ts carriesLike), and on the latest of every kind, as before. Worker occupancy, so no floor.
+function replayCarries(since: string, until: string) {
+  const all = pastJobs()
+    .filter(j => j.origin === 'carry' && !isPrivate(j))
+    .map(j => (j.adjusted ? { ...j, adjusted: null } : j))
+    .sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
+  const tried = all.filter(j => j.finished >= since && j.finished < until).slice(-REPLAYED);
+  const now: [number, number][] = [],
+    mixed: [number, number][] = [];
+  for (const j of tried) {
+    const before = all.filter(p => p.finished < j.created);
+    const own = sizeOf(picksFor(j, before).picks),
+      any = sizeOf(picksFor({ ...j, carry_code: null }, before).picks);
+    if (own) now.push([own.agent_ms, j.agent_ms]);
+    if (any) mixed.push([any.agent_ms, j.agent_ms]);
+  }
+  return { jobs: tried.length, now: spread(now, 0), mixed: spread(mixed, 0) };
 }
 function replayByThread(tried: PastJob[], beforeOf: Map<PastJob, PastJob[]>) {
   // The work done in a thread with FEWEST or more of its jobs done before it was queued: sized the way HQ matches now,

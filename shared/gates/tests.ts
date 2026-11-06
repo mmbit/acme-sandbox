@@ -259,7 +259,8 @@ function report(tested: Tested, areas: string[], pages: string) {
   console.log(`Tests failed: ${plural(classes.newFailures.length, 'test')} that pass on ${baseRef} fail here, twice\n`);
   console.log(lines.join('\n'));
   for (const f of classes.newFailures) console.log(`\n${f.text}`);
-  console.log(`\nFix each one and run \`npm run tests\` again.${pages}`);
+  // (its own file, not the suites: the push runs those, CODE_STYLE.md "Tests")
+  console.log(`\nFix each one and run its own test file again: the push runs the suites.${pages}`);
   return 1;
 }
 

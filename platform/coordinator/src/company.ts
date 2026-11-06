@@ -169,6 +169,8 @@ export const unstaffed = () => (org().departments ?? []).every((d: any) => (d.ag
 //   (reviewtriage.ts). Left out, triage chooses that lens like any other
 // - cards: who reads every colleague's card before the board's desk phone, and passes it on or answers it in the board's
 //   place (cardread.ts). Left out, cards go straight to the desk phone
+// - estimates: who runs the weekly estimate check (shared/routines/estimates.md), adjusts the times of past jobs a process
+//   change made stale (adjusted.ts) and re-sizes queued work that leans on them (sizes.ts setSize). Left out, the CEO.
 export function roles() {
   const r = optional('company/org.yaml').roles ?? {}, id = (v: unknown) => typeof v === 'string' && v ? v : ceo();
   const ids = (v: unknown) => (Array.isArray(v) ? v : []).filter((a: unknown) => typeof a === 'string') as string[];
@@ -178,7 +180,8 @@ export function roles() {
     triage: r.triage as string | undefined, asks: r.asks as string | undefined,
     foundation: typeof r.foundation === 'string' && r.foundation ? r.foundation : undefined,
     readability: typeof r.readability === 'string' && r.readability ? r.readability : undefined,
-    cards: typeof r.cards === 'string' && r.cards ? r.cards : undefined };
+    cards: typeof r.cards === 'string' && r.cards ? r.cards : undefined,
+    estimates: id(r.estimates) };
 }
 // Whether an agent's work needs what one of those roles reads
 export type ReadingRole = 'businessMail' | 'customerData' | 'customerMail' | 'orders';
@@ -221,6 +224,15 @@ export const titleOf = (a: { role?: unknown; focus?: unknown }, none = 'team mem
 const PRONOUN_VOICES = new Map([['she', 'jane'], ['he', 'alba']]);
 export function voiceOf(a: { voice?: string; pronouns?: string }): string | null {
   return a.voice ?? PRONOUN_VOICES.get((a.pronouns ?? '').trim().toLowerCase().split('/')[0]) ?? null;
+}
+// An agent's voice in a language where it isn't its own (org.yaml voices: { nl: <name> }): one of the line's Piper
+// voices, or the company's own (company/voices, platform/voice server.py PIPERS), by language; {} without any
+export function voicesOf(a: { voices?: unknown }): Record<string, string> {
+  const v = a.voices;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(
+    Object.entries(v).filter(([lang, name]) => /^[a-z]{2}$/.test(lang) && typeof name === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(name)),
+  );
 }
 // The company's names on its server and accounts (company/infra.env: KEY=value lines, never secrets); {} without one
 export function infra(): Record<string, string> {

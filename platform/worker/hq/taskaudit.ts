@@ -31,8 +31,7 @@ export function printTaskAudit(audit: TaskAudit) {
   print(
     `Token coverage: ${audit.token_cost.missing_estimates} without a first token estimate, ${audit.token_cost.incomplete_actuals} with incomplete actuals.`,
   );
-  for (const [phase, score] of Object.entries(audit.token_cost.phases))
-    print(`Token ${phase}: ${score.count ? spreadWords(score) : 'no eligible estimates'}`);
+  for (const [phase, score] of Object.entries(audit.token_cost.phases)) print(`Token ${phase}: ${scoredWords(score)}`);
   print(
     'Token scores use work, reviews and fixes through the task window. Feedback belongs to the separate through-approval feature budget. Missing reports and unfinished totals are unscored.',
   );
@@ -41,18 +40,18 @@ export function printTaskAudit(audit: TaskAudit) {
 
 function printConfidence(audit: TaskAudit) {
   for (const score of audit.confidence) {
-    print(
-      `Confidence ${score.level}, work time: ${score.work_size.count ? spreadWords(score.work_size) : 'no eligible estimates'}`,
-    );
+    print(`Confidence ${score.level}, work time: ${scoredWords(score.work_size)}`);
     for (const [phase, spread] of Object.entries(score.token_cost.phases))
-      print(
-        `Confidence ${score.level}, token ${phase}: ${spread.count ? spreadWords(spread) : 'no eligible estimates'}`,
-      );
+      print(`Confidence ${score.level}, token ${phase}: ${scoredWords(spread)}`);
     print(
       `  Token coverage: ${score.token_cost.missing_estimates} missing estimates, ${score.token_cost.incomplete_actuals} incomplete actuals.`,
     );
   }
 }
+
+// How many tasks a score covers, then its spread
+const scoredWords = (s: Parameters<typeof spreadWords>[0]) =>
+  s.count ? `${plural(s.count, 'task')}: ${spreadWords(s)}` : 'no eligible estimates';
 
 function printTask(task: Task) {
   const estimate = task.first_estimate;
@@ -86,8 +85,9 @@ function estimateWords(estimate: NonNullable<Task['first_estimate']>, origin: Ta
   return `${workDuration(estimate.agent_ms / 60_000, origin)} from ${estimate.source}, by ${estimate.by}, ${estimate.at} (${estimate.timing}${revised})`;
 }
 
+// (syncs as send-backs: taskphases.ts.)
 const phaseWords = (split: TaskAudit['overhead']['split']) =>
-  `reviews ${duration(split.reviews)}, fixes ${duration(split.fixes)}, re-syncs ${duration(split.syncs)}, previews ${duration(split.previews)}`;
+  `reviews ${duration(split.reviews)}, fixes ${duration(split.fixes)}, send-backs ${duration(split.syncs)}, previews ${duration(split.previews)}`;
 
 const countWords = (counts: Record<string, number>, whole = false) =>
   Object.entries(counts)

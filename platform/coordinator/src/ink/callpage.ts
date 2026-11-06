@@ -190,7 +190,8 @@ const pointsOf = (v: unknown) =>
 // POST /api/voice/drawing { call, svg }: a drawing of the agent's own (a diagram, a chart) drawn as a picture in the
 // company's look (drawing.ts) and put on the page as its last scrap, its lines straight on the post-it, for the board to
 // draw on as on any picture. It asks for nothing. Its answer carries the picture at half its size on the post-it's
-// yellow, for the agent to see what the board sees.
+// yellow, for the agent to see what the board sees, with the words drawing.ts fitted to their shapes and any that
+// still cover each other.
 export async function drawing(b: any) {
   const live = callPage(b);
   if (isRefused(live)) return live;
@@ -207,9 +208,15 @@ export async function drawing(b: any) {
     .flatten({ background: POSTIT })
     .jpeg({ quality: 85 })
     .toBuffer();
+  const fitted = picture.fitted.length
+    ? ` Words that ran out of their shapes were fitted to them: ${picture.fitted.join('; ')}.`
+    : '';
+  const overlap = picture.overlap.length
+    ? ` These still cover each other: ${picture.overlap.join('; ')}: delete it and draw it again with room for them.`
+    : '';
   return {
     ok: `Your drawing is in the call's notes (#${g.id}), its picture at ${boxWords(boxOf(partsOf(g))!)}, appearing as \
-the board watches. Here it is as the board sees it: if words overlap or run off it, delete it and draw it again.`,
+the board watches.${fitted}${overlap} Here it is as the board sees it: if it isn't clear, delete it and draw it again.`,
     id: g.id,
     picture: { type: 'image/jpeg', data: seen.toString('base64') },
   };

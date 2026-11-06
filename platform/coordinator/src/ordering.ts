@@ -61,6 +61,12 @@ const why = (reason: claimobservation.Reason) =>
   })[reason];
 // A kept plan keeps its timings; its waits are read afresh on every read (eligibility).
 const read = (plan: Plan) => ({ timings: plan.timings, eligible: plan.eligibility() });
+// The latest plan's timings, kept or not, never played for the asking: HQ's queue ranks (jobs.ts queuePlaces), as its
+// planned starts read the forecast's latest play. The workers' claims play it each second while anything changes, and a
+// play for a view would hold HQ for it (0.25 s at 26,000 jobs, a second live). Before start(), or before the first
+// play, it plays now.
+let latest: Plan | undefined;
+export const lastTimings = (now = Date.now()) => (watching && latest ? latest.timings : current(now).timings);
 export function current(now = Date.now()) {
   if (!watching) return read(played(now));
   const observed = claimobservation.begin();
@@ -77,7 +83,7 @@ export function current(now = Date.now()) {
       const t0 = performance.now();
       kept = { at: now, plan: played(now), newest, invalidations };
       playedMs = performance.now() - t0;
-      [plan, newestPlayed] = [kept.plan, newest];
+      [plan, newestPlayed, latest] = [kept.plan, newest, kept.plan];
     }
   } catch (error) {
     claimobservation.record(observed, reason, true);
@@ -115,6 +121,7 @@ async function playInTurns(now: number, newest: number) {
   try {
     const plan = await latency.inTurns(playedInParts(now), latency.turns(`the claim's plan (after ${why(reason)})`));
     const played = { at: now, plan, newest, invalidations: began };
+    latest = plan;
     if (holds(played, newestJob())) [kept, newestPlayed] = [played, newest];
     claimobservation.record(observed, reason);
     return played;

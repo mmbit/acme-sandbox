@@ -6,8 +6,7 @@
 // (the pen's colours on an opened scrap) Beside the book on the iPad,
 // HQ's own page still pinch-zooms as it did.
 import assert from 'node:assert/strict';
-import { MINI, PREFERENCES, middleOf, openScrap, until } from './kit.mjs';
-import { paperBox } from './mouse.mjs';
+import { MINI, PREFERENCES, openScrapInMiddle, until } from './kit.mjs';
 import { CALLS, landed, onJournal } from './journal.mjs';
 import { SIZES } from './bookmarks.mjs';
 
@@ -60,7 +59,7 @@ async function walk(p, c, name, press, beside = false) {
   await c.shot(`pinch-${name}-pages`, p);
   await p.keyboard.press('Escape');
   // the pen's colours on a scrap opened by a finger's tap (the pen picked, then pressed again)
-  await openScrap(p, { tap: ([x, y]) => p.touchscreen.tap(x, y) }, undefined, middleOf(await paperBox(p)));
+  await openScrapInMiddle(p, { tap: ([x, y]) => p.touchscreen.tap(x, y) });
   const pen = keys.getByRole('button', { name: 'Pen', exact: true });
   await until(async () => (await p.locator('#book .bk-palette').count()) || (await press(pen), false), 'the colours');
   await noPinch(p, `${name}: the pen's colours open`);

@@ -417,10 +417,11 @@ function heldForChecks(push: Push, failing: ReturnType<typeof failingChecks>, ga
   if (!holding.length && !unfinished) return false;
   const names = [...holding.map(c => c.name), ...(unfinished ? ['tests'] : [])].join(' and ');
   const pullRequestLabel = `pull request #${pr} (branch ${branch})`;
+  const held = (name: string) => holding.some(c => c.name === name);
   const failingPart =
     holding.length &&
     `Your ${pullRequestLabel} fails ${holding.map(c => c.what).join(' and ')}. Their report:\n\n${gateReport}\n\n` +
-      `Fix each one, run ${holding.map(c => `\`npm run ${c.name}\``).join(' and ')} until ${holding.length > 1 ? 'they pass' : 'it passes'}, and push again.`;
+      `Fix each one${held('gates') ? ', run `npm run gates` until it passes,' : ''} and push again.${held('tests') ? TESTS_AGAIN : ''}`;
   const unfinishedPart =
     unfinished &&
     `${failingPart ? 'Its tests' : `The tests of your ${pullRequestLabel}`} couldn't complete, so they're not judged yet: ` +
@@ -609,6 +610,11 @@ const CHECKS = [
   { name: 'gates', what: 'the gates (Prettier, ESLint and the type check, on what it adds: CODE_STYLE.md, "The gates")' },
   { name: 'tests', what: 'the tests of the areas it touches (CODE_STYLE.md, "Tests")' },
 ] as const;
+// What a failing test's author runs again: its own file. The whole suites on a busy worker took a send-back an hour and
+// more, and the push runs them anyway (CODE_STYLE.md, "Tests").
+const TESTS_AGAIN =
+  " Run the failing tests' own files, not the whole suites: the push runs those, and keeps their result by the code " +
+  'it tested, so the same code pushed again brings this report back.';
 // Real gate/test failures can be tool false alarms too. After three red pushes the panel judges the reports.
 // Gates have no timeout to retry. Incomplete tests have their own streak and stop visibly.
 const GATE_TRIES = 3;

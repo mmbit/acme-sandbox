@@ -8,9 +8,8 @@
 // (the soft shadow read in Wire)
 import assert from 'node:assert/strict';
 import { shutBook } from './chrome.mjs';
-import { DESKTOP, MINI, middleOf, openScrap, shotPixels } from './kit.mjs';
+import { DESKTOP, MINI, openScrapInMiddle, shotPixels } from './kit.mjs';
 import { mouseOf } from './hands.mjs';
-import { paperBox } from './mouse.mjs';
 
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
 // with its developer tools docked below
@@ -64,7 +63,7 @@ async function oneObject(browser, c) {
       near = await meanLight(page, { x: spine.x - 8, y, width: 6, height: 250 }),
       far = await meanLight(page, { x: spine.x - 70, y, width: 6, height: 250 });
     assert.ok(near < far * 0.9, `the book's shadow on HQ: ${near} beside the book, ${far} further off`);
-    await scrapOpened(page);
+    await openScrapInMiddle(page, mouseOf(page));
     const tools = await islandOf(page, 'bk-strip');
     assert.ok(
       tools.left >= paper.x && tools.right <= paper.x + paper.width,
@@ -172,7 +171,7 @@ async function shortWindow(browser, c) {
             assert.ok(inside(r), `${at}: ${r.name ?? 'an island'} off the paper or the window: ${JSON.stringify(r)}`);
         };
       await whole('bk-bar');
-      await scrapOpened(page);
+      await openScrapInMiddle(page, mouseOf(page));
       await whole('bk-strip');
       const scrolls = await page.$eval('#book .bk-strip', el => el.scrollHeight > el.clientHeight + 1);
       assert.equal(scrolls, false, `${at}: the tools scroll`);
@@ -237,8 +236,6 @@ const controlsOf = (page, island) =>
       .filter(b => b.getClientRects().length)
       .map(b => ({ name: b.getAttribute('aria-label'), ...b.getBoundingClientRect().toJSON() })),
   );
-// A scrap opened by the mouse in the paper's middle, its tools shown
-const scrapOpened = async page => openScrap(page, mouseOf(page), undefined, middleOf(await paperBox(page)));
 const spineLeft = page =>
   page.evaluate(() => Math.round(document.querySelector('#book [role=separator]').getBoundingClientRect().left));
 // The mean lightness (0-255) of a box on the screen, read from a screenshot of it

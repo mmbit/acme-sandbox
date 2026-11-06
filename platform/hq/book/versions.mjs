@@ -61,9 +61,13 @@ async function endedEmpty(browser, c) {
     await c.shot('answers-versions-empty', page);
   });
 }
-// The versions under their note's unit as the page draws them on the screen, never over it nor out of its column, and
-// wholly on the paper left of the tools floating at its right.
+// The versions under their note's unit as the page draws them on the screen, once it has hung them there (bookunder.js
+// hangUnder places a block drawn anew once the page is laid), never over it nor out of its column, and wholly on the
+// paper left of the tools floating at its right.
 async function under(page, g) {
+  await page.waitForFunction(() => !!document.querySelector('#book .bk-answers .bk-versions')?.style.top, null, {
+    timeout: FEED_MS,
+  });
   const [at, unit] = await page.evaluate(id => {
     const box = el => {
       const r = el?.getBoundingClientRect();

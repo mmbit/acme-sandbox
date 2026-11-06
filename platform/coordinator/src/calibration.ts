@@ -35,7 +35,16 @@ export async function report(ask: taskaudit.AuditAsk, now = Date.now()) {
     turn,
     Date.parse(window.until),
   );
-  return { days, tasks, sizes, eta, threads: await threadTimes(since, turn, window.until) };
+  // (the sizes above stay on what the jobs took: only the count of adjusted times, adjusted.ts)
+  const adjusted = {
+    done: done.filter(j => j.adjusted).length,
+    set: (
+      db
+        .prepare('select count(distinct job) n from adjusted_times where at >= ? and at < ? and agent_ms is not null')
+        .get(since, window.until) as { n: number }
+    ).n,
+  };
+  return { days, tasks, sizes, adjusted, eta, threads: await threadTimes(since, turn, window.until) };
 }
 
 // ---- layer 1: the sizes

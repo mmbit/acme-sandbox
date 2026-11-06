@@ -9,7 +9,7 @@ import {
   timingAudit,
   RUN_COLUMNS,
   RUN_JOIN,
-  type JobOrigin,
+  CARRY_CODE,
   type PastJob,
   type Run,
   type Work,
@@ -21,6 +21,7 @@ import { seatHeadroom } from './headroom.ts';
 import * as predictions from './predictions.ts';
 import * as forecast from './forecast.ts';
 import type { Outlook } from './eta.ts';
+import { countedMs } from './adjusted.ts';
 
 export type Ask = {
   q?: unknown;
@@ -111,9 +112,10 @@ function readAsk(ask: Ask): Asked | 400 {
 function jobOf(id: number) {
   const row = db
     .prepare(
-      `select j.id, j.title, j.agent, j.status, ${ORIGIN} origin, ${RUN_COLUMNS} from jobs j ${RUN_JOIN} where j.id = ?`,
+      `select j.id, j.title, j.agent, j.status, ${ORIGIN} origin, ${CARRY_CODE}, ${RUN_COLUMNS} from jobs j ${RUN_JOIN}
+      where j.id = ?`,
     )
-    .get(id) as ({ id: number; title: string; agent: string; status: string; origin: JobOrigin } & Run) | undefined;
+    .get(id) as (Work & { id: number; agent: string; status: string } & Run) | undefined;
   return row && { ...row, open: isOpenJob(row) };
 }
 
@@ -170,6 +172,7 @@ function shown(
     origin: j.origin,
     finished: j.finished,
     agent_minutes: fractionalMinutes(j.agent_ms),
+    adjusted: adjustedShown(j),
     whole: measurements.time(j),
     feature_cost: j.thread ? measurements.costs.report(j.thread) : null,
     wall_minutes: j.wall_ms === null ? null : fractionalMinutes(j.wall_ms),
@@ -189,13 +192,19 @@ function shown(
     tool_bound: j.origin !== 'carry' && usual !== null && priced(j) && j.agent_ms >= 10 * 60_000 && rate(j) < usual / 3,
   };
 }
+// What its work would cost now where a process change made agent_minutes stale, shown beside it (adjusted.ts).
+// Not on a job holding customer details: its reason is free text, kept like its brief and report in shown().
+const adjustedShown = ({ adjusted: a, customers, about_keys }: PastJob) =>
+  a && !customers && !about_keys
+    ? { agent_minutes: fractionalMinutes(a.agent_ms), why: a.why, by: a.by, at: a.at }
+    : null;
 const priced = (j: PastJob): j is PastJob & { spend: number } => j.spend !== null;
 const rate = (j: PastJob & { spend: number }) => j.spend / Math.max(j.agent_ms, 60_000);
 
-// The spread of the picks' agent time, and their usual seat spend.
+// The spread of the picks' agent time (each at its adjusted time where it has one), and their usual seat spend.
 function typical(jobs: PastJob[]) {
   if (jobs.length < 3) return null;
-  const sorted = jobs.map(j => j.agent_ms / 60_000).sort((a, b) => a - b);
+  const sorted = jobs.map(j => countedMs(j) / 60_000).sort((a, b) => a - b);
   const at = (share: number) => {
     const minutes = sorted[Math.floor(share * (sorted.length - 1))];
     return jobs[0].origin === 'carry' ? minutes : Math.round(minutes);

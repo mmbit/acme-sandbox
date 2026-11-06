@@ -9,8 +9,9 @@ import { dialable, inHours } from './callrules.ts';
 import { byId, finish, HOUR, MINUTE, sha256, type Callout } from './callouts.ts';
 
 const TICKET_MS = 2 * MINUTE,
-  CALL_MS = 4 * HOUR,
-  KEPT_MS = 365 * 86_400_000;
+  CALL_MS = 4 * HOUR;
+// (a call's words are kept 12 months, and a guest's part of the board's call too: callguestsweep.ts)
+export const KEPT_MS = 365 * 24 * HOUR;
 
 // ---- the sweep (every minute): what's due is dialled, a link nobody opened expires, a call whose hand-over never came
 // ends without one, and 12 months after a call its transcript and notes go

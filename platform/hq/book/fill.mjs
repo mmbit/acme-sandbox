@@ -338,7 +338,13 @@ async function twoFingers(page, touch) {
     [right, y - 150],
   ]);
   await touch.up();
-  await until(async () => (await panned(page)) > was + 100, 'the page moved down by two fingers', 4000);
+  // (where the page was and is, said when it didn't move.)
+  let now;
+  await until(
+    async () => (now = await panned(page)) > was + 100,
+    () => `the page moved down by two fingers (from ${was} to ${now})`,
+    4000,
+  );
 }
 
 // The lock and "Locked" in sight under the view's title (bookviewhead.js, shown by bookcontrols.js lockLine)

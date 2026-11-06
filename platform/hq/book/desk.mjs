@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { onDesk as onLiveDesk } from './mouse.mjs';
 import { button, namedNotebook } from './chrome.mjs';
-import { DESKTOP, OVERVIEW, shotPixels } from './kit.mjs';
+import { DESKTOP, OVERVIEW, shotPixels, until } from './kit.mjs';
 import { press } from './bar.mjs';
 
 // the book's paper colour (paper.js --bk-paper), and how far a patch of the paper may be from it (its dots)
@@ -77,9 +77,16 @@ async function unread(browser, c) {
     await overview.getByRole('button', { name: 'Untitled page', exact: true }).click();
     await overview.waitFor({ state: 'hidden' });
     await button(page, /^The notebook's pages: Untitled page, 2 of 2$/).waitFor();
+    const play = page.context().notebook,
+      ids = () => play.route('/api/notebooks/pages', { notebook: 1 }).pages.map(p => p.id),
+      before = ids();
     await button(page, OVERVIEW, true).click();
     await overview.locator('[data-new]').click();
-    await button(page, /^The notebook's pages: Untitled page, 3 of 3$/).waitFor();
+    // (the page it made shown: the blank page it left is let go once it shows, so the count isn't the page's.
+    const made = await until(() => ids().find(id => !before.includes(id)), 'a page made');
+    await page
+      .locator(`#book .bk-world .bk-page:not([hidden]) > .bk-groups[data-page="${made}"]`)
+      .waitFor({ state: 'attached' });
     await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
     assert.equal(await inkPixels(page), 0, 'the new page is blank');
     assert.deepEqual(errors, []);
@@ -177,7 +184,7 @@ export async function inkPixels(page) {
     paper = await paperBox(page),
     k = w / paper.width,
     // (the tools' and the bar's boxes in the shot's px, with a few px round them for their shadows, and the page's
-    // title on the view, never ink; no Undo pill)
+    // title on the view, never ink.)
     strip = await page.evaluate(() =>
       [...document.querySelectorAll('#book .bk-strip, #book .bk-bar, #book .bk-view-head')]
         .filter(el => el.offsetParent)

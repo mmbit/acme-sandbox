@@ -7,9 +7,8 @@
 // and the marker's colour dot clear of its icon on the island; and the shapes' card has only shapes in its first row,
 // outline and fill beside the widths behind a rule. Recorded with --shots.
 import assert from 'node:assert/strict';
-import { PREFERENCES, middleOf, openScrap } from './kit.mjs';
+import { PREFERENCES, openScrapInMiddle } from './kit.mjs';
 import { mouseOf } from './hands.mjs';
-import { paperBox } from './mouse.mjs';
 import { SIZES, opened } from './realbook.mjs';
 
 const AT = {
@@ -57,7 +56,7 @@ async function atSize(browser, c, name, size, failed) {
     await p.keyboard.press('Escape');
     await p.locator('#book .bk-prefs').waitFor({ state: 'detached' });
     // (the tools' cards on a scrap opened: the tools an opened scrap's.)
-    await openScrap(p, mouseOf(p), undefined, middleOf(await paperBox(p)));
+    await openScrapInMiddle(p, mouseOf(p));
     await check(() => dotsClear(p, 'pen'));
     await opens(p, 'pen');
     await c.shot(`menus-${name}-pen`, p);

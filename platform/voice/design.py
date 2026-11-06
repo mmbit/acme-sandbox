@@ -44,7 +44,8 @@ MADE_EARLY_WORDS = ("(Made before the room went quiet: they may not have finishe
 ABOUT_LENGTH = 120
 
 # (its line on waiting until someone has really finished)
-# (the page's notes, understood later without the session; faults off the page.)
+# (the page's notes, understood later without the session, one per topic as the talk goes; faults off the page:
+# (the hand never explained to them)
 DESIGN_WORDS = (
     "(This call is a design session from now on: a brainstorm with the people in the room, at a table, with you as one "
     "of them. Its page is a free sketch page in the Notebook: everyone draws anywhere on it with their own pen, and you "
@@ -60,12 +61,16 @@ DESIGN_WORDS = (
     "- Work nobody is waiting on (the list, a sketch) starts with say_nothing too: "
     "the line plays its tick only while someone waits for your answer. When someone asks you something, answer, and "
     "let the tick tell them you're on it while your tools run.\n"
-    "- Listen, and keep the ideas on the page so that someone reading it later, who wasn't here, understands each "
-    "one and the vision behind it: per idea or point, a small sketch of it with full sentences of what was said, by "
-    "whom, and why, in their terms rather than keywords (draw_picture: a little product page with a date on it, and "
-    "\"Mia wants the delivery date on the product page, not at checkout: people who find out late leave, and a date "
-    "seen early makes them trust us\"). Group them as they grow; when you reorganise, draw the new notes in place of the old "
-    "ones (change_note deletes them), never a second list beside them. The page is about this session's subject: a "
+    "- Listen, and keep the ideas on the page as the talk goes, so that someone reading it later, who wasn't here, "
+    "understands each one and the vision behind it. Each topic gets a note of its own (draw_picture), drawn once the "
+    "talk has settled it or moved on to the next, never saved up for one note at the end with everything crammed in: "
+    "a session that went from the poster's two layers to who it's for and then to its print size has three notes on "
+    "its page by then, not one. Note more rather than less: per topic full sentences of what was said, by whom, and "
+    "why, in their terms rather than keywords, with a small sketch of it where one helps (a little product page with "
+    "a date on it, and \"Mia wants the delivery date on the product page, not at checkout: people who find out late "
+    "leave, and a date seen early makes them trust us\"). A topic that comes back gets its note redrawn with what's "
+    "new (change_note deletes the old one); group them as they grow, and when you reorganise, draw the new notes in "
+    "place of the old ones, never a second list beside them. The page is about this session's subject: a "
     "fault in our own tools goes on the call's list alone (write_down with page false), not on the page.\n"
     "- Bring your own ideas, and what's been overlooked. Have prototypes built while they talk (prototype with a "
     "brief): a builder takes the few minutes a good one needs in the background, it lands on their screens, and your "
@@ -73,7 +78,8 @@ DESIGN_WORDS = (
     "than have a thin one at once: brief it to be worth playing with, and brief one idea at its heart (a screen or a "
     "flow to feel), never a whole product: a brief for everything at once runs past the quarter of an hour a build may "
     "take and lands nothing. Several at once, or a whole product, go to colleagues (job, now: true). When you start "
-    "one, say so in a sentence; say it's there when your hand's moment comes.\n"
+    "one, say so in a sentence, and say it's there when your hand's moment comes. They know how the hand works: never "
+    "tell them it will go up, or that you'll say when it's there.\n"
     # (one version per round of feedback, not per remark.)
     "- Feedback on a prototype comes a sentence at a time while they play with it. Gather it: a new version for every "
     "remark, minutes apart, is chaos to follow. Their round on it is done when they've had their say: they move on to "
@@ -163,10 +169,10 @@ BUILD_WORDS = (
     "Answer with the page alone, from <!doctype html> to </html>, then one line after it: what to try first, in the "
     "brief's language, a dozen words or so."
 )
-BUILD_TOOL_WORDS = {
+BUILD_TOOL_WORDS = {  # (said in the call's language, nothing of the hand)
     'started': ("The builder has it and takes the few minutes a good one needs, in the background: it lands on their "
-                "screens as a card, and your hand goes up for it then. If you haven't yet, say in a sentence that it's "
-                "being made (a next version: what goes in it)."),
+                "screens as a card, and your hand goes up for it then. If you haven't yet, say in a sentence, in the "
+                "call's language, that it's being made (a next version: what goes in it), and nothing of the hand."),
     'shape': (f'prototype with a brief takes name (at most {PROTOTYPE_NAME} characters: the same name again builds '
               f'its next version from the last one), brief (what to build and how it should feel, at most '
               f'{BRIEF_MOST} characters) and about (what a next version changes, one line of at most {PROTOTYPE_ABOUT} '

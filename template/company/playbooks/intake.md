@@ -45,8 +45,9 @@ Settle these, roughly in this order:
    of them. Support for customers (care: one system with a chat on the company's sites, a phone line and email,
    `platform/care/README.md`), needing a Twilio number for the phone and an email service for the mail. A push when an
    AI seat runs low (`warning:` in `company/seats.yaml`, off unless the board wants it). The routines in
-   `company/schedule.yaml`'s suggestions, with how often (the morning round runs from the start, and the CVE check is
-   offered then too; the ones for code once there's code). The photo studio (`studio:` in `company/brand.yaml`, off
+   `company/schedule.yaml`'s suggestions, with how often (the morning round and each agent's weekly memory pass run from
+   the start, and the CVE check is offered then too; the ones for code
+   once there's code). The photo studio (`studio:` in `company/brand.yaml`, off
    unless the board wants it): the board's own product photos made into shop pictures, needing an image model's key. The card's note says that each one spends the AI seats'
    capacity and that Settings changes them later. The intercom's one Send sends the switches as they stand, as the
    board's next line, with any words it typed after them. Each module starts with basic instructions (care's for its

@@ -14,7 +14,7 @@ import { nothingDrawn } from './ink.mjs';
 import { groupsOf, newestPage, shownScrap } from './played.mjs';
 import { talked, voiceServed } from './voice.mjs';
 import { talkedInViewer, askLeftBehind, pagesWatched } from './talk.mjs';
-import { DESKTOP, MINI, closeScrap, openScrap, pinOn, pressAlong, ui, until } from './kit.mjs';
+import { DESKTOP, MINI, closeScrap, openScrap, pinOn, pressAlong, toolsLeft, ui, until } from './kit.mjs';
 import { hands, mouseOf } from './hands.mjs';
 import { PREVIEW, previewServed } from './preview.mjs';
 import { watchedPage } from './start.mjs';
@@ -200,7 +200,7 @@ async function inBook(s, scrap, shut, what = '') {
   await until(
     async () => {
       const now = await shownScrap(page, scrap);
-      return now && now.right <= now.tools;
+      return now && now.right <= (await toolsLeft(page));
     },
     `${s.screen.name}: the scrap left of the book's tools (${JSON.stringify(seen)})`,
     5000,

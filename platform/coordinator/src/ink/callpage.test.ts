@@ -444,6 +444,18 @@ test(
       [0xfd, 0xf1, 0xa9].every((v, i) => Math.abs(onPostit[i] - v) < 6),
       `the agent sees it on the post-it's yellow: ${[...onPostit]}`,
     );
+    assert.doesNotMatch(plain.ok, /fitted|cover each other/, 'nothing fitted in a drawing without words');
+    // (its words fitted to their shapes, and those still over each other named)
+    const fitted = said(
+      await h.voice('drawing', {
+        call,
+        svg: `<svg viewBox="0 0 640 320"><rect x="40" y="40" width="100" height="60"/>
+        <text x="90" y="80" text-anchor="middle">Management</text><text x="300" y="200">Kaart</text>
+        <text x="320" y="210">Overlap</text></svg>`,
+      }),
+    );
+    assert.match(fitted.ok, / Words that ran out of their shapes were fitted to them: "Management" \([a-z ,]+\)\. /);
+    assert.match(fitted.ok, / These still cover each other: "Kaart" and "Overlap": delete it and draw it again/);
     mkdirSync(`${h.repo}/kits/look`, { recursive: true });
     writeFileSync(`${h.repo}/kits/look/drawing.css`, 'main { background: #00ff00; }');
     appendFileSync(`${h.repo}/theme/hq.yaml`, 'drawing: kits/look/drawing.css\n');
