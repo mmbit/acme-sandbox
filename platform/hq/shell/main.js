@@ -45,6 +45,7 @@ import { registerWorker, syncPush, urgentCards } from './push.js'; // (urgentCar
 import { names, brand, theme } from './brand.js';
 import { initProjects, openProjects, readAhead } from './projects.js'; // (readAhead)
 import { initTalk } from './talk.js';
+import { followScreens } from './boardscreen.js';
 import { initFinder } from './finder.js';
 import { initBook, openBook } from './ink/book.js'; // (Ink's folder)
 import { loadFilms } from './tipcard.js';
@@ -89,6 +90,7 @@ async function boot() {
   await Promise.all([reloadGazette(dev), refreshSeen()]); // (seen)
   setTimeout(() => paintNews());
   connectEvents(onEvent, dev, org);
+  followScreens(); // (the board's other screen on its live call)
   bindInput();
   bindHud();
   updateStatus();

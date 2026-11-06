@@ -3,7 +3,9 @@
 //     write on. That shares nothing by itself.
 //   - Each note the Pencil puts on the call's page (shared/review/callnotes.js, told through the document's call:*
 //     events) goes to the line as it lifts ({ type: 'note', id }), sent again on a new connection until the line has
-//     it. The line fetches it from the book and gives the agent its snip and its words.
+//     it. The line fetches it from the book and gives the agent its snip and its words. So does a pen's mark on one of
+//     the call's prototypes from another screen, the board's iPad or a guest's (the coordinator's callprototypes.ts
+//     markOnCall, its 'callnote' event): it points, as the board's here, and is never a scrap on the call's page.
 //   - The line says when the agent's turn on a note is done, or that it couldn't take it ({ type: 'note', id, state:
 //     'done' or 'failed' }): its ink goes from the screen (review mode's callnotes.js, 'call:had'), so the board
 //     circles afresh. Nothing the Pencil draws on a call goes into the notebook by itself: the agent makes a scrap of

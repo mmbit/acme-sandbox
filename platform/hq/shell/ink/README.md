@@ -13,7 +13,7 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
 - `book.js` opens the book beside HQ's page. `bookpages.js`, `bookpage.js` and `booksave.js` draw and keep its pages,
   `bookgroups.js` a page's groups, a paperclip on each of two or more things, and the answers under them, `booktear.js` and `bookpagesend.js` a page torn off at its right edge, where the spine is, onto Submit, PDF or PNG (a guest's, its Send),
   `bookforyou.js` what's still the board's to answer (an open ask edged "for you", counted over the page's name, its arrows going to each),
-  `bookrail.js` Undo and Redo's pill beside the bar, `bookviewhead.js` the page's title and day on the view, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
+  `bookrail.js` a guest's Undo on the bar, `bookviewhead.js` the page's title and day on the view, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
 - `bookanswers*.js` draw a try's versions on a notebook page and what the board writes on them, and a slip's form
@@ -66,8 +66,12 @@ The board set these for Ink. Code and checks that keep one say it, or name it he
   it shows, and HQ's buttons never peek over it. Upright on an iPad mini it starts folded and opens as the spread.
 - **Only a deliberate pull moves the book.** A finger's swipe from the page's left edge closes it. The Pencil and the
   mouse write there as anywhere on the page.
-- **The rail floats.** The tools are toolbars floating over the paper's right edge, never a strip of it: the pen, shapes,
-  the eraser, Select and Text, with Undo and Redo and the page's controls at its foot.
+- **The tools are an opened scrap's.** The page itself takes no ink, so it shows nothing to draw with: no tools, no
+  Undo or Redo, on every device. It is one vertical roll of scraps across the paper's whole width. On an opened scrap
+  the tools float over the paper's right edge, never a strip of it: the pen, shapes, the eraser, Select, Text and the
+  mic, with Undo and Redo. The page's own controls stay on the bar at its foot; a scrap thrown away or moved is undone
+  from its toast, which shows over the book (`book.js` puts HQ's toasts beside it on `<html>`)
+.
 - **The page arrows stay put and within the tab.** They never move as pages turn, and they never turn on into the next
   tab. The page list shows only the tab's pages, numbered as its counter is.
 - **A sent page stays where it is.** No page is made after it, even after the last.
@@ -150,13 +154,18 @@ store, its play and HQ's page share:
   scaled (`scale`) from `LEAST` up to `MOST`, and `GAP` apart. Each scrap shows as a card (`bookunits.js` `cardOf`):
   everything on it, fitted to the card's width and at most `CARD_MOST` tall, never enlarged, so a drawing that went
   far on its opened sheet shows whole and smaller. There is no room or handle under a card. A new day on the page starts
-  under a date across every column. The grid pinch-zooms from its fit and scrolls by finger.
+  under a date across every column. The grid pinch-zooms from its fit and scrolls by finger. At its fit it never moves
+  sideways: whatever is on a scrap shows inside its card (`bookrow.js` `unitsPans`). Its columns keep off the paper's
+  sides by as much each way (`bookunits.js` `INSET`), so a phone's one column stands in the middle, clear of the folded
+  bookmarks.
 - **The opened scrap** (`bookscrapopen.js`) is where drawing happens. A tap on a card (the pen, a finger or the mouse)
   picks it up: it flies forward from its place onto a sheet that nearly fills the paper, a small margin round it and
   its soft shadow over the page, the grid waiting under it as it was. The sheet is an endless canvas: the pen draws, a
   finger pans, a pinch zooms, every way past what's on it. The book's tools work on it unchanged (pen, Select, eraser,
   shapes, text, Delete's crumple). Klaar puts it back down onto its card. While it's open the bar along the foot is put
-  away and Undo and Redo sit with the tools on the right. An opened scrap is its own page record (`focus`: its group,
+  away and Undo and Redo sit with the tools on the right. While it flies up or back down, a press on the paper inks
+  nothing, so a finger's second tap never inks it or the grid (`bookwrite.js` `drawable`; a double tap held still records
+  a voice note). An opened scrap is its own page record (`focus`: its group,
   `parent`: the grid's page), its things in its own px, and its view takes the grid's place in `book.views`, so saving
   and Undo work on it as on a page; it's kept for the visit, so its history goes on when it's opened again.
 - **A new scrap anywhere:** the pen's tap (or a press held) in the room between two cards makes a new empty scrap
@@ -210,8 +219,8 @@ The board's rules for the book as a real book, seen from the side.
   the whole screen. Beside HQ's page a slim page block stands at its outer edge.
 - **The page to every edge:** the page is one surface under the whole paper, up under the status bar's blur, beside
   and round the tools' island and under the bar, so ink goes right up to every edge; only a press on a control is the
-  control's (`bookdesk.css`). Its dots zoom with it there too. Only its content is set down below the blur and laid
-  left of the tools: the desk's padding, read as `book.size`'s `top` and `right` (`bookview.js`). A place on a page
+  control's (`bookdesk.css`). Its dots zoom with it there too. Only its content is set down below the blur, and an
+  opened scrap's kept left of the tools: the desk's padding, read as `book.size`'s `top` and `right` (`bookview.js`). A place on a page
   (remembered, a find's, a box shown) is its point at that content's top-left.
 - **The title on the view:** the page's title, and under it the day of what's showing (the topmost scrap or drawing
   seen below it; none on a call's page, whose title has its date), sit fixed at the view's top left below the blur,
@@ -232,13 +241,12 @@ The board's rules for the book as a real book, seen from the side.
   and the gaps between them included, so no pinch can push a control off the screen. A pinch begun on a control does
   nothing; a card's list still scrolls (`book.css`). HQ's own page beside the book zooms as ever.
 - **The islands** float over the paper, HQ's own controls in HQ's look (`bookui.js`, `bookstrip.css`). Only the page
-  is paper. The tools stand on the right, upright and short: on a phone, well under half the screen's height. The bar
-  runs along the foot between the screen's corners, as the board drew it: All pages at its left, the page's arrows and
-  count exactly in its middle, its dots menu at its right. Undo and Redo are a pill of their own left of the bar, or
-  above its left end where there's no room beside it (`bookrail.js`); on a locked page the pill goes and the bar stays
-  exactly where it was. The overview has no bar: it shows all the pages already, and a page opens by its tile. What's
-  written is laid left of the tools, but ink goes under and beside them.
-- **The islands are glass:** the tools' island, the bar and the pill are lightly frosted glass over the page, in every look: the
+  is paper. An opened scrap's tools stand on the right, upright and short: on a phone, well under half the screen's
+  height. The page's bar runs along the foot between the screen's corners, as the board drew it: All pages at its
+  left, the page's arrows and count exactly in its middle, its dots menu at its right. A guest's Undo of its send
+  stands on the bar where Send was (`bookrail.js`): nothing is stacked over the bar. The overview has no bar: it shows all the pages already, and a page opens
+  by its tile. What's written on an opened scrap is laid left of the tools, but ink goes under and beside them.
+- **The islands are glass:** the tools' island and the bar are lightly frosted glass over the page, in every look: the
   look's panel two thirds opaque, what's under it blurred, a line of light on its top edge, the look's own edge kept
   (`bookstrip.css`, the renderers' skin.css). A dark panel dims what it lets through, so it stays dark and its keys
   read. While the book swings or its tab is held, the frost is off, so the swing keeps its frames. Never overdone: a
@@ -270,7 +278,7 @@ The board's rules for the book as a real book, seen from the side.
   to talk in Preferences (short, medium or long: `shared/review/prefs.js`). A single press held is only ink. Off the book, on HQ's own page, nothing waits on a held
   pen.
 - **The tools' cards** and every panel in the book that can't be pressed (the preferences, the dots menu, the pages)
-  lie as the tools' island does, its edge and shadow, never on a key's base: if it looks like a key, it presses
+  lie flat, never on a key's base (no hard shadow straight under them): if it looks like a key, it presses
   (`bookui.css`). In a card the spacing narrows inward, as the brand guide's does: its margin at the edge the widest,
   the gaps between its colours and icons the least (`booktools.css`). The pen's and the marker's colour dot sits clear
   of its icon on the tools. A shape's outline and fill sit on the widths' line behind an upright rule, never among the
@@ -345,7 +353,11 @@ The board's rules for them as real ribbon:
 - **Made by a person:** each a ribbon notched at its end, with its icon alone on it in a deeper tone of its own
   colour and no words (its name is its label). Each is a finger's 44 px to the touch with its gap, its icon read at a
   glance on an iPad, and it sticks out a little less than the pull tab; they sit just above it, one group, never
-  sprawling over HQ's page (`bookmarks.css`).
+  sprawling over HQ's page (`bookmarks.css`). Folded on a page that is the whole screen they're bigger, easy to see
+  and to hit on a phone, out a little further than the pull tab a clear gap below them, yet short of the grid's column
+.
+- **The pull tab at the edge:** on a phone's whole-screen page it hangs flush with the screen's left edge. On a tablet
+  it hangs 24 px in, as iPadOS takes the touches at a split screen's edge (`book.css`).
 - **No outline:** ribbon has no drawn edge. Their soft shade alone sets them off the paper or the table, as the book's
   labels and pull tab are (`bookmarks.css`).
 - **Out of the book while it swings:** on a page that is the whole screen, while the book swings open or shut they

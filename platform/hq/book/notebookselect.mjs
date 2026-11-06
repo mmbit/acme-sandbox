@@ -111,7 +111,8 @@ async function partToNewPage(browser, c) {
     await done();
   }
 }
-// A box (its corners, in the unit's px) round one line of a drawing, clear of every other line's box
+// A box (its corners, in the unit's px) round one line of a drawing, clear of every other line's box and inside the
+// unit (its opened sheet shows it from the unit's left edge: a box started past it starts off the sheet)
 function aloneBox(ink) {
   const boxes = ink.map(s => {
     const xs = s.points.map(p => p[0]),
@@ -119,7 +120,7 @@ function aloneBox(ink) {
     return [Math.min(...xs) - 6, Math.min(...ys) - 6, Math.max(...xs) + 6, Math.max(...ys) + 6];
   });
   const apart = (a, b) => a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1];
-  const k = boxes.findIndex((a, i) => boxes.every((b, j) => i === j || apart(a, b)));
+  const k = boxes.findIndex((a, i) => a[0] >= 0 && a[1] >= 0 && boxes.every((b, j) => i === j || apart(a, b)));
   assert.ok(k >= 0, 'a line of the drawing clear of the others');
   return [boxes[k].slice(0, 2), boxes[k].slice(2)];
 }

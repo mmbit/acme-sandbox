@@ -65,191 +65,67 @@ export function stepOf(name: string, input: any = {}): Step | null {
 
 // A command as agents read it: the program it runs and the script, npm script or
 // subcommand that program takes first (node book-check.mjs, npm run gates, hq report, git log), so a colleague can see
-// what a job is busy with (hq activity), but never its other arguments, where a customer's details can be. A script
-// is named like a file read (its base name); words that aren't plain names are left out, and so is every word that
-// comes from inside quotes (or after a backslash): only bash -c's own body is read, the same way (job #24913).
+// what a job is busy with (hq activity), but never its other arguments, where a customer's details can be. Only what is
+// read with certainty is named (wordsOf): a script is named like a file read (its base name), words that aren't plain
+// names are left out, and bash -c's body is read the same way when it's the one plainly quoted string the command ends
+// with.
 const RUNNERS = new Set(['node', 'python', 'python3', 'tsx', 'deno', 'bun', 'bash', 'sh']),
   SUBCOMMANDS = new Set(['hq', 'git', 'npm', 'npx', 'pnpm', 'yarn', 'docker', 'gh']),
-  SKIPPED = new Set(['cd', 'export', 'set', 'source', '.', 'sleep', 'echo']);
+  SKIPPED = new Set(['cd', 'export', 'set', 'source', '.', 'sleep', 'echo']),
+  // (the flags that only make the next word bash's command: -c, -lc, -ic; any other option, -o or -- among them, may
+  // take that word for itself. A cluster with c and another letter, -oc or -ec, runs inline code too: no script is
+  // named from it, it's only read as a body when it's one of these)
+  BODY_FLAG = /^-[lic]*c[lic]*$/,
+  INLINE_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
 export function commandKind(command: unknown, depth = 0): string {
-  const parts = wordsOf(String(command ?? ''))
-    .map(ws =>
-      ws.slice(
-        Math.max(
-          0,
-          ws.findIndex(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w.lead)),
-        ),
-      ),
-    )
-    .filter(ws => ws[0] && !(!ws[0].quoted && SKIPPED.has(ws[0].text)));
-  const [program, ...rest] = parts[0] ?? [];
-  const name = program && !program.quoted ? (program.text.split('/').pop() ?? '') : '';
+  const { commands, unread } = wordsOf(String(command ?? ''));
+  // (each command without the assignments before its program; the first that isn't a skipped one runs the program)
+  const programs = commands.map(ws => {
+      const k = ws.findIndex(w => !/^[A-Za-z_]\w*=/.test(w));
+      return k < 0 ? [] : ws.slice(k);
+    }),
+    first = programs.findIndex(ws => ws[0] && !SKIPPED.has(ws[0]));
+  const [program, ...rest] = programs[first] ?? [];
+  const name = program?.split('/').pop() ?? '';
   if (!/^[A-Za-z][\w.+-]*$/.test(name)) return 'Running a command';
-  const flags = rest.filter(w => !w.quoted && w.text.startsWith('-')).map(w => w.text),
-    args = rest.filter(w => w.quoted || !w.text.startsWith('-')),
-    plain = (w?: Word) => (w && !w.quoted ? w.text : '');
-  // (bash -lc '…', as Codex runs every command: the command inside, read whole before anything is split)
-  const flagC = rest.findIndex(w => !w.quoted && /^-[a-z]*c[a-z]*$/.test(w.text));
-  if ((name === 'bash' || name === 'sh') && flagC >= 0 && rest[flagC + 1] && depth === 0)
-    return commandKind(rest[flagC + 1].text, 1);
+  const flags = rest.filter(w => w.startsWith('-')),
+    args = rest.filter(w => !w.startsWith('-'));
+  // (bash -lc '…', as Codex runs every command: the body is the rest of the command, one single-quoted string, or as
+  // Codex writes a body that holds a single quote, one double-quoted string whose only special characters are escaped
+  // ones: \" \\ \$ \`)
+  if ((name === 'bash' || name === 'sh') && depth === 0 && flags.some(w => INLINE_FLAG.test(w))) {
+    const body =
+      /^'([^']*)'[ \t]*$/.exec(unread)?.[1] ??
+      /^"((?:[^"$`\\]|\\["$`\\])*)"[ \t]*$/.exec(unread)?.[1].replace(/\\(.)/g, '$1');
+    const bodyFollows = first === commands.length - 1 && rest.length === 1 && BODY_FLAG.test(rest[0]);
+    return body !== undefined && bodyFollows ? commandKind(body, 1) : 'Running a command';
+  }
   let what = '';
   // (inline code, python -c or node -e, names no script)
   if (RUNNERS.has(name) && !flags.some(w => ['-c', '-e', '--eval', '-p', '--print'].includes(w))) {
-    const script = /\.[A-Za-z]{1,4}$/.test(plain(args[0])) ? plain(args[0]).split('/').pop() : '';
+    const script = /\.[A-Za-z]{1,4}$/.test(args[0] ?? '') ? args[0].split('/').pop() : '';
     if (script && /^[\w.+-]+$/.test(script)) what = ` ${script}`;
-  } else if (SUBCOMMANDS.has(name) && /^[a-z][a-z-]*$/.test(plain(args[0]))) {
-    what = ` ${plain(args[0])}`;
-    if (plain(args[0]) === 'run' && /^[\w:.-]+$/.test(plain(args[1]))) what += ` ${plain(args[1])}`;
+  } else if (SUBCOMMANDS.has(name) && /^[a-z][a-z-]*$/.test(args[0] ?? '')) {
+    what = ` ${args[0]}`;
+    if (args[0] === 'run' && /^[\w:.-]+$/.test(args[1] ?? '')) what += ` ${args[1]}`;
   }
   return `Running ${name}${what}`;
 }
 
-// A command's simple commands (split at && || ; | & and line ends outside quotes), each as its words, the way a shell
-// reads them: a quoted string is part of one word, never split. quoted: some of the word came from inside quotes or
-// after a backslash; lead: the word up to its first quote (an assignment's name). A comment and a here-document's body
-// are left out (from the line a << ends, nothing more is read).
-type Word = { text: string; quoted: boolean; lead: string };
-function wordsOf(s: string): Word[][] {
-  const commands: Word[][] = [[]];
-  let word: Word | null = null,
-    heredoc = false;
-  const add = (t: string, quoted = false) => {
-    word ??= { text: '', quoted: false, lead: '' };
-    if (!quoted && !word.quoted) word.lead += t;
-    word.text += t;
-    word.quoted ||= quoted;
-  };
-  const end = () => {
-    if (word) commands.at(-1)!.push(word);
-    word = null;
-  };
-  const cut = () => {
-    end();
-    if (commands.at(-1)!.length) commands.push([]);
-  };
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i],
-      q = chunkAt(s, i);
-    if (q) {
-      if (q.text !== null) add(q.text, true);
-      i = q.end;
-    } else if (c === '#' && !word) {
-      const line = s.indexOf('\n', i);
-      i = (line < 0 ? s.length : line) - 1;
-    } else if (c === '\n') {
-      if (heredoc) break;
-      cut();
-    } else if (/\s/.test(c)) end();
-    else if (c === '|' && s[i - 1] === '>' && /[<>]$/.test((word as Word | null)?.text ?? '')) add(c);
-    else if (c === ';' || c === '|') {
-      cut();
-      if (s[i + 1] === c || (c === '|' && s[i + 1] === '&')) i++;
-    } else if (c === '&') {
-      // (2>&1, >&2 and &> are redirections, not a command's end)
-      if (s[i + 1] === '>' || (s[i + 1] !== '&' && /[<>]$/.test((word as Word | null)?.text ?? ''))) add(c);
-      else {
-        cut();
-        if (s[i + 1] === '&') i++;
-      }
-    } else {
-      if (heredocAt(s, i)) heredoc = true;
-      add(c);
-    }
+// A command's leading simple commands, each as its words, read only while every character is plainly certain: letters,
+// digits, _ . / : = + -, spaces and tabs, and && || ; | between commands. The first other character (a quote, a
+// backslash, $, a backtick, a redirection, a comment, a line end, a brace, anything else) ends the reading, as what
+// follows it depends on how bash reads it. A word it cuts is left out. unread: what wasn't read, from the start of the word
+// the reading stopped in (the last command, maybe still empty, is the one it stopped in).
+function wordsOf(s: string): { commands: string[][]; unread: string } {
+  const commands: string[][] = [[]],
+    token = /([ \t]+)|(&&|\|\||[;|])|[\w./:=+-]+(?=[ \t;|]|&&|$)/y;
+  let read = 0;
+  for (let m; (m = token.exec(s)); read = token.lastIndex) {
+    if (m[2]) commands.push([]);
+    else if (!m[1]) commands.at(-1)!.push(m[0]);
   }
-  end();
-  return commands.map(withoutRedirections).filter(ws => ws.length);
-}
-// A simple command's words without its redirections (>file, 2>&1, <<EOF, >|out), which name no word: with its operator
-// alone, the next word is its operand.
-function withoutRedirections(ws: Word[]): Word[] {
-  const redirection = (w?: Word) => !!w && /^(\d*|&)[<>]/.test(w.lead),
-    operator = (w?: Word) => redirection(w) && !w!.quoted && /^(\d*|&)[<>]+[&|]?$/.test(w!.text);
-  return ws.filter((w, k) => !redirection(w) && !operator(ws[k - 1]));
-}
-// The quoted text or substitution that starts at i, read whole ('…', $'…', "…", a backslash's character, `…`, $(…),
-// ${…} and the process substitutions <(…) and >(…)), and the index of its last character; null where none starts.
-function chunkAt(s: string, i: number): { text: string | null; end: number } | null {
-  const c = s[i];
-  if (c === "'" || c === '"' || c === '\\' || (c === '$' && s[i + 1] === "'")) return quotedAt(s, i);
-  if (c !== '`' && !(/[$<>]/.test(c) && s[i + 1] === '(') && !(c === '$' && s[i + 1] === '{')) return null;
-  const end = substitutionEnd(s, i);
-  return { text: s.slice(i, end + 1), end };
-}
-// The quoted text that starts at i ('…', $'…', "…" or a backslash's one character) and the index of its last character.
-// A backslash before a line end continues the line: no text.
-function quotedAt(s: string, i: number): { text: string | null; end: number } {
-  if (s[i] === '\\') return { text: s[i + 1] === '\n' ? null : (s[i + 1] ?? ''), end: i + 1 };
-  if (s[i] === '$') {
-    // ($'…' takes backslash escapes, \' among them)
-    let j = i + 2;
-    for (; j < s.length && s[j] !== "'"; j++) if (s[j] === '\\') j++;
-    return { text: s.slice(i + 2, j), end: Math.min(j, s.length) };
-  }
-  if (s[i] === "'") {
-    const close = s.indexOf("'", i + 1),
-      end = close < 0 ? s.length : close;
-    return { text: s.slice(i + 1, end), end };
-  }
-  let text = '',
-    j = i + 1;
-  for (; j < s.length && s[j] !== '"'; j++) {
-    if (s[j] === '`' || (s[j] === '$' && (s[j + 1] === '(' || s[j + 1] === '{'))) {
-      const e = substitutionEnd(s, j);
-      text += s.slice(j, e + 1);
-      j = e;
-    } else text += s[j] === '\\' && j + 1 < s.length ? s[++j] : s[j];
-  }
-  return { text, end: j };
-}
-// The index of the last character of the command substitution or expansion that starts at i (`…`, $(…) or ${…}), read
-// whole: what is quoted inside it is quoted at its own level, so a quote there doesn't end an outer one.
-function substitutionEnd(s: string, i: number): number {
-  let j = i + 1;
-  if (s[i] === '`') {
-    for (; j < s.length && s[j] !== '`'; j++) if (s[j] === '\\') j++;
-    return Math.min(j, s.length);
-  }
-  const open = s[j],
-    close = open === '(' ? ')' : '}',
-    cases: number[] = [];
-  // (the end of the last quoted part or substitution read whole: its ')' is no separator)
-  let skipped = -1;
-  for (let depth = 0; j < s.length; j++) {
-    const c = s[j];
-    if (c === '\\') j = skipped = j + 1;
-    // (in $(…) a comment runs to its line end: a ')' or a quote there closes nothing)
-    else if (open === '(' && c === '#' && /[\s|&;()<>]/.test(s[j - 1])) {
-      const line = s.indexOf('\n', j);
-      j = (line < 0 ? s.length : line) - 1;
-    }
-    // (where a here-document's body ends depends on how bash reads its delimiter and its lines (bytes, ANSI-C escapes,
-    // the locale, line continuations, a ')' after the delimiter): rather than follow it, the substitution runs on to the
-    // command's end, so nothing after it is named)
-    else if (open === '(' && heredocAt(s, j)) return s.length;
-    // (and from a case to its esac, each a command's first word (after a separator or a pattern's ')', then any reserved
-    // words or braces, each a word of its own), a ')' at the case's own level ends a pattern)
-    else if (
-      open === '(' &&
-      /^(case|esac)(?![^\s;&|)])/.test(s.slice(j, j + 5)) &&
-      (m => !!m && m.index !== skipped)(
-        /[;&|()\n][ \t]*(?:(?:then|do|else|elif|if|while|until|[{!])[ \t]+)*$/.exec(s.slice(0, j)),
-      )
-    ) {
-      if (c === 'c') cases.push(depth);
-      else cases.pop();
-      j += 3;
-    } else if (c === "'" || c === '"' || (c === '$' && s[j + 1] === "'")) j = skipped = quotedAt(s, j).end;
-    else if (c === '`' || (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{'))) j = skipped = substitutionEnd(s, j);
-    else if (c === open) depth++;
-    else if (c === close && cases.at(-1) !== depth && !--depth) return j;
-  }
-  return s.length;
-}
-// Whether a here-document's operator (<< or <<-, not the here-string's <<<) starts at i, or may: a < before a line
-// continuation, which bash joins to what comes after it.
-function heredocAt(s: string, i: number): boolean {
-  if (s[i] !== '<') return false;
-  return s.startsWith('\\\n', i + 1) || (s[i + 1] === '<' && s[i - 1] !== '<' && s[i + 2] !== '<');
+  return { commands, unread: s.slice(read) };
 }
 
 // The same call as the job's log in HQ's projects view shows it (the coordinator's log.ts): for the board, as it was

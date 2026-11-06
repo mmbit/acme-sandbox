@@ -10,6 +10,8 @@ import { createRequire } from 'node:module';
 import { launched, playwright } from '../../shared/browser/browser.mjs';
 import { coordinator } from './book/guestserver.mjs';
 import { fulfilResponse } from './book/originroute.mjs';
+import { hands } from './book/hands.mjs';
+import { closeScrap, openScrap } from './book/kit.mjs';
 
 const sharp = createRequire(new URL('../coordinator/', import.meta.url))('sharp');
 const arg = name => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
@@ -31,24 +33,15 @@ const said = r => {
 };
 const shot = async (name, page) => shots && (await page.screenshot({ path: `${shots}/${name}.png` }));
 
-// A pen stroke (a loop) at x, y in the frame on the page, as an Apple Pencil draws it
+// A pen loop on the page, as an Apple Pencil draws it: a tap in the grid's gap at x, y in the frame opens a scrap (the
+// grid takes no ink), the loop goes on its sheet and the scrap is put back
 async function penLoop(page, frame, x, y) {
   const box = await page.locator(frame).boundingBox();
-  const cdp = await page.context().newCDPSession(page);
-  const pen = (type, px, py) =>
-    cdp.send('Input.dispatchMouseEvent', {
-      type,
-      x: box.x + px,
-      y: box.y + py,
-      button: 'left',
-      buttons: type === 'mouseReleased' ? 0 : 1,
-      clickCount: 1,
-      pointerType: 'pen',
-      force: 0.5,
-    });
-  await pen('mousePressed', x, y);
-  for (let i = 1; i <= 24; i++) await pen('mouseMoved', x + 160 * Math.cos(i / 4), y + 90 * Math.sin(i / 4));
-  await pen('mouseReleased', x + 160, y);
+  const { pen } = await hands(page);
+  const { sheet } = await openScrap(page, pen, undefined, [box.x + x, box.y + y]);
+  const [cx, cy, rx, ry] = [sheet.x + sheet.width / 2, sheet.y + sheet.height * 0.6, sheet.width / 4, sheet.height / 8];
+  await pen.stroke(Array.from({ length: 25 }, (_, i) => [cx + rx * Math.cos(i / 4), cy + ry * Math.sin(i / 4)]));
+  await closeScrap(page, pen);
 }
 // A device: HQ's origin and the preview hosts answered by the coordinator, nothing else reached
 async function device(viewport, cookie) {
@@ -130,8 +123,8 @@ try {
   await penLoop(board, 'body', 880, 450); // (the open book's paper: the right half on an iPad on its side)
   const drawnBy = async by => {
     for (let i = 0; i < 60; i++) {
-      const gr = (said(await h.board(`/api/notebooks/pages/groups?page=${callPage.id}`)).groups ?? []).find(x =>
-        by(x.by),
+      const gr = (said(await h.board(`/api/notebooks/pages/groups?page=${callPage.id}`)).groups ?? []).find(
+        x => by(x.by) && x.ink.length,
       );
       if (gr) return gr;
       await new Promise(r => setTimeout(r, 250));
@@ -198,7 +191,10 @@ try {
     `PASS design session: the call's page on both iPads, each one's stroke kept (#${hers.id}, #${boards.id}), hers heard as Esmee's; the agent's card #${card} in sight at once`,
   );
 } finally {
-  for (const o of opened) await o.context.close();
+  for (const o of opened) {
+    await o.context.unrouteAll({ behavior: 'ignoreErrors' });
+    await o.context.close();
+  }
   await browser.close();
   h.server.closeAllConnections();
   h.server.close();

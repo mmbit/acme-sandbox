@@ -2,14 +2,15 @@
 // .bk-wet), held like an iPad mini both ways with the Pencil (hands.mjs: Chromium's trusted pen, Safari's in WebKit),
 // on a call and off one: every tool and every colour on its card picked with a Pencil's tap (one that slides a few px,
 // as a real one does) is picked, and nothing of HQ's pen is drawn on the book, no note made. A line drawn over a note's
-// picture shows over it while the pen is down, as it lies once lifted. Run with --webkit for the same in the iPad's
-// engine.
+// picture on its opened scrap shows over it while the pen is down, as it lies once lifted. Run with --webkit for the
+// same in the iPad's engine.
 // With Settings' Call marks in the Notebook on (shell/ink/bookcallmarks.js): alone, the same. On a call, the tools,
 // their cards and the overview's menu on the paper are still the book's, picked with the pen, and the line over the
 // picture is the call's, a note for its agent shown over the picture while it's drawn, nothing in the notebook's ink.
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, middleOf, strokes, until } from './kit.mjs';
-import { hands } from './hands.mjs';
+import { MINI, UPRIGHT, closeScrap, middleOf, openScrap, strokes, until } from './kit.mjs';
+import { hands, mouseOf } from './hands.mjs';
+import { cardInSight } from './mouse.mjs';
 import { watchedPage, restsOpen } from './start.mjs';
 import { callSeed, fillCall } from './notespage.mjs';
 import { playLine } from './call.mjs';
@@ -96,16 +97,20 @@ async function owned(browser, c, viewport, name, { call, marks }) {
 // The book's tools and their cards picked with the pen, and a line drawn over a picture. With the call's marks
 // (theCalls) the overview's menu picked too, and the line the call's
 async function penChecks(page, pen, tap, name, c, theCalls) {
+  // (the tools an opened scrap's, opened by the mouse)
+  const mouse = mouseOf(page);
+  await openScrap(page, mouse, undefined, await cardInSight(page));
   await everyTool(page, tap, name, c);
+  await closeScrap(page, mouse);
   assert.equal(await page.evaluate(() => window.__notes), 0, `${name}: no note of HQ's pen made on the book`);
   await nothingDrawn(page, `${name}: the book's tools`);
   if (theCalls) {
-    await overviewMenu(page, tap, name);
+    await overviewMenu(page, pen, tap, name);
     assert.equal(await page.evaluate(() => window.__notes), 0, `${name}: no note of HQ's pen made on the menu`);
     await nothingDrawn(page, `${name}: the overview's menu`);
   }
   const kept = strokes(page);
-  await overPictures(page, pen, name, c);
+  await overPictures(page, pen, name, c, theCalls);
   if (theCalls) {
     await until(() => page.evaluate(() => window.__callNotes > 0), `${name}: the line a note for the call`);
     assert.equal(strokes(page), kept, `${name}: nothing of the call's line in the notebook's ink`);
@@ -169,8 +174,8 @@ async function everyTool(page, tap, name, c) {
 }
 
 // The overview (the bar's key) and its menu on the paper (its title line's dots, the book's though the paper is the
-// call's: bookshelf.js), the menu's Archived pages picked, each with a tap that slides, and back to the page
-async function overviewMenu(page, tap, name) {
+// call's: bookshelf.js), the menu's Archived pages picked, each with a tap that slides, and back to the page by its tile
+async function overviewMenu(page, pen, tap, name) {
   const key = page.locator('#book .bk-overview-key:visible').first();
   await tap(await key.boundingBox());
   // (not a page turn's picture of it)
@@ -196,32 +201,46 @@ async function overviewMenu(page, tap, name) {
     .catch(() => assert.fail(`${name}: the overview's menu's Archived pages picked by the pen`));
   console.log(`${name}: the overview's menu on the paper picked with the pen`);
   await page.keyboard.press('Escape');
-  await tap(await key.boundingBox());
+  // (the overview has no bar: the page's own tile, tapped, brings it back; a slid press would pick the tile up)
+  await pen.tap(middleOf(await onPaper('.bk-tile[aria-current="page"] .bk-tile-open').first().boundingBox()));
   await dots.waitFor({ state: 'hidden' });
 }
 
-// The pen in hand, a line drawn across the page's first pictures: as it's drawn (the pen still down) the band it
-// crosses looks as it does once it's lifted and dry
-async function overPictures(page, pen, name, c) {
-  await tool(page, 'Pen');
-  // (a note in view with its picture over its words: across the picture, some px above the words)
-  const words = await until(
-    () =>
-      page.evaluate(() =>
-        [...document.querySelectorAll('#book .bk-words')]
-          .map(w => w.getBoundingClientRect())
-          .find(r => r.width > 100 && r.top - 60 > 90 && r.bottom < innerHeight - 120 && r.left > innerWidth / 2 - 200),
-      ),
-    `${name}: a note's picture in view`,
-  );
-  const y = Math.round(words.y - 30),
-    x0 = Math.round(words.x + 10),
-    x1 = Math.round(words.x + Math.min(words.width, 220));
+// The pen in hand, a line drawn across a picture: on the opened scrap of a card with one (the grid takes no ink), or
+// with the call's marks (theCalls) on the grid, which the call's pen marks. As it's drawn (the pen still down) the band
+// it crosses looks as it does once it's lifted and dry; the scrap put back after
+async function overPictures(page, pen, name, c, theCalls) {
+  // (a picture well in view: on the grid, a card's whole)
+  const inView = scope =>
+    until(
+      () =>
+        page.evaluate(
+          scope =>
+            [...document.querySelectorAll(`${scope} .bk-photo`)]
+              .map(el => ({ ...el.getBoundingClientRect().toJSON(), gid: el.dataset.g }))
+              .find(r => r.width > 100 && r.height > 40 && r.top > 90 && r.bottom < innerHeight - 120 && r.left > 0),
+          scope,
+        ),
+      `${name}: a note's picture in view`,
+    );
+  let photo = await inView('#book .bk-page:not([hidden])');
+  if (!theCalls) {
+    await openScrap(page, pen, photo.gid);
+    await tool(page, 'Pen'); // (picked on its tools)
+    photo = await inView('#book .bk-page[data-focus]');
+  }
+  const y = Math.round(photo.y + photo.height / 2),
+    x0 = Math.round(photo.x + 10),
+    x1 = Math.round(photo.x + Math.min(photo.width - 10, 220));
   const points = Array.from({ length: 24 }, (_, i) => [x0 + ((x1 - x0) * i) / 23, y + 6 * Math.sin(i / 2)]);
   const clip = { x: x0 - 10, y: y - 14, width: x1 - x0 + 20, height: 28 };
   const blank = await page.screenshot({ clip });
   await pen.down(points[0]);
   for (const p of points.slice(1)) await pen.move(p);
+  // (resting at its end a moment, as a hand does before it lifts: the line's smoothing caught up with the pen, ink.js;
+  // a px either way, as a move to where the pen already is is no move)
+  const [xEnd, yEnd] = points.at(-1);
+  for (let i = 0; i < 8; i++) await pen.move([xEnd, yEnd + (i % 2)]);
   // (painted: the live line shows at the next frame, however long the engine takes to draw one. Headless WebKit's
   // come about a second apart here)
   await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
@@ -238,10 +257,12 @@ async function overPictures(page, pen, name, c) {
     moved < drawn * 0.15,
     `${name}: the line shows as it's drawn where it lies once lifted (${moved} of ${drawn} px)`,
   );
+  if (!theCalls) await closeScrap(page, pen);
 }
 
 // Of three shots of one band (before, while drawing, once dry), the px the dry line changed, and of those, the px the
-// shot while drawing doesn't show as dry
+// shot while drawing doesn't show as dry: none within one px of it alike (the dry line's soft edge is drawn again half a
+// px over at an opened scrap's zoom; a line that jumps moves many).
 const changed = (page, ...shots) =>
   page.evaluate(
     async ([blank, wet, dry]) => {
@@ -252,16 +273,25 @@ const changed = (page, ...shots) =>
         const cv = Object.assign(document.createElement('canvas'), { width: img.width, height: img.height }),
           g = cv.getContext('2d');
         g.drawImage(img, 0, 0);
-        return g.getImageData(0, 0, img.width, img.height).data;
+        return g.getImageData(0, 0, img.width, img.height);
       };
-      const [a, w, d] = await Promise.all([blank, wet, dry].map(px));
-      const differ = (p, q, i) => Math.max(...[0, 1, 2].map(k => Math.abs(p[i + k] - q[i + k]))) > 60;
+      const [a, w, d] = await Promise.all([blank, wet, dry].map(px)),
+        { width, height } = d;
+      const differ = (p, q, i, j = i) => Math.max(...[0, 1, 2].map(k => Math.abs(p.data[i + k] - q.data[j + k]))) > 60;
+      // (no pixel of q within one px of p's at x, y alike)
+      const apart = (p, q, x, y) => {
+        for (let v = Math.max(0, y - 1); v <= Math.min(height - 1, y + 1); v++)
+          for (let u = Math.max(0, x - 1); u <= Math.min(width - 1, x + 1); u++)
+            if (!differ(p, q, (y * width + x) * 4, (v * width + u) * 4)) return false;
+        return true;
+      };
       let drawn = 0,
         moved = 0;
-      for (let i = 0; i < a.length; i += 4) {
-        if (differ(a, d, i)) drawn++;
-        if (differ(w, d, i)) moved++;
-      }
+      for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++) {
+          if (differ(a, d, (y * width + x) * 4)) drawn++;
+          if (apart(w, d, x, y) || apart(d, w, x, y)) moved++;
+        }
       return [drawn, moved];
     },
     shots.map(b => b.toString('base64')),

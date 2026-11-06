@@ -13,14 +13,16 @@ if [ -d "$PWD/../ms-playwright" ]; then
   before=-1
   while [ "$before" != "$(linked)" ]; do # until a pass links nothing new (a library linked can need more)
     before=$(linked)
-    for shell in "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell; do
-      LD_LIBRARY_PATH="$libraries" ldd "$shell" | awk '/=> not found/ { print $1 }' | while read -r name; do
+    for browser in "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell \
+      "$PLAYWRIGHT_BROWSERS_PATH"/chromium-*/chrome-linux64/chrome; do
+      [ -e "$browser" ] || continue
+      LD_LIBRARY_PATH="$libraries" ldd "$browser" | awk '/=> not found/ { print $1 }' | while read -r name; do
         if [ -e "$PWD/../tools/$name" ]; then ln -sf "$PWD/../tools/$name" "$libraries/$name"; fi
       done
     done
   done
   for shell in "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell; do
-    export BROWSER_HEADLESS_SHELL="$shell"
+    [ -e "$shell" ] && export BROWSER_HEADLESS_SHELL="$shell"
     break
   done
   export LD_LIBRARY_PATH="$libraries${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

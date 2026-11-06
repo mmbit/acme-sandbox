@@ -17,6 +17,15 @@ async function playedAfter(ms: number) {
   while (forecast.lastPlayed() === before) await new Promise(setImmediate);
 }
 
+// The first play starts as soon as the reads ahead are in, not after a fixed wait.
+test('the start plays the queue once its reads ahead are in, with no change and no wait', async () => {
+  const began = performance.now();
+  while (!forecast.lastPlayed()) {
+    assert.ok(performance.now() - began < SETTLE_MS / 2, 'played before the settle time');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+});
+
 test("a running job's steps and status keep the latest forecast; a job queued plays the queue again a moment later", async () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {

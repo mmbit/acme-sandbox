@@ -7,7 +7,9 @@
 // hold: bar.mjs; where the bookmarks lie: bookmarks.mjs. Recorded with --shots, the board's pictures. (the islands'
 // and the bookmarks' checks)
 import assert from 'node:assert/strict';
-import { atEverySize, toChapter, until } from './kit.mjs';
+import { atEverySize, closeScrap, middleOf, openScrap, toChapter, until } from './kit.mjs';
+import { mouseOf } from './hands.mjs';
+import { paperBox } from './mouse.mjs';
 import { blurred, islandsSeen, islandsUsable } from './islands.mjs';
 import { tabs } from './bookmarks.mjs';
 import { hqLoaded, restsOpen } from './start.mjs';
@@ -132,12 +134,15 @@ async function pictures(p, c, name, { width, sat = 0 }) {
   await toChapter(p, 'calls');
   await p.waitForTimeout(800);
   await c.shot(`realbook-${name}-notes`, p);
-  // (the pen in use: pressed again, its card opens)
+  // (the pen in use on an opened scrap: pressed again, its card opens.)
+  const mouse = mouseOf(p);
+  await openScrap(p, mouse, undefined, middleOf(await paperBox(p)));
   await p.locator("#book .bk-strip .bk-btn[data-mode='pen']").click();
   await settledOn(p, '#book .bk-palette');
   await c.shot(`realbook-${name}-pen`, p);
   await p.keyboard.press('Escape');
   await p.locator('#book .bk-palette').waitFor({ state: 'detached' });
+  await closeScrap(p, mouse);
   await p.locator('#book .bk-more').click();
   await p.waitForSelector('#book .bk-more-card');
   await c.shot(`realbook-${name}-menu`, p);

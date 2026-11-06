@@ -9,9 +9,6 @@
 // px from its top-left) is the page's pan + point / scale. (the page grows every
 // way)
 
-import { MARGIN } from './masonry.js';
-import { UNIT_W } from './scrapunit.js';
-
 // A page's sides as the store makes one, and the most a page grows to either way (pagechecks.ts PAGE and GROWN_MAX)
 export const SIDE = { min: 100, max: 4000 };
 export const GROWN_MAX = 20_000;
@@ -50,37 +47,16 @@ export function scrapPans(page, view, s) {
 // SNAP of the fit it's the fit: two fingers scrolling never zoom the page by their wobble.
 const SNAP = 1.03;
 export const unitsZoom = (s, fit) => (s < fit * SNAP ? fit : Math.min(Math.max(ZOOM_MAX, fit), s));
-// How far a page of scraps pans at a zoom of s: never above or left of its top-left or of what's drawn beyond it
-// (drawnReach), the room above it (view.top) in sight; across its width as far as it's zoomed past the paper's left of
-// the tools (view.right), and down to its foot with foot px (on screen) of it left. → { x0, x1, y0, y1 }, the pan's
-// least and most
-export function unitsPans(page, view, s, foot) {
-  const reach = drawnReach(page);
-  return {
-    x0: reach.x0,
-    x1: Math.max(0, page.w - (view.w - view.right) / s),
-    y0: reach.y0 - view.top / s,
-    y1: page.h - Math.min(view.h, foot) / s,
-  };
-}
-// How far what's on a page reaches, in its px: its ink, scraps, units at their places and what hangs under them, the
-// units with the margin a canvas keeps round them (bookunits.js canvasSize). Their own reach, not the page's box: its ROOM_PX to spare would creep the limits out with
-// each line drawn at the edge. → { x0, y0 }, the top-left a page pans to, 0,0 (where the view's title lies at rest) or
-// further where they lie above or left of it, and x1, the right edge they reach, 0 at least. A page's ink is null until
-// it's read (bookpage.js).
-function drawnReach(page) {
-  const reach = { x0: 0, y0: 0, x1: 0 },
-    units = (page.places ?? []).flatMap(({ hung: h, ...p }) => [
-      { x0: p.x - MARGIN, y0: p.y - MARGIN, x1: p.x + UNIT_W + MARGIN },
-      ...(h ? [{ x0: h.x - MARGIN, y0: h.y - MARGIN, x1: h.x + h.w + MARGIN }] : []),
-    ]);
-  for (const box of [...(page.ink ?? []).map(boxOf), ...page.scraps.map(scrapBoxOf), ...units]) {
-    reach.x0 = Math.min(reach.x0, box.x0);
-    reach.y0 = Math.min(reach.y0, box.y0);
-    reach.x1 = Math.max(reach.x1, box.x1);
-  }
-  return reach;
-}
+// How far a page of scraps pans at a zoom of s: never above or left of its top-left, where the view's title lies at
+// rest, the room above it (view.top) in sight; across its width only as far as it's zoomed past the paper's, and down
+// to its foot with foot px (on screen) of it left. Whatever is on a scrap shows inside its card (bookunits.js cardOf),
+// so nothing on the page lies past its sides. → { x0, x1, y0, y1 }, the pan's least and most.
+export const unitsPans = (page, view, s, foot) => ({
+  x0: 0,
+  x1: Math.max(0, page.w - view.w / s),
+  y0: (0 - view.top) / s,
+  y1: page.h - Math.min(view.h, foot) / s,
+});
 // The pan that keeps a point on the paper (CSS px from its top-left) over the same spot of the page as the zoom goes
 // from s0 to s1: a pinch's middle, the pointer under a trackpad's pinch
 export const zoomAt = (pan, s0, s1, at) => ({ x: pan.x + at.x / s0 - at.x / s1, y: pan.y + at.y / s0 - at.y / s1 });

@@ -38,14 +38,14 @@ async function downAndRight(browser, c) {
     // two fingers drag the page right and down: it holds at its corner, its title's
     await pan(fingers, mid, [180, 140]);
     near(await originAt(page), from, [0, 0], "two fingers never pan above or left of the page's corner");
+    // the Pencil's tap there makes a new scrap and opens it, and it writes in it in blue, picked on its tools
+    const tapper = { tap: at => pen([at]) },
+      { gid, sheet } = await openScrap(page, tapper, undefined, mid),
+      start = [sheet.x + 60, sheet.y + sheet.height / 2];
     await tool(page, 'Pen').tap();
     await page.getByRole('menuitemradio', { name: 'Blue' }).tap();
     // (the card stays open over the paper beside the strip for a width too: Escape closes it.)
     await page.keyboard.press('Escape');
-    // the Pencil's tap there makes a new scrap and opens it, and it writes in it in blue
-    const tapper = { tap: at => pen([at]) },
-      { gid, sheet } = await openScrap(page, tapper, undefined, mid),
-      start = [sheet.x + 60, sheet.y + sheet.height / 2];
     await pen(Array.from({ length: 16 }, (_, i) => [start[0] + i * 8, start[1] + 3 * Math.sin(i / 2)]));
     await savedWhere(c, free.id, p => p.ink.length === 1);
     const groups = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups;

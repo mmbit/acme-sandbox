@@ -123,6 +123,15 @@ export const sessionsOf = ({ db }: Store, purpose: string, ref: string) =>
     .prepare(`select ${COLUMNS} from watchalong_sessions where purpose = ? and ref = ? order by id`)
     .all(purpose, ref)
     .map(sessionOf);
+// The things of one purpose whose ref starts with prefix, in the order their first session started.
+export const refsOf = ({ db }: Store, purpose: string, prefix: string) =>
+  (
+    db
+      .prepare(
+        'select ref from watchalong_sessions where purpose = ? and substr(ref, 1, ?) = ? group by ref order by min(id)',
+      )
+      .all(purpose, prefix.length, prefix) as { ref: string }[]
+  ).map(row => row.ref);
 const COLUMNS = 'id, purpose, ref, typed, origins, started, ended, bytes';
 const sessionOf = (row: Record<string, unknown>) => ({ ...row, origins: JSON.parse(String(row.origins)) }) as Session;
 

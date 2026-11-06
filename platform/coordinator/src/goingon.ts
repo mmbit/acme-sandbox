@@ -11,6 +11,7 @@ import { teamMembers } from './team.ts';
 import { awaitsRead, heldFor, isHidden } from './later.ts';
 import type { Forecast } from './forecast.ts';
 import { seatStatuses } from './seatstatus.ts';
+import { CALL_FOLLOW_UP, taskUrgent } from './urgency.ts';
 import { seatStatusWords } from '../../worker/hq/seatwords.ts';
 
 type Run = {
@@ -33,6 +34,7 @@ type Run = {
   // no pause holds it (jobs.ts pauseLets): the hourly follow-through check, or a pause's wake for its owner
   lets: number;
   follow_through: number;
+  follows_up: number; // the job a board call records as its follow-up (ledger.ts calls.job)
 };
 type Holds = {
   company: ReturnType<typeof paused>;
@@ -63,7 +65,7 @@ function atWork(holds: Holds) {
     .prepare(
       redraws.query(`select j.id, j.agent, j.title, j.step, j.round, j.kind, j.seat, j.started, j.expedite, j.call,
         j.answers, j.pr, j.thread, t.name thread_name, p.name project, w.deadline, ${pauseLets('j')} lets,
-        ${FOLLOW_THROUGH('j')} follow_through from jobs j left join threads t on t.id = j.thread
+        ${FOLLOW_THROUGH('j')} follow_through, ${CALL_FOLLOW_UP('j')} follows_up from jobs j left join threads t on t.id = j.thread
         left join thread_windows w on w.id = t.id left join projects p on p.id = t.project where j.status = 'running' order by j.started, j.id`),
     )
     .all() as Run[];
@@ -75,7 +77,7 @@ function atWork(holds: Holds) {
   const count = `HQ counts ${people.length} at work, as the board sees it: ${many(agents.length, 'agent')} on ${many(runs.length, 'run')}${inside}.`;
   const lines = runs.map(r => {
     const team = members.filter(m => m.job === r.id).map(m => m.name);
-    return `- ${runLine(r)}${holdsAny(holds) ? ` Through the hold: ${through(r, holds)}.` : ''}${team.length ? ` Its team: ${team.join(', ')}.` : ''}`;
+    return `- ${runLine(r)}${paceWords(r)}${holdsAny(holds) ? ` Through the hold: ${through(r, holds)}.` : ''}${team.length ? ` Its team: ${team.join(', ')}.` : ''}`;
   });
   for (const a of idle) lines.push(`- ${a.name}: at work in HQ's view, with no run in HQ's records`);
   return `${count}\n${holdLines(holds)}\nAt work (the number is for reach):\n${lines.join('\n') || '- nobody'}`;
@@ -130,6 +132,14 @@ function runLine(r: Run) {
     : 'in no deliverable';
   return `#${r.id}, ${r.agent}: ${nameOf(r)} (${what}${r.seat ? ` on ${r.seat}` : ''}${since}), ${where}.`;
 }
+
+// Why a seat's pacing doesn't hold a run: urgent work, a board call's follow-up among it (urgency.ts)
+const paceWords = (r: Run) =>
+  r.follows_up
+    ? " A board call's follow-up: urgent, so no seat's pacing holds it."
+    : taskUrgent(r.id)
+      ? " Urgent: no seat's pacing holds it."
+      : '';
 
 // Why a run goes on while a hold is on, from each hold's own rule: a pause stops what starts, never what's already
 // running, so a run that started after the pause that should hold it has leaked.

@@ -1,13 +1,15 @@
 // book-check.mjs's story of the tools' cards and the panels beside the book's islands as the brand guide has them (the
 // Ink README, "The book's frame": the tools' cards), on the board's iPhone (390 × 844) and an iPad (1133 × 744, and the
-// mini upright), in Slate and HQ's own look: a card that can't be pressed lies flat as the tools' island does, never on
-// a key's base (the pen's and the shapes' cards, the preferences, the dots menu); in a card the spacing narrows inward,
+// mini upright), in Slate, Brownstone and Holo: a card that can't be pressed lies flat, never on a key's base (the pen's
+// and the shapes' cards, the preferences, the dots menu); in a card the spacing narrows inward,
 // its margin at the edge wider than the gaps between its colours and between its icons; with the colours four to a
 // line (a phone's), each line of the pen's and the shapes' card as far from its right edge as from its left; the pen's
 // and the marker's colour dot clear of its icon on the island; and the shapes' card has only shapes in its first row,
 // outline and fill beside the widths behind a rule. Recorded with --shots.
 import assert from 'node:assert/strict';
-import { PREFERENCES } from './kit.mjs';
+import { PREFERENCES, middleOf, openScrap } from './kit.mjs';
+import { mouseOf } from './hands.mjs';
+import { paperBox } from './mouse.mjs';
 import { SIZES, opened } from './realbook.mjs';
 
 const AT = {
@@ -25,7 +27,7 @@ const EVEN = 3;
 // c: book-check.mjs's played store and helpers
 export function menuStories(c) {
   return {
-    "the tools' cards and panels lie flat as the tools do, their spacing narrowing inward; the colour dot clear of its tool; the shapes' fill beside the widths":
+    "the tools' cards and panels lie flat, on no key's base, their spacing narrowing inward; the colour dot clear of its tool; the shapes' fill beside the widths":
       async browser => {
         const failed = [];
         for (const [look, address] of Object.entries(LOOKS))
@@ -43,11 +45,23 @@ async function atSize(browser, c, name, size, failed) {
   const { context, p, errors } = await opened(browser, c, name, size),
     check = async step => step().catch(e => failed(e.message));
   try {
-    const flat = await flatOf(p, '#book .bk-strip');
+    await p.locator('#book .bk-more').click();
+    await p.locator('#book .bk-more-card').waitFor();
+    await c.shot(`menus-${name}-dots`, p);
+    await check(() => lying(p, '.bk-more-card', 'the dots menu'));
+    await p.locator('#book .bk-more-card').getByRole('menuitem', { name: PREFERENCES, exact: true }).click();
+    await p.locator('#book .bk-prefs').waitFor();
+    await settled(p, '#book .bk-prefs');
+    await c.shot(`menus-${name}-preferences`, p);
+    await check(() => lying(p, '.bk-prefs', 'the preferences'));
+    await p.keyboard.press('Escape');
+    await p.locator('#book .bk-prefs').waitFor({ state: 'detached' });
+    // (the tools' cards on a scrap opened: the tools an opened scrap's.)
+    await openScrap(p, mouseOf(p), undefined, middleOf(await paperBox(p)));
     await check(() => dotsClear(p, 'pen'));
     await opens(p, 'pen');
     await c.shot(`menus-${name}-pen`, p);
-    await check(() => lying(p, '.bk-palette', "the pen's card", flat));
+    await check(() => lying(p, '.bk-palette', "the pen's card"));
     await check(() => clearOfTools(p, "the pen's card"));
     await check(() => narrowing(p, "the pen's card"));
     await check(() => balanced(p, "the pen's card"));
@@ -64,16 +78,6 @@ async function atSize(browser, c, name, size, failed) {
     await check(() => clearOfTools(p, "the shapes' card"));
     await check(() => narrowing(p, "the shapes' card"));
     await check(() => balanced(p, "the shapes' card"));
-    await p.keyboard.press('Escape');
-    await p.locator('#book .bk-more').click();
-    await p.locator('#book .bk-more-card').waitFor();
-    await c.shot(`menus-${name}-dots`, p);
-    await check(() => lying(p, '.bk-more-card', 'the dots menu', flat));
-    await p.locator('#book .bk-more-card').getByRole('menuitem', { name: PREFERENCES, exact: true }).click();
-    await p.locator('#book .bk-prefs').waitFor();
-    await settled(p, '#book .bk-prefs');
-    await c.shot(`menus-${name}-preferences`, p);
-    await check(() => lying(p, '.bk-prefs', 'the preferences', flat));
     c.noErrorsIn(errors);
   } finally {
     await context.close();
@@ -88,15 +92,23 @@ async function opens(p, mode) {
 const settled = (p, selector) =>
   p.locator(selector).evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
 
-// How a panel lies on the paper: its shadow and its edge, as the look draws them
-const flatOf = (p, selector) =>
-  p.locator(selector).evaluate(el => {
-    const s = getComputedStyle(el);
-    return { shadow: s.boxShadow, edge: `${s.borderTopWidth} ${s.borderTopStyle} ${s.borderTopColor}` };
-  });
-// A card lying as flat as the tools' island: the same shadow and edge, no key's base under it
-async function lying(p, selector, what, flat) {
-  assert.deepEqual(await flatOf(p, `#book ${selector}`), flat, `${what} lies flat as the tools do`);
+// A card lying flat: no key's base under it (the Ink README, the tools' cards: if it looks like a key, it presses), a
+// key's base being a hard shadow straight below it, unblurred, as the look draws a key's lip
+async function lying(p, selector, what) {
+  const lips = await p.locator(`#book ${selector}`).evaluate(el =>
+    getComputedStyle(el)
+      .boxShadow.split(/,(?![^(]*\))/)
+      .map(s => s.trim())
+      .filter(s => {
+        if (s === 'none' || s.includes('inset')) return false;
+        const [x, y, blur = 0] = s
+          .replace(/\w+\([^)]*\)/g, '')
+          .match(/-?[\d.]+px/g)
+          .map(parseFloat);
+        return x === 0 && y > 0 && blur === 0;
+      }),
+  );
+  assert.deepEqual(lips, [], `${what} lies flat, on no key's base`);
 }
 
 // In the open card, each row's drawn things (a colour's disc, an icon's lines) further from the card's edge than from

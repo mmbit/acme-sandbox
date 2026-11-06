@@ -956,7 +956,11 @@ export async function hq(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x'), route = `${req.method} ${url.pathname}`;
   if (route === 'GET /api/review/shares') return json(res, 200, listShares());
   if (route === 'GET /api/review/people') return json(res, 200, listPeople());
-  if (route === 'GET /api/review/notes') return json(res, 200, listNotes());
+  // (the notes' holds are read from the forecast: the first play after a start is waited for, forecast.ts afterFirstPlay)
+  if (route === 'GET /api/review/notes') {
+    await forecast.afterFirstPlay();
+    return json(res, 200, listNotes());
+  }
   if (route === 'GET /api/review/shot') {
     // (or with ?pic= one of its pictures)
     const n = db.prepare('select shot, pictures from review_notes where id = ?').get(Number(url.searchParams.get('id'))) as { shot: string | null; pictures: string | null } | undefined;

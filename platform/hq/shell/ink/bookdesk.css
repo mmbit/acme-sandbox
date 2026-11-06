@@ -10,8 +10,9 @@
 }
 /* the paper: endless, one surface to every edge, up under the status bar's blur and beside the tools, its dots moving
    with the page there too. The Pencil and a mouse write anywhere on it; a finger, the middle button, Space held or the
-   hand tool move it (bookpan.js). Its padding is the room the page's content keeps clear of, set down below the blur
-   and laid left of the tools' island (--bk-rail-width), which bookpages.js reads (book.size's top and right). */
+   hand tool move it (bookpan.js). Its padding is the room content keeps clear of, which bookpages.js reads (book.size's
+   top and right): the page's set down below the blur, an opened scrap's left of the tools' island too
+   (--bk-rail-width, bookview.js contentOf). */
 #book .bk-desk {
   position: absolute;
   inset: 0;
@@ -153,8 +154,8 @@
 /* ---- the page's title on the view (bookviewhead.js; README, The book's frame): at the top left of the paper's
    content, below the status bar's blur, in the screen's px whatever the page's zoom and pan; the day of what's showing
    under it. It takes no press, so the page under it is drawn on as anywhere. The head is a band across the paper from
-   the screen's top, under the tools' glass too, so it has no edge beside them; the words at its left end short of the
-   tools, or of the open asks' counter while that shows (bookforyou.css). */
+   the screen's top, the words at its left end short of the open asks' counter while that shows (bookforyou.css). The
+   tools are an opened scrap's, and the head fades out over it (bookscrapopen.css). */
 #book .bk-view-head {
   --bk-head-fade: 16px;
   position: absolute;
@@ -165,13 +166,13 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: calc(var(--sat, 0px) + 18px) calc(var(--bk-rail-width, 0px) + 8px) 8px 28px;
+  padding: calc(var(--sat, 0px) + 18px) 8px 8px 28px;
   pointer-events: none;
   color: var(--bk-ink, #2a2352);
   isolation: isolate;
 }
 #book:has(.bk-for-you-count:not([hidden], .bk-turn-picture *)) .bk-view-head {
-  padding-right: calc(var(--bk-rail-width, 0px) + var(--bk-count-at) + var(--bk-count-w) + 8px);
+  padding-right: calc(var(--bk-count-at) + var(--bk-count-w) + 8px);
 }
 /* While the page is scrolled with something of it under the head (data-over), the band is frosted paper, no edge of its
    own: its foot fades out over --bk-head-fade, so what's scrolled under the words goes quietly out of sight, a scrap or

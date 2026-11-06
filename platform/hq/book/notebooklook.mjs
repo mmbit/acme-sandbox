@@ -5,9 +5,10 @@
 // anywhere on it the tab's, never a bookmark's; and shut, a finger's pull from the tab opens the book. Recorded with
 // --shots: the page open, the pen's card, the dots menu, and the book shut with its pull tab.
 import assert from 'node:assert/strict';
-import { LOOK_SCHEMES, say, until } from './kit.mjs';
+import { LOOK_SCHEMES, openScrap, say, until } from './kit.mjs';
 import { restsOpen } from './start.mjs';
-import { hands } from './hands.mjs';
+import { hands, mouseOf } from './hands.mjs';
+import { cardInSight } from './mouse.mjs';
 import { viewNow } from './canvas.mjs';
 import { shapeOf } from '../shell/ink/booklayout.js';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
@@ -78,11 +79,6 @@ export function notebookLookStories(c) {
               await seenFace(p, at);
               await noSideways(p, at);
               await clearOfMarks(p, at);
-              await p.locator('#book .bk-strip').getByRole('button', { name: 'Pen' }).first().click();
-              await p.locator('#book .bk-palette').waitFor();
-              await p.waitForTimeout(400);
-              await c.shot(`look-${at}-pen`, p);
-              await p.keyboard.press('Escape');
               await p.locator('#book .bk-more').click();
               await p.waitForTimeout(500);
               await c.shot(`look-${at}-more`, p);
@@ -91,6 +87,13 @@ export function notebookLookStories(c) {
                 rows.some(r => r.includes(say('renamePage'))),
                 `${at}: Rename page in the dots menu (${rows})`,
               );
+              await p.keyboard.press('Escape');
+              // (the pen's card on a note opened: the tools an opened scrap's.)
+              await openScrap(p, mouseOf(p), undefined, await cardInSight(p));
+              await p.locator('#book .bk-strip').getByRole('button', { name: 'Pen' }).first().click();
+              await p.locator('#book .bk-palette').waitFor();
+              await p.waitForTimeout(400);
+              await c.shot(`look-${at}-pen`, p);
               await context.close();
             }
             const { context, p } = await lookAt(browser, c, how, size, { shut: true });
@@ -122,7 +125,7 @@ async function onePaper(p, at) {
       const range = document.createRange();
       range.selectNodeContents(w);
       const b = range.getBoundingClientRect(),
-        a = [...document.querySelectorAll('#book .bk-unit[data-note] .bk-unit-paper')]
+        a = [...document.querySelectorAll('#book .bk-unit .bk-unit-paper')]
           .map(paper => paper.getBoundingClientRect())
           .find(r => b.top >= r.top - 1 && b.top < r.bottom && b.left >= r.left - 1 && b.left < r.right);
       return a ? Math.min(b.left - a.left, b.top - a.top, a.right - b.right, a.bottom - b.bottom) : -1;

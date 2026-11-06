@@ -294,7 +294,7 @@ class Voices:
                   'answer each line (say_nothing). Listen. While they work through ideas together, you '
                   "may keep their thinking in view on the call's page (draw_picture, again as it grows), and speak up "
                   'when you have something worth saying: an idea of your own, two of theirs that fit together, or '
-                  "a prototype of one (prototype), then a word that it's on their iPads."]
+                  "a prototype of one (prototype), then a word that it's on their screens."]
         if not voiced:
             return f"({' '.join(words)})"
         if known:

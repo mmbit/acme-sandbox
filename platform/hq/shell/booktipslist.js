@@ -1,10 +1,13 @@
 // What the tips book (booktips.js) shows: what Ink can do, one thing a spread, in the chapters of the Ink 1.1 deck it's
 // built from, with their accents. Each tip's title says plainly what it does, its words say how in a line or two, over
 // the deck's picture of it (picture) or its motion study (film, with its still as the poster), rendered into
-// theme/hq/tips/ from the deck's mocks (products/_cycles/2026-10-29-ink-vision/README.md). Each names the code it
-// describes (from): a change to that behaviour changes its tip here in the same pull request, a new thing adds one, and
-// a thing taken out takes its tip with it. The tips book shows only what's built. It's "circle" everywhere, never
-// "ring".
+// theme/hq/tips/ from the deck's mocks (products/_cycles/2026-10-29-ink-vision/README.md), or a still of HQ itself
+// where the deck's picture shows what isn't built. Each names the code it describes (from): a change to that behaviour
+// changes its tip here in the same pull request, a new thing adds one, and a thing taken out takes its tip with it. The
+// tips book shows only what's built. It's "circle" everywhere, never "ring".
+// (the stills)
+import { cap } from '../util.js';
+import { names } from './brand.js';
 import { MOD } from './ink/bookui.js';
 
 export const PARTS = [
@@ -21,8 +24,7 @@ export const TIPS = [
   {
     part: 'The book',
     title: 'Tap the pull tab to open or close the notebook',
-    words:
-      'The fabric tab on the cover’s edge opens the notebook beside HQ and closes it again. Drag it to make the notebook wider: far enough and it lies over HQ.',
+    words: `The fabric tab on the cover’s edge opens the notebook beside ${names.hq} and closes it again. Drag it to make the notebook wider: far enough and it lies over ${names.hq}.`,
     from: 'platform/hq/shell/ink/book.js, platform/hq/shell/ink/bookhandle.js, platform/hq/shell/ink/bookswing.js',
     picture: 'pull-tab',
     alt: 'The notebook shut and open on a laptop, its fabric tab on the cover, and on a phone',
@@ -43,7 +45,7 @@ export const TIPS = [
       '‹ and › on the rail turn to the page before or after in the chapter. Tap the count between them to list its pages by name. Rename page, in the dots menu, gives this page a title.',
     from: 'platform/hq/shell/ink/bookcontrols.js, platform/hq/shell/ink/booktitle.js',
     picture: 'bars-final',
-    alt: 'The page bar with ‹ and ›, the page’s title and its number',
+    alt: 'The bar’s ‹ and › with the count between them, and the chapter’s pages listed by name',
   },
 
   // ---- The experience
@@ -69,7 +71,7 @@ export const TIPS = [
     part: 'The experience',
     title: 'Answer the asks edged in red',
     words:
-      'An ask still waiting on you wears a red edge. The counter on the rail says how many are open, and its arrows take you to each in turn.',
+      'An ask still waiting on you wears a red edge. The counter by the page’s title says how many are open, and its arrows take you to each in turn.',
     from: 'platform/hq/shell/ink/bookforyou.js',
     picture: 'open-asks',
     alt: 'Open asks edged in red, and the counter of open asks with its arrows',
@@ -132,9 +134,8 @@ export const TIPS = [
   // ---- The pen and the page
   {
     part: 'The pen and the page',
-    title: 'Draw on HQ with the Pencil to make a note',
-    words:
-      'Draw on any page of HQ with the Pencil. Rest the pen a moment: your mark lifts into the notebook as a scrap, and HQ’s page is left clean.',
+    title: `Draw on ${names.hq} with the Pencil to make a note`,
+    words: `Draw on any page of ${names.hq} with the Pencil. Rest the pen a moment: your mark lifts into the notebook as a scrap, and ${names.hq}’s page is left clean.`,
     from: 'shared/review/pencil.js, shared/review/lift.js',
     picture: 'viewer-ipad',
     alt: 'Marks on the work landed in the notebook beside it as scraps',
@@ -142,27 +143,26 @@ export const TIPS = [
   {
     part: 'The pen and the page',
     title: 'Turn on the pin to draw with a mouse or a finger',
-    words: 'No Pencil? Turn on Settings › Pin on HQ, then tap the pin and draw on HQ the same way.',
+    words: `No Pencil? Turn on Settings › Pin on ${names.hq}, then tap the pin and draw on ${names.hq} the same way.`,
     from: 'platform/hq/shell/pinsetting.js',
     picture: 'pen-button',
-    alt: 'The pen button, and its switch in Settings',
+    alt: `${cap(names.hq)}’s pin, and its switch Pin on ${names.hq} in Settings`,
   },
   {
     part: 'The pen and the page',
     title: 'Circle something to make a note about just that',
-    words: 'With the Pencil, draw a circle round something on HQ: your note is about that one thing.',
+    words: `With the Pencil, draw a circle round something on ${names.hq}: your note is about that one thing.`,
     from: 'shared/review/gestures.js',
     picture: 'tip-circle',
-    alt: 'A circle round one card on HQ, and the note about it in the notebook',
+    alt: `A circle round one card on ${names.hq}, and the note about it in the notebook`,
   },
   {
     part: 'The pen and the page',
     title: 'Tap a mic and talk to add your words',
-    words:
-      'On HQ, mark something and tap the mic on its note: what you say goes into the notebook with your mark. In the notebook, tap the mic on the rail, talk, and tap it again: your words land under what you wrote last. Or double-tap the page and hold, and talk: they land where you held as you lift.',
+    words: `On ${names.hq}, mark something and tap the mic on its note: what you say goes into the notebook with your mark. In the notebook, tap the mic on the rail, talk, and tap it again: your words land under what you wrote last. Or double-tap the page and hold, and talk: they land where you held as you lift.`,
     from: 'shared/review/dictation.js, platform/hq/shell/ink/bookvoice.js, platform/hq/shell/ink/bookinput.js',
     picture: 'tip-voice',
-    alt: 'A line under a tagline on HQ, the words said written out beside it and on its note in the notebook',
+    alt: `A line under a tagline on ${names.hq}, the words said written out beside it and on its note in the notebook`,
   },
   {
     part: 'The pen and the page',
@@ -183,7 +183,7 @@ export const TIPS = [
   {
     part: 'The pen and the page',
     title: 'Press Undo to take a step back',
-    words: `Undo on the rail, or ${MOD}+Z, takes a step back, and Redo puts it back. On HQ, tap two fingers together. A page you’ve sent is the one step it can’t take back.`,
+    words: `Undo on the rail, or ${MOD}+Z, takes a step back, and Redo puts it back. On ${names.hq}, tap two fingers together. A page you’ve sent is the one step it can’t take back.`,
     from: 'platform/hq/shell/ink/bookedit.js, platform/hq/shell/ink/bookrail.js, shared/review/pentouch.js',
     picture: 'tip-undo',
     alt: 'Undo on the rail bringing a scrap back',
@@ -212,10 +212,10 @@ export const TIPS = [
   // ---- How we answer
   {
     part: 'How we answer',
-    title: 'Reply under an agent’s answer',
+    title: 'Reply to an agent’s answer on your note',
     words:
-      'An agent’s answer appears under your note. Write a tick, a cross, a ? or a few words on the line under it: it’s sent once you rest the pen.',
-    from: 'platform/hq/shell/ink/bookanswerreply.js',
+      'An agent’s answer appears under your note. To reply, tap the note to open it, write on it (a tick for yes, a cross for no, a ? to hear more, or a few words) and press Answer.',
+    from: 'platform/hq/shell/ink/bookscrapkeys.js, platform/hq/shell/ink/bookslipreply.js',
     picture: 'ans-answer',
     alt: 'An agent’s answer under the note',
   },
@@ -233,8 +233,7 @@ export const TIPS = [
   {
     part: 'The feel',
     title: 'Throw a scrap away from its ⋯ menu',
-    words:
-      'In the notebook, open a scrap and pick Throw scrap away, last in its ⋯ menu: it crumples away, and Undo brings it back. A line never deletes anything: scribbled over or circled, it’s ink. On HQ, take a line back with the strip’s eraser or Undo.',
+    words: `In the notebook, open a scrap and pick Throw scrap away, last in its ⋯ menu: it crumples away, and Undo brings it back. A line never deletes anything: scribbled over or circled, it’s ink. On ${names.hq}, take a line back with the strip’s eraser or Undo.`,
     from: 'platform/hq/shell/ink/bookscrapkeys.js, shared/review/surface.js',
     picture: 'crumple',
     alt: 'A scrap held, crumpled into a ball and thrown off the page',

@@ -20,13 +20,14 @@ export function showWork(work, text) {
 }
 
 let heard = null; // (the open prototype's messages, while it's open: fromPrototype)
+let closing = null; // (the open prototype's Back)
 // A call's prototype (the coordinator's callprototypes.ts), open over the whole screen, the call's page under it: a
 // bar back to the page, and the prototype live in a frame, its session handed on by the guest desk (/guest/onward).
 // In the top layer (a popover), over the book's spread, which leaves what's under it untappable. Opened again, the
-// frame shows the newer one.
+// frame shows the newer one. While it's open, the room's eye and Pause for their screen (bookguestscreen.js) are on its
+// bar, and back on the book's after.
 export function showPrototype(link, text) {
-  document.querySelector('.bk-guest-proto')?.remove();
-  heard?.abort();
+  closing?.();
   heard = new AbortController();
   const view = document.createElement('section');
   view.className = 'bk-guest-view bk-guest-proto';
@@ -36,17 +37,24 @@ export function showPrototype(link, text) {
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>`;
   view.popover = 'manual';
   const frame = view.querySelector('iframe');
-  view.querySelector('button').onclick = () => {
+  const screenKeys = [...document.querySelectorAll('#book .bk-guest-eye, #book .bk-guest-pause')],
+    home = screenKeys[0]?.parentElement,
+    after = screenKeys.at(-1)?.nextSibling ?? null;
+  view.querySelector('.bk-guest-bar').append(...screenKeys);
+  closing = () => {
     heard.abort();
+    for (const key of screenKeys) home.insertBefore(key, after);
     view.remove();
+    closing = null;
   };
+  view.querySelector('button').onclick = closing;
   addEventListener('message', e => fromPrototype(e, frame, link), { signal: heard.signal });
   document.body.append(view);
   view.showPopover();
 }
 // Review mode in the prototype's frame (shared/review/review.js), and only from it: told the call is on, its Pencil's
-// mark ({ callMark }) is filed as the guest's on the call's page, as the board's from HQ's viewer (desk.js), its ink
-// gone once it's there.
+// mark ({ callMark }) goes to the call's agent as the guest's, a note of the call's that points, as the board's from
+// HQ's viewer (desk.js), never a scrap on the call's page; its ink goes once it's in.
 function fromPrototype(e, frame, link) {
   const d = e.data;
   if (!frame.isConnected || e.source !== frame.contentWindow || e.origin !== new URL(link).origin) return;

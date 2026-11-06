@@ -27,6 +27,9 @@ INK_SECONDS = 5
 # its voice), and in a restarted session's recap
 NOTE_WORDS = {
     'drawn': "(I drew note {n} on {where}{saying}",
+    # (a guest's pen on a call's prototype, from their own device: it points as the board's notes do.
+    'drawn by': "({who} drew note {n} on {where} on their own screen{saying}",
+    'their picture': ': the picture is the page around it, their ink on it.)',
     # (where: HQ's own page by its path, or the preview in HQ's viewer by its whole address.)
     'hq': "HQ's page {url}",
     'preview': 'the preview {url}',
@@ -124,6 +127,11 @@ def note_said(entry):
         saying = NOTE_WORDS['quoted'].format(words=json.dumps(note['words'], ensure_ascii=False)) if note['words'] else ''
         return (NOTE_WORDS['marked'].format(who=note['who'], n=note['n'], saying=saying) + NOTE_WORDS[end]
                 + NOTE_WORDS['theirs'].format(who=note['who']))
+    if note.get('by'):  # (a guest's, by name.)
+        saying = NOTE_WORDS['quoted'].format(words=json.dumps(note['words'], ensure_ascii=False)) if note['words'] else ''
+        end = 'full' if note.get('full') else 'their picture' if entry['data'] else 'bare'
+        return (NOTE_WORDS['drawn by'].format(who=note['by'], n=note['n'], where=where_of(note), saying=saying)
+                + NOTE_WORDS[end] + NOTE_WORDS['theirs'].format(who=note['by']))
     end = 'full' if note.get('full') else 'picture' if entry['data'] else 'bare'
     return NOTE_WORDS['drawn'].format(n=note['n'], where=where_of(note), saying=saying) + NOTE_WORDS[end]
 

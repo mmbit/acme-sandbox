@@ -136,9 +136,6 @@ async function fingers(browser, c) {
   for (let i = 0; i < 9; i++) c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [tall(i)] });
   const { page, touch, errors, done } = await mini(browser, c);
   try {
-    await slid(page, touch, c);
-    await page.locator('#book .bk-strip').getByRole('button', { name: 'Pen', exact: true }).tap();
-    await page.keyboard.press('0'); // (Blue, the pen's tenth colour)
     // one finger on the grid scrolls it, on a fresh device too: the grid takes no ink
     const ink = inkOn(c, free),
       mid = middleOf(await paperBox(page)),
@@ -148,8 +145,16 @@ async function fingers(browser, c) {
     const scrolled = await placed(page);
     assert.ok(scrolled[1] < top[1] - 100, `one finger scrolled the grid: ${top} → ${scrolled}`);
     assert.equal(inkOn(c, free), ink, 'no ink on the grid from a finger');
-    // a finger's tap on a card in sight opens its scrap, and on it one finger draws
+    // (and back to its top by a finger the other way: a flick glides on to the grid's foot, little of it left in sight)
+    await touch.stroke([[mid[0], mid[1] - 150]], [[mid[0], mid[1] + 400]]);
+    await until(async () => (await placed(page))[1] === top[1], 'the grid scrolled back to its top');
+    // a finger's tap on a card in sight opens its scrap, its tools with it, and on
+    // it one finger draws
     await openScrap(page, fingerOf(touch), undefined, await cardInSight(page));
+    await slid(page, touch, c);
+    await page.locator('#book .bk-strip').getByRole('button', { name: 'Pen', exact: true }).tap();
+    await until(async () => (await pressed(page)) === 'Pen', 'the pen picked');
+    await page.keyboard.press('0'); // (Blue, the pen's tenth colour)
     const at = middleOf(await page.locator('#book .bk-sheet').boundingBox());
     await touch.stroke([[at[0] - 100, at[1]]], [[at[0] + 100, at[1]]]);
     await until(() => inkOn(c, free) === ink + 1, "the finger's line saved in the scrap");
@@ -179,7 +184,11 @@ async function slid(page, touch, c) {
   await c.shot('book-strip-slide', page);
   await touch.up();
   await until(async () => (await pressed(page)) === 'Eraser', 'the eraser picked by the slide');
+  await afterSlide(page);
 }
+// A hand's next tap after a slide's lift, 100 ms on: never as quick as the browser's own click that comes with the lift,
+// which the rail holds a moment (bookstrip.js noClick).
+export const afterSlide = page => page.waitForTimeout(100);
 
 async function pencil(browser, c) {
   const free = freePage(c);

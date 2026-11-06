@@ -196,12 +196,17 @@ export async function sweep(now = Date.now()) {
 }
 
 // The latest forecast. While the server watches, it's shown as last played: it plays again a moment after each change
-// and every minute (server.ts), never on a request, which would hold HQ for the play's time. Without a play yet, or
-// with nothing watching for changes (a test, a one-off), it plays now.
+// and every minute (server.ts), never on a request, which would hold HQ for the play's time (firstPlay). Without a play
+// yet, or with nothing watching for changes (a test, a one-off), it plays now.
 export function current(now = Date.now()) {
   if (!latest || !watching) return refresh(now);
   return latest;
 }
+
+// The first play since the start, settled once kept or failed (then current() plays), at once with nothing watching
+let first: Promise<unknown> = Promise.resolve();
+export const firstPlay = () => first;
+export const afterFirstPlay = () => latency.exclude(first); // (for a request: a wait that holds nothing)
 
 // The latest forecast if there is one, never played for the asking: HQ's job rows read their planned starts from it
 // (jobs.ts jobRows).
@@ -213,12 +218,18 @@ export const afterEach = (after: (f: Forecast) => void) => void played.push(afte
 // The server's start: every change HQ publishes plays the queue again SETTLE_MS later, once for a burst, unless a play
 // came in between (hq job plays its own: moves.ts). An agent's own steps and status change nothing the play reads: a
 // running job's would play the queue every SETTLE_MS. The done work is read ahead of the first play (matching.ts
-// readPastAhead), and the seats' readings are priced ahead of it, both a slice at a time (headroom.ts priceAhead).
+// readPastAhead), and the seats' readings are priced ahead of it, both a slice at a time (headroom.ts priceAhead). The
+// first play, in turns, waits for both, so it never reads what's left of them itself, unless a play came first.
 export function start() {
   if (watching) return;
   watching = true;
-  void readPastAhead();
-  priceAhead().catch(err => console.error('Could not price the seat readings:', err));
+  const ahead = [
+    readPastAhead().catch(err => console.error('Could not read the done work ahead:', err)),
+    priceAhead().catch(err => console.error('Could not price the seat readings:', err)),
+  ];
+  first = Promise.allSettled(ahead).then(() => {
+    if (!kept) return refreshInTurns().catch(err => console.error('Could not play the queue:', err));
+  });
   onPublish((e, by) => {
     if ((e.type === 'log' || e.type === 'status') && by !== 'agent') playSoon();
   });

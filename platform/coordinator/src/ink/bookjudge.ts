@@ -16,7 +16,7 @@
 // What it judges (a target): a group on a notebook page (grp: a scrap, a drawing, a reply under an answer), a note on the
 // old book's pages (note), or a box typed on one (page + text: booktyped.ts). Only the board's own: a guest's note is
 // outside text (charter rule 9) and waits for the board's plane. Judging runs after the board's request has answered.
-// Never on a call's notes page, live or ended: the call's agent is with the board there and hears its ink (callguests.ts
+// Never on a call's notes page, live or ended: the call's agent is with the board there and hears its ink (callmarks.ts
 // markForVoice), and its follow-up takes the page after; nothing else reacts to it.
 import { db, lacks, once, redacted, remember, setting } from '../db.ts';
 import { dayAllowance } from '../dayallowance.ts';
@@ -148,7 +148,7 @@ board asks something of an agent, it's none: a reply nobody asked for is clutter
 why: one short line for whoever checks the verdicts later: what the note asks for, and so this reply.
 
 Notes and their verdicts:
-- "what does reach count here" (handwritten, a circle round a figure on HQ's Gazette page) -> answer: asks what a figure means; a sentence settles it.
+- "what does reach count here" (handwritten, a circle round a figure on HQ's newsletter page) -> answer: asks what a figure means; a sentence settles it.
 - "is this live yet" (typed, on a shop's product page) -> answer: asks whether it has shipped.
 - "waarom?" (handwritten, an arrow at a paused project in HQ) -> answer: asks why it's paused; the agent can say.
 - "waar is dit voor?" (said, on a scrap of a settings page) -> answer: asks what something is for.

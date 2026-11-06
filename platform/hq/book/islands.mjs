@@ -73,7 +73,9 @@ export const islandsClearOf = (page, box) =>
 function frameInPage(touchPx) {
   const $ = s => document.querySelector(`#book ${s}`),
     box = el => el.getBoundingClientRect().toJSON(),
-    shows = el => el.checkVisibility({ visibilityProperty: true }) && el.getBoundingClientRect().width > 0,
+    // (the bar faded out on an opened scrap is not shown)
+    shows = el =>
+      el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) && el.getBoundingClientRect().width > 0,
     sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0;
   const keysOf = (el, press) =>
     [...el.querySelectorAll('.bk-btn')].filter(shows).map(b => {
@@ -111,12 +113,10 @@ function frameInPage(touchPx) {
     paperWidth: $('.bk-rail').getBoundingClientRect().width,
     tools: island('the tools', $('.bk-strip'), 'across'),
     bar: { ...island('the bar', bar, 'down'), start: names('start'), middle: names('middle'), end: names('end') },
-    // (Undo and Redo, their own pill beside the bar: bookui.js.)
-    pill: { ...box($('.bk-undo-pill')), keys: keysOf($('.bk-undo-pill'), 'down').map(k => k.name) },
     where: box(bar.querySelector('.bk-where')),
     // (the overview's own Search lies on its paper, scrolling with its pages)
     floating: [...document.querySelectorAll('#book .bk-island')]
-      .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-strip, .bk-bar, .bk-undo-pill, .bk-far'))
+      .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-strip, .bk-bar, .bk-far'))
       .map(el => el.dataset.island),
   };
 }

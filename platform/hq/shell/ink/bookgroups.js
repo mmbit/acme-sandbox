@@ -119,10 +119,10 @@ function draw(gs, view) {
   for (const el of layer.querySelectorAll('.bk-words, .bk-under'))
     for (const type of ['pointerdown', 'touchstart']) el.addEventListener(type, e => ownTouches(gs, e));
   if (caret) caretBack(layer, caret);
-  // What hangs under each unit is counted in its place and moved to its foot (bookunits.js), again once the book's font
-  // is in where the words were measured in another
+  // A scrap's words and what hangs under each unit are counted in its place and moved to its foot (bookunits.js), and
+  // again whenever one's height changes after (heightsWatched).
   view.relay?.();
-  if (document.fonts?.status === 'loading') document.fonts.ready.then(() => view.el.isConnected && view.relay?.());
+  heightsWatched(view, layer);
   markOpen(view, layer);
   hung(gs.book, view);
   gs.book.controls?.update();
@@ -240,6 +240,25 @@ const slipsOn = gs => ({
   tick: (id, ticked) =>
     gs.book.dev ? Promise.resolve() : notebookRequest('/api/notebooks/answers/tick', { id, ticked }),
 });
+// A scrap's words and what hangs under each unit, watched: the page laid again once for all of them whose height is no
+// longer the one it was laid with, as a picture or the book's font comes in after they were measured, or as its page
+// shows that was laid out of sight (its words and slips measured 0 tall there). One going out of sight changes nothing.
+function heightsWatched(view, layer) {
+  const laid = new WeakMap();
+  view.heightWatch?.disconnect();
+  view.heightWatch = new ResizeObserver(seen => {
+    const changed = seen.filter(({ target: el }) => {
+      const was = laid.get(el);
+      laid.set(el, el.offsetHeight);
+      return el.offsetHeight && el.offsetHeight !== was;
+    });
+    if (changed.length && view.el.isConnected) relay(view, layer);
+  });
+  for (const el of layer.querySelectorAll(':scope > .bk-words, :scope > .bk-under')) {
+    laid.set(el, el.offsetHeight);
+    view.heightWatch.observe(el);
+  }
+}
 // The page laid again round what's under its scraps (a picture loaded), its "for you" edges drawn again with it
 function relay(view, layer) {
   view.relay?.();

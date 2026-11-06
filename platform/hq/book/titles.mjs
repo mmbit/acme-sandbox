@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../../shared/browser/browser.mjs';
 import { press } from './bar.mjs';
 import { button, namedNotebook } from './chrome.mjs';
-import { DESKTOP, MINI, OVERVIEW } from './kit.mjs';
+import { DESKTOP, MINI, OVERVIEW, nothingMoving } from './kit.mjs';
 
 // the page's title on the view, and where it is on the bar (its label names the page)
 const nameIn = page => page.locator('#book .bk-view-head .bk-page-title'),
@@ -229,13 +229,23 @@ async function pageGoes(page, c, { touch, mode }) {
     await press(page, leave);
     assert.equal(await field.count(), 0, 'the title goes with its page');
     if (leave === 'The page before') await namedBar(page, 'Cover ideas');
+    // (the page landed first, and a frame drawn since: a key hidden as the overview opens loses the focus only at the
+    // engine's next rendering update. Where the focus is then is the board's.)
+    await nothingMoving(page);
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     await page.evaluate(() => (window.__focused = document.activeElement));
     const answered = page.waitForResponse('**/api/notebooks/pages/title');
     refuse();
     await answered;
     await page.locator('#book .bk-refusal', { hasText: words }).waitFor({ state: 'attached' });
     assert.equal(await page.locator('#book .bk-title').count(), 0, 'no field or note back on the view');
-    assert.ok(await page.evaluate(() => document.activeElement === window.__focused), 'the focus left where it was');
+    const focus = await page.evaluate(() => {
+      const named = el => (el ? `${el.tagName.toLowerCase()}.${el.className}` : 'none');
+      return document.activeElement === window.__focused
+        ? null
+        : `${named(window.__focused)} → ${named(document.activeElement)}`;
+    });
+    assert.equal(focus, null, `the focus left where it was, after ${leave}`);
     assert.deepEqual(sent, [{ id: 2, title: 'Meant for page two' }]);
     await page.unroute('**/api/notebooks/pages/title');
     await back();

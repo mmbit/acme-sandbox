@@ -247,6 +247,9 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
     db.prepare('update notebook_groups set frame = ? where id = ?').run(frame && JSON.stringify(frame), g.id);
     // (on a live call's page it points, for the call's agent alone: no note goes. ink/callpointers.ts.)
     if (pointedWhole(g)) return g;
+    // (on a call's page after its call, ink alone is a pointer with no one left to point at: it stays on the page,
+    // which the call's follow-up reads, and goes to no one as a wordless note. Words under the answer still go.
+    if (p.kind === 'call' && !said.words) return g;
     const id = replyNote(p.id, anchorOf(top), slip, said, snip, who);
     db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
     return g;
@@ -275,7 +278,7 @@ export function deleteReply(b: any, who = BOARD) {
   const g = row(Number(b?.id));
   const p = g && g.kind === 'reply' && pageRow(g.page, who);
   if (!g || !p || g.deleted !== null) return 404;
-  // (a pointer on a live call's page went to no one.)
+  // (a reply that went to no one: a pointer on a live call's page, or ink alone on an ended call's.)
   if (g.note === null) {
     putAside(g, p);
     return { ok: true, id: g.id };

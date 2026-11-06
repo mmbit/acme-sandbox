@@ -61,7 +61,7 @@ export function check(now = Date.now()) {
     remember('backup.job', streak);
     // (word: its task code's, jobcodes.ts.)
     createJob({ agent: fixer(), word: STANDING.backupJob, title: `Off-site backup ${missed > 0 ? 'missed' : 'set up wrong'}: find out why (${Number.isFinite(ok) ? `last good ${s.ok_at}` : 'none yet'})`,
-      prompt: `The nightly off-site backup (infra/backup.py, run by ${infra().SERVER_NAME}-backup.timer on the host; the note "Off-site backups") has no good backup ${Number.isFinite(ok) ? `since ${s.ok_at}` : 'since the board saved its keys'}. Last try: ${line(s.tried_at) || 'none recorded'}, ${line(s.state) || 'no state'}${s.error ? `: ${line(s.error)}` : ''}.${s.config_error ? ' It failed for how it\'s set up (the token, the bucket or a key), which no later night mends by itself.' : ''} The server's status report (hq report, "off-site backup") has the latest. Find out why and fix it. Only bring it to the board if it needs the board (the R2 token or bucket), as one card.` });
+      prompt: `The nightly off-site backup (infra/backup.py, run by ${infra().SERVER_NAME}-backup.timer on the host; its docstring says what goes and how) has no good backup ${Number.isFinite(ok) ? `since ${s.ok_at}` : 'since the board saved its keys'}. Last try: ${line(s.tried_at) || 'none recorded'}, ${line(s.state) || 'no state'}${s.error ? `: ${line(s.error)}` : ''}.${s.config_error ? ' It failed for how it\'s set up (the token, the bucket or a key), which no later night mends by itself.' : ''} The server's status report (hq report, "off-site backup") has the latest. Find out why and fix it. Only bring it to the board if it needs the board (the R2 token or bucket), as one card.` });
   }
   if (missed > 0) {
     if (setting('backup.missed') !== `${streak}|${missed}`) {
@@ -93,7 +93,7 @@ function headsUps(s: Status, now: number) {
     remember('backup.repo_job', s.repo_warn!);
     // (word: its task code's, jobcodes.ts.)
     createJob({ agent: fixer(), word: STANDING.repoCopy, title: `Off-site backup: the repo's copy is stale, find out why (${line(s.repo_warn)})`,
-      prompt: `The nightly off-site backup (infra/backup.py, run by ${infra().SERVER_NAME}-backup.timer on the host; the note "Off-site backups") still backs up the database, but its copy of the repo is stale: ${line(s.repo_warn)}. Last try: ${line(s.tried_at) || 'none recorded'}${s.repo_error ? `: ${line(s.repo_error)}` : ''}. The server's status report (hq report, "off-site backup") has the latest. Find out why and fix it. Only bring it to the board if it needs the board (SERVER_GITHUB_TOKEN, the R2 token or bucket), as one card.` });
+      prompt: `The nightly off-site backup (infra/backup.py, run by ${infra().SERVER_NAME}-backup.timer on the host; its docstring says what goes and how) still backs up the database, but its copy of the repo is stale: ${line(s.repo_warn)}. Last try: ${line(s.tried_at) || 'none recorded'}${s.repo_error ? `: ${line(s.repo_error)}` : ''}. The server's status report (hq report, "off-site backup") has the latest. Find out why and fix it. Only bring it to the board if it needs the board (SERVER_GITHUB_TOKEN, the R2 token or bucket), as one card.` });
   }
   // invoices and agreements not off the server in time (they're kept 7 years, and the backups keep a year): one job each
   const recordsJob = !!s.records_warn && setting('backup.records_job') !== s.records_warn;
@@ -101,7 +101,7 @@ function headsUps(s: Status, now: number) {
     remember('backup.records_job', s.records_warn!);
     // (word: its task code's, jobcodes.ts.)
     createJob({ agent: fixer(), word: STANDING.records, title: `Off-site backup: invoices or agreements not copied off the server, find out why`,
-      prompt: `The nightly off-site backup (infra/backup.py; the note "Off-site backups", "The 7-year records") hasn't copied every mail to invoices@ and documents@ off the server: ${line(s.records_warn)}. Last try: ${line(s.tried_at) || 'none recorded'}${s.records_error ? `: ${line(s.records_error)}` : ''}. The server's status report (hq report, "off-site backup", records) has the latest. Find out why and fix it. Only bring it to the board if it needs the board (the R2 token or bucket, or room past the free tier), as one card.` });
+      prompt: `The nightly off-site backup (infra/backup.py; its docstring's 7-year records) hasn't copied every mail to invoices@ and documents@ off the server: ${line(s.records_warn)}. Last try: ${line(s.tried_at) || 'none recorded'}${s.records_error ? `: ${line(s.records_error)}` : ''}. The server's status report (hq report, "off-site backup", records) has the latest. Find out why and fix it. Only bring it to the board if it needs the board (the R2 token or bucket, or room past the free tier), as one card.` });
   }
   if (s.warn && setting('backup.warn') !== s.warn) {
     remember('backup.warn', s.warn);

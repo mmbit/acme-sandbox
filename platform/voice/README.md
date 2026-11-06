@@ -277,9 +277,8 @@ there, a diagram or a chart it writes as SVG, which the coordinator draws in the
 `drawing`) and lays at the page's end as a picture the board can draw on; the picture comes back to the agent with its
 line, so it sees what the board sees. `prototype` saves a throwaway page of the agent's own (one HTML page, everything
 inline) with the call, its next version under a name it has already (`POST prototype`: the coordinator's
-`callprototypes.ts`, which takes its picture and shows it on the call's page and the iPads); its picture comes back with
-its line and the call's number, which a colleague's quick job needs to save one for the call with `hq prototype --call
-<n>`. The socket's line limit fits a prototype's page (`ASK_BYTES`).
+`callprototypes.ts`, which takes its picture and shows it on the call's page and their screens.); its picture comes back with its line and the call's number, which a
+colleague's quick job needs to save one for the call with `hq prototype --call <n>`. The socket's line limit fits a prototype's page (`ASK_BYTES`).
 `try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
 try run builds each and it lands under it (`ink/booktry.ts`). All go through the
 screen socket to the coordinator's Ink store (`POST write-down`, `POST title`: `ink/callnotes.ts`; `POST page`, `POST mark`,

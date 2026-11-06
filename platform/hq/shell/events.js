@@ -21,6 +21,12 @@ export function onEvent(ev) {
   // (a call's prototype saved: its card on every screen, bookprototype.js.)
   if (ev.type === 'book' && ev.text === 'prototype')
     return void document.dispatchEvent(new CustomEvent('call:prototype', { detail: ev.prototype }));
+  // (a pen's mark on a call's prototype from another screen, the board's iPad or a guest's: a note of the call's, which
+  // the call screen hands the line as its own, calldraw.js.)
+  if (ev.type === 'book' && ev.text === 'callnote')
+    return void document.dispatchEvent(new CustomEvent('pencil:note', { detail: ev.note }));
+  // (the board's call went live: its other screens show themselves on it, boardscreen.js.
+  if (ev.type === 'book' && ev.text === 'call') return void document.dispatchEvent(new CustomEvent('call:live'));
   // (someone joined a call's page from its QR code: the call screen tells the line, callguest.js.)
   if (ev.type === 'book' && ev.text === 'guest')
     return void document.dispatchEvent(new CustomEvent('call:guest', { detail: ev.guest }));

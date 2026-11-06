@@ -1,4 +1,5 @@
 // The guest's shared Ink shell and its static dependencies, with company branding from guest settings.
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
@@ -10,6 +11,7 @@ import { typeOf } from './types.ts';
 import { looks } from '../../hq/looks.mjs';
 import { BOARD_EXTRAS, OPEN_EXTRAS, extraPaths } from '../../hq/extras.mjs';
 import { reply } from './uploads.ts';
+import { RECORDER } from './watchalong.ts';
 import type { RouteHandler, RouteTable } from '../../../shared/routes/routes.ts';
 
 const words = {
@@ -32,6 +34,9 @@ export const fileRoutes = (room: string): RouteTable => ({
       ({ res, params }) => sendFile(res, `${REPO_DIR}/${fileOf(params)}`),
     ]),
   ),
+  // (rrweb's recorder, which the watch-along imports from beside itself: a call guest's room records itself,
+  // callguests.ts screenOf.)
+  [`GET ${room}/shared/watchalong/vendor/rrweb-record.js`]: ({ res }) => sendFile(res, fileURLToPath(RECORDER)),
   [`GET ${room}/review/:part([a-z]+).js`]: ({ res, params }) =>
     sendFile(res, `${REPO_DIR}/shared/review/${params.part}.js`),
   [`GET ${room}/:path(util\\.js|(?:shell|world|renderers)/[\\w\\/\\-]+\\.(?:js|css|woff2)|icons/(?:smooth|pixel)/[\\w\\-]+\\.svg)`]:

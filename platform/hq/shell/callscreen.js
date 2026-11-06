@@ -227,10 +227,10 @@ function newBubble(c) {
   return bubble;
 }
 
-// The agent's face, on its little screen and in the bubble: the look's portrait of it as an image, made once a call, or
-// its initial. An image, not the scene's canvas: iPad Safari wipes a page's canvases when it's short of memory, and
-// decodes an image again.
-function faceOf(c) {
+// The agent's face, on its little screen and in the bubble (the board's other screens' too, boardscreen.js): the look's
+// portrait of it as an image, made once a call, or its initial. An image, not the scene's canvas: iPad Safari wipes a
+// page's canvases when it's short of memory, and decodes an image again.
+export function faceOf(c) {
   if (c.portrait === undefined) {
     const portrait = scene.portrait?.({ kind: 'agent', id: c.agent });
     c.portrait = portrait ? { src: portrait.img.toDataURL(), accent: portrait.accent, foot: portrait.foot } : null;
@@ -241,7 +241,7 @@ function faceOf(c) {
 }
 // The portrait's own facts on the screen it's on: the colour it's framed in, and how much of the picture lies below its
 // feet, where the floor meets them (style.css --call-foot)
-function framePortrait(c, el) {
+export function framePortrait(c, el) {
   if (c.portrait?.accent) el.style.setProperty('--cb-accent', c.portrait.accent);
   if (c.portrait) el.style.setProperty('--call-foot', String(c.portrait.foot));
 }

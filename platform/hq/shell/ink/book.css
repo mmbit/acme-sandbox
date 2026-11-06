@@ -102,6 +102,15 @@
 #book .bk-table.bk-over {
   left: 0;
 }
+/* HQ's toasts over the book wherever it lies over them, beside it on <html> (book.js mountRoot): a scrap thrown away
+   or moved has its Undo there, the page none of its own (bookgroups.js, bookstrip.css); still none while HQ's tour
+   plays (toast.css). */
+#toasts {
+  z-index: 45;
+}
+html:has(> body.touring) > #toasts {
+  display: none;
+}
 /* the book's leaf: the paper (bookpages.js fills .bk-paper), the last of the page block left of it, and the controls
    over the paper */
 #book .bk-leaf {
@@ -213,10 +222,16 @@
 #book[data-mode='spread'] .bk-lip {
   margin-left: 0;
 }
-/* (upright, the cover's edge, 12 px, is past the screen's left: the tab hangs in over the page as far from the screen's
-   edge as on its side, 24 px, and its tap closes the book. Flush with the edge, iPadOS takes its touches in a split
-   screen's half, for the divider and Safari's Back) */
+/* (upright, the cover's edge, 12 px, is past the screen's left: on a phone the tab hangs flush with the screen's edge,
+   its tap closing the book. On a tablet it hangs in over the page as far from the edge as on its side, 24 px: flush,
+   iPadOS takes its touches in a split screen's half, for the divider and Safari's Back. The device's width tells them
+   apart, as a split screen's half can be as narrow as a phone.) */
 @media (orientation: portrait) {
+  #book[data-mode='spread'] .bk-lip {
+    margin-left: 12px;
+  }
+}
+@media (orientation: portrait) and (min-device-width: 600px) {
   #book[data-mode='spread'] .bk-lip {
     margin-left: 36px;
   }

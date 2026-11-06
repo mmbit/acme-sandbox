@@ -24,11 +24,11 @@ import { noteRewordStories } from './book/notereword.mjs';
 import { walkStory } from './book/walk.mjs';
 import { findStory, keptStory } from './book/find.mjs';
 import { writtenStory } from './book/written.mjs';
-import { mouseStories } from './book/mouse.mjs';
+import { freePage, mouseStories } from './book/mouse.mjs';
 import { drawStories } from './book/draw.mjs';
 import { highlightStories } from './book/highlight.mjs';
 import { spaceStories } from './book/space.mjs';
-import { deskStories, notPaper, inkPixels } from './book/desk.mjs';
+import { deskStories, inkPixels } from './book/desk.mjs';
 import { frameStories } from './book/frame.mjs';
 import { openStories } from './book/open.mjs';
 import { blurWideStories } from './book/blurwide.mjs';
@@ -78,6 +78,7 @@ import { notebookStories } from './book/notebook.mjs';
 import { notebookPhoneStories } from './book/notebookphone.mjs';
 import { realBookStories } from './book/realbook.mjs';
 import { glassStories } from './book/glass.mjs';
+import { phonePageStories } from './book/phonepage.mjs';
 import { notebookLookStories } from './book/notebooklook.mjs';
 import { edgeStories } from './book/edges.mjs';
 import { tapedStories } from './book/taped.mjs';
@@ -92,6 +93,7 @@ import { bookmarkChaptersStories } from './book/bookmarkchapters.mjs';
 import { bookmarksFoldStories } from './book/bookmarksfold.mjs';
 import { notebookAskStories } from './book/notebookasks.mjs';
 import { askPictureStories } from './book/askpictures.mjs';
+import { picturedHeightStories } from './book/picturedheights.mjs';
 import { askTickStories } from './book/askticks.mjs';
 import { notebookSpotStories } from './book/notebookspot.mjs'; // (an ask's spot)
 import { forYouStories } from './book/foryou.mjs';
@@ -122,9 +124,20 @@ import { callKeyStories } from './book/callkeys.mjs';
 import { bubbleDropStories } from './book/bubbledrop.mjs';
 import { scrapStories, savedScrap } from './book/scrap.mjs'; // (the pin flow)
 import { talked, voiceLine, hush, SAID } from './book/voice.mjs';
-import { DESKTOP, MINI, UPRIGHT, OVERVIEW, pressAlong, ui, bookAtRest } from './book/kit.mjs';
+import {
+  DESKTOP,
+  MINI,
+  UPRIGHT,
+  OVERVIEW,
+  pressAlong,
+  ui,
+  bookAtRest,
+  openScrap,
+  closeScrap,
+  until as untilRead,
+} from './book/kit.mjs';
 import { groupsOf } from './book/played.mjs';
-import { twoFingerTap } from './book/hands.mjs';
+import { hands, mouseOf, twoFingerTap } from './book/hands.mjs';
 import { morningStory, everyWidthStory, LOOKS } from './book/film.mjs';
 import { sharedOut } from './book/pool.mjs';
 
@@ -192,8 +205,6 @@ function seedPages() {
 // ---- the book's store, played (booknotes.ts): today's pages, notes numbered on their sheet, wiped. A note's sheet is
 // its owner's (owner on it; none: the CEO's), open, in its ten seconds to undo, or sent; notes edited, moved, put in
 // order and linked (booksend.ts too). (the sheets beyond the CEO's one)
-// (the picture the paste story pasted)
-let pasted = null;
 const pages = [],
   notes = [],
   posts = [],
@@ -334,6 +345,8 @@ function store(path, body, q) {
       by: body.by ?? 'board',
       snip: body.snip ? `/api/book/snip?id=${ids}` : null,
       status: 'open',
+      // (a call's, as its page is now: a later call's page can take its page's place in pages)
+      call: pages.find(p => p.id === body.page)?.kind === 'call',
       ...(body.to !== undefined && { owner: body.to ?? org.company.ceo }),
     };
     if (body.snip) snips.set(note.id, body.snip);
@@ -401,6 +414,14 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
     serviceWorkers: 'block',
   });
   if (pen) await context.addInitScript(penOnOpen);
+  // Playwright's WebKit hands a fetch's Blob body to the routes as null: there it goes as its bytes, so a picture
+  // uploaded is the one the page made, whatever story ran before.
+  if (browser.browserType().name() === 'webkit')
+    await context.addInitScript(() => {
+      const send = window.fetch;
+      window.fetch = async (url, init) =>
+        send(url, init?.body instanceof Blob ? { ...init, body: await init.body.arrayBuffer() } : init);
+    });
   // Linux's headless WebKit has no MediaRecorder. The words arrive over the live line, so the clip is only a fallback.
   await context.addInitScript(() => {
     window.MediaRecorder ??= class {
@@ -446,7 +467,6 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
       return notebookRoute(r, context.notebook, {
         heard: (path, body, picture) =>
           posts.push({ path, body: picture ? { type: body.type, size: body.bytes.length } : body }),
-        bytes: () => pasted ?? unseen(),
       });
     }
     // Voice uploads contain audio bytes, while the routes below read JSON.
@@ -471,7 +491,7 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
         return kept ? r.fulfill({ contentType: kept.type, body: kept.bytes }) : r.fulfill({ status: 404, body: '' });
       }
       const type = req.headers()['content-type'],
-        bytes = req.postDataBuffer() ?? pasted;
+        bytes = req.postDataBuffer();
       posts.push({ path: url.pathname, body: { type, size: bytes.length } });
       return r.fulfill({ json: keepScrap(+url.searchParams.get('id'), type, bytes) });
     }
@@ -504,10 +524,7 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
 const carried = new WeakMap();
 function carryNotes(play) {
   const done = carried.get(play) ?? carried.set(play, new Set()).get(play);
-  const late = notes.filter(
-    n =>
-      n.status === 'open' && n.by === 'board' && !done.has(n.id) && pages.find(p => p.id === n.page)?.kind !== 'call',
-  );
+  const late = notes.filter(n => n.status === 'open' && n.by === 'board' && !done.has(n.id) && !n.call);
   for (const n of late) {
     done.add(n.id);
     const scrap = { anchor: n.anchor, words: n.words ?? '', said: n.said ?? null, snip: snips.get(n.id) ?? SNIP };
@@ -519,9 +536,6 @@ function carryNotes(play) {
     }
   }
 }
-// A picture's bytes WebKit didn't hand over (a blob's body comes as null there) with none pasted before: the snip
-// stands in for them.
-const unseen = () => Buffer.from(SNIP.split(',')[1], 'base64');
 // A live call's notes page, as the store makes it at pickup (ink/callnotes.ts pageFor): a new page of My journal,
 // titled for the call, the same page at the call's every ask. Each play keeps its own: a story seeded with its own
 // notebooks plays a store that numbers My journal and its pages as the shared one does, so one play's page id would
@@ -564,6 +578,7 @@ function STORIES() {
     // (the Notebook's page: its groups, Send, the store's changes and answers, on an iPad mini, a desktop and a phone.
     ...notebookStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookPhoneStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...phonePageStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...realBookStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...glassStories({ hqIn, base, settled, shot }),
     ...notebookLookStories({ hqIn, base, settled, shot }),
@@ -587,6 +602,7 @@ function STORIES() {
     ...assignStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookAskStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
     ...askPictureStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...picturedHeightStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...askTickStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookSpotStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...forYouStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
@@ -1073,37 +1089,6 @@ function STORIES() {
           await done();
         }
       },
-    // (the page is endless: panned down past what it holds, a line written there grows it in the store, and the paper
-    // shows nothing but paper all the while.)
-    "a page grows as it's written down": async browser => {
-      const { page, errors, done } = await hq(browser, MINI);
-      try {
-        const paper = (await sight(page)).book,
-          stored = await storedPages(page);
-        await page.mouse.move(paper.left + paper.width / 2, MINI.height / 2);
-        // (a trackpad's scroll, a touch sideways too: a mouse's wheel notch picks the next tool, bookpan.js.)
-        for (let i = 0; i < 6; i++) await page.mouse.wheel(1, 400);
-        await page.waitForTimeout(SETTLE_MS);
-        assert.deepEqual(await notPaper(page), [], 'the paper shows past the page');
-        // (clear of the tool strip and the foot row.)
-        await write(page, paper.left + 160, MINI.height / 2);
-        await page.waitForTimeout(SETTLE_MS);
-        await shot('book-grown', page);
-        const after = await storedPages(page),
-          grown = after.find(p => p.h > stored.find(q => q.id === p.id).h);
-        const said = () =>
-          page.evaluate(() =>
-            [...document.querySelectorAll('#book .bk-refusal:not([hidden])')].map(r => r.textContent),
-          );
-        assert.ok(
-          grown,
-          `no page grew in the store (${JSON.stringify({ stored, after })}; the book said: ${await said()})`,
-        );
-        assert.deepEqual(errors, []);
-      } finally {
-        await done();
-      }
-    },
     // (the pages control says which page of the notebook it is; a new page is in the store at once.)
     'New page starts the next: the notebook gets a page more, and writing on it keeps it': async browser => {
       const { page, errors, done } = await hq(browser, MINI);
@@ -1121,11 +1106,17 @@ function STORIES() {
         assert.match(await where(), new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`));
         assert.equal(await inkPixels(page), 0, 'the new page has ink on it');
         assert.equal((await storedPages(page)).length, stored + 1, 'the new page in the store');
-        await write(page, paper.left + 160, MINI.height / 2); // (right of the tool strip)
-        await page.waitForTimeout(SETTLE_MS);
-        const kept = await storedPages(page);
+        // (written on in a scrap: a click on its empty grid makes one and opens it, Klaar puts it back.
+        const mouse = mouseOf(page),
+          { sheet } = await openScrap(page, mouse, undefined, [paper.left + 160, MINI.height / 2]);
+        await write(page, sheet.x + 40, sheet.y + sheet.height / 2);
+        await closeScrap(page, mouse);
+        const kept = await untilRead(
+          async () => (pages => pages.at(-1).groups && pages)(await storedPages(page)),
+          'what was written on it in the store',
+        );
         assert.equal(kept.length, stored + 1);
-        assert.equal(kept[kept.length - 1].groups, 1, 'what was written on it, a group');
+        assert.equal(kept.at(-1).groups, 1, 'what was written on it, a scrap');
         await shot('book-new-page', page);
         assert.deepEqual(errors, []);
       } finally {
@@ -1174,23 +1165,21 @@ function STORIES() {
       hush,
     }),
     'a picture pasted in the book lands taped, and one dragged in lands where it was let go': async browser => {
+      // (on a blank page of its own, clear of what a story before it left on the last one.)
+      freePage({ notebook, pages });
       const { page, errors, done } = await hqOnStore(browser);
       try {
         const paper = (await sight(page)).book,
           from = posts.length,
           had = new Set(taped().map(t => t.picture.file)),
           fresh = () => taped().filter(t => !had.has(t.picture.file));
-        // (WebKit's Playwright doesn't hand over a Blob's body: the store takes the picture's bytes from here then)
-        pasted = Buffer.from(
-          await page.evaluate(async () => {
-            const c = Object.assign(document.createElement('canvas'), { width: 240, height: 160 }),
-              g = c.getContext('2d');
-            g.fillStyle = '#1d9a5b';
-            g.fillRect(0, 0, 240, 160);
-            window.__png = await new Promise(res => c.toBlob(res, 'image/png'));
-            return [...new Uint8Array(await window.__png.arrayBuffer())];
-          }),
-        );
+        await page.evaluate(async () => {
+          const c = Object.assign(document.createElement('canvas'), { width: 240, height: 160 }),
+            g = c.getContext('2d');
+          g.fillStyle = '#1d9a5b';
+          g.fillRect(0, 0, 240, 160);
+          window.__png = await new Promise(res => c.toBlob(res, 'image/png'));
+        });
         await page.evaluate(() => {
           const dt = new DataTransfer();
           dt.items.add(new File([window.__png], 'shot.png', { type: 'image/png' }));
@@ -1656,35 +1645,20 @@ function coversPaper(shown, { book, strip }, when) {
 // The paper runs on to the screen's right edge, the spine past it
 const spineOff = (seen, screen) =>
   assert.ok(Math.abs(seen.book.right - screen.width) <= 1, `the paper ends at ${seen.book.right} of ${screen.width}`);
-// A finger's swipe right from [x, y] by dx, as Safari hands its pointer events over, held a moment before it's let go;
-// halfway: what to do with it held there
+// A finger's swipe right from [x, y] by dx (hands.mjs: the same in Chromium and WebKit), held a moment before it's let
+// go; halfway: what to do with it held there.
 async function fingerSwipe(page, [x, y], dx, halfway = async () => {}) {
-  const finger = (type, at) =>
-    page.evaluate(
-      ([type, x, y]) =>
-        (type === 'pointerdown' ? (document.elementFromPoint(x, y) ?? document.body) : window).dispatchEvent(
-          new PointerEvent(type, {
-            pointerId: 11,
-            pointerType: 'touch',
-            isPrimary: true,
-            clientX: x,
-            clientY: y,
-            buttons: type === 'pointerup' ? 0 : 1,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        ),
-      [type, at, y],
-    );
-  await finger('pointerdown', x);
-  for (let i = 1; i <= 16; i++) {
-    await finger('pointermove', x + (dx * i) / 16);
-    if (i === 8) await halfway();
-    await page.waitForTimeout(16);
-  }
+  const { touch } = await hands(page),
+    edge = () => page.evaluate(() => document.querySelector('#book .bk-edge').getBoundingClientRect().left),
+    from = await edge();
+  await touch.down([[x, y]]);
+  await touch.move([[x + dx / 2, y]], 8);
+  await halfway();
+  await touch.move([[x + dx, y]], 8);
+  // (the board's outer edge caught up with the finger, however slowly the engine draws the swing's frames)
+  await untilRead(async () => Math.abs((await edge()) - (from + dx)) <= 3, 'the board under the finger');
   await page.waitForTimeout(HOLD_MS);
-  await finger('pointerup', x + dx);
+  await touch.up();
 }
 // The lip pulled left, at its own height
 async function pullLip(page, dx) {

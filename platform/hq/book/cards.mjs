@@ -2,11 +2,13 @@
 // preferences (from the bar's dots menu) and the pen's colours (the pen in use pressed again) open whole on the iPad
 // mini upright, on its side and on a short screen (a finger's tap and the Pencil's), and on a desktop (a mouse), the
 // tools never scrolling; and what's picked in them takes; a tooltip goes with its card; and each left open while the
-// iPad turns on its side and its screen gets shorter. (the islands)
+// iPad turns on its side and its screen gets shorter. (the islands) The pen's colours are an opened scrap's, as its
+// tools are: a scrap is opened for them.
 import assert from 'node:assert/strict';
-import { onDesk } from './mouse.mjs';
+import { onDesk, paperBox } from './mouse.mjs';
 import { press } from './bar.mjs';
-import { MINI, PREFERENCES, UPRIGHT, middleOf } from './kit.mjs';
+import { MINI, PREFERENCES, UPRIGHT, middleOf, openScrap } from './kit.mjs';
+import { mouseOf } from './hands.mjs';
 import { mini } from './start.mjs';
 
 const SHORT = { width: MINI.width, height: 560 };
@@ -28,6 +30,7 @@ async function cards(browser, c) {
     await press(page, PREFERENCES);
     await whole(page, '.bk-prefs', 'the preferences on a desktop');
     await page.keyboard.press('Escape');
+    await scrapOpened(page, mouseOf(page).tap);
     await press(page, 'Pen');
     await whole(page, '.bk-palette', 'the colours on a desktop');
     await tipGoes(page);
@@ -41,11 +44,12 @@ async function onIPad(browser, c, viewport) {
     { page, errors, done } = pad,
     size = `${viewport.width}x${viewport.height}`;
   try {
-    const scrolls = await page.locator('#book .bk-strip').evaluate(el => el.scrollHeight > el.clientHeight + 1);
-    assert.equal(scrolls, false, `the tools never scroll (${size})`);
     await preferencesTapped(pad, size);
     await c.shot(`book-prefs-${size}`, page);
     await page.keyboard.press('Escape');
+    await scrapOpened(page, point => tapped(pad.touch, point));
+    const scrolls = await page.locator('#book .bk-strip').evaluate(el => el.scrollHeight > el.clientHeight + 1);
+    assert.equal(scrolls, false, `the tools never scroll (${size})`);
     await coloursTapped(pad, size);
     await c.shot(`book-colours-${size}`, page);
     assert.deepEqual(errors, []);
@@ -61,6 +65,7 @@ async function turned(browser, c) {
   ]) {
     const { page, touch, errors, done } = await mini(browser, c, { viewport: UPRIGHT });
     try {
+      if (name === 'Pen') await scrapOpened(page, point => tapped(touch, point));
       await tapOn(page, point => tapped(touch, point), name);
       await whole(page, selector, `${selector} upright`);
       for (const viewport of [MINI, SHORT]) {
@@ -128,6 +133,8 @@ async function tapped(touch, point) {
   await touch.down([point]);
   await touch.up();
 }
+// A scrap opened by tap(point) at the paper's middle (its card there, or a new one in the gap), the tools with it
+const scrapOpened = async (page, tap) => openScrap(page, { tap }, undefined, middleOf(await paperBox(page)));
 
 // The card open and nothing of it hidden: its corners (inside their rounding) and both ends of each of its lines and
 // buttons are the card's own on the screen, so neither a clipping box nor the screen's edge nor anything over it hides

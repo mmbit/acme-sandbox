@@ -27,9 +27,10 @@ import { unitFor } from './bookunitfor.js';
 
 // the page's px above its grid, where the view's title and day lie at rest
 export const TITLE_H = 72;
-// kept off the paper's left and right edges besides the masonry's margin (the close-swipe strip on the left takes
-// 28 px: book.css), in CSS px
-const INSET = 8;
+// kept off the paper's left and right edges besides the masonry's margin, in CSS px: with it, a phone's one column
+// clears the bookmarks folded at the screen's left (bookmarks.css) and the close-swipe strip there (book.css), as
+// far from either edge.
+const INSET = 12;
 // a new unit on a page not laid yet starts this far above its first stroke
 const PAD = 12;
 // A card on the grid (scrapunit.js CARD).
@@ -102,8 +103,16 @@ export function cardOf(page, id) {
   // (fitted: centred across the card)
   return { h: Math.ceil(h * k), k, x0: r.x0 - (UNIT_W - w * k) / 2 / k, y0: r.y0, plain: false };
 }
+// The card a picture w × h alone shows as (cardOf: a scrap holding only it, at its top-left).
+export const cardOfPicture = (w, h) =>
+  cardOf({ scraps: [{ g: 0, x: 0, y: 0, w, h, tilt: 0 }], groups: new Map([[0, { kind: 'scrap' }]]) }, 0);
 // A point in a scrap's own px where its card shows it on the grid's page (page px)
 export const onCard = (fit, o, x, y) => ({ x: o.x + (x - fit.x0) * fit.k, y: o.y + (y - fit.y0) * fit.k });
+// A unit's card fitted on the grid (cardOf), or null where it shows as drawn.
+export const fitted = (page, id) => {
+  const fit = page.fits?.get(id);
+  return fit && !fit.plain && page.origins?.has(id) ? fit : null;
+};
 
 // How tall a scrap's post-it words are, drawn in its body under its picture (page px; 0 for none)
 export const wordsOf = (page, id) => page.words?.get(id) ?? 0;

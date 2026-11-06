@@ -152,6 +152,16 @@ test('with no hold on, the call hears so, and no run gives a reason to be let th
   assert.match(text, /Waiting on the board's desk phone, each with the work that waits on it:\n- none/);
 });
 
+test("a board call's follow-up says no seat's pacing holds it; other work says nothing of pacing", async () => {
+  const followUp = await runOn('bolt', 'Follow up on your call with the board', null, Date.now());
+  h.storedCall(null, 'bolt', followUp.id);
+  const other = await runOn('bolt', 'Tidy the logs once more', null, Date.now());
+  const { text } = (await h.agent('now', (await h.voice('call-context', { agent: 'juno', lang: 'en' })).body.token))
+    .body;
+  assert.match(lineOf(text, followUp.id), /A board call's follow-up: urgent, so no seat's pacing holds it\./);
+  assert.doesNotMatch(lineOf(text, other.id), /pacing/);
+});
+
 test('a card a pause waits for names the threads that need the paused one, though none of their work waits on it', async () => {
   db.exec('delete from pauses; delete from pause_until; delete from requests; delete from request_waits');
   const decisions = await import('./decisions.ts');

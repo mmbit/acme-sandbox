@@ -328,6 +328,26 @@ body.bk-guest-working .passkey-prompt {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* (a call's room: the eye while the call's agent sees its screen, beside Pause.) */
+#book .bk-guest-eye {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px 0 8px;
+  color: var(--bk-ink, #2a2352);
+}
+#book .bk-guest-eye[hidden] {
+  display: none;
+}
+#book .bk-guest-eye svg {
+  width: 20px;
+  height: 20px;
+}
+/* (on a narrow page Show again keeps to its words: with its icon, 'Weer laten zien' ran past the key's two lines.) */
+@container bk-rail (max-width: 459px) {
+  #book .bk-bar .bk-guest-pause svg {
+    display: none;
+  }
+}
 /* (Undo a quiet link beside Marked done, not a filled button) */
 #book .bk-island .bk-btn.bk-guest-undo {
   background: transparent;
@@ -350,6 +370,19 @@ body.bk-guest-working .passkey-prompt {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
+  margin-right: auto;
   color: var(--ink);
   font-weight: 600;
+}
+/* (the room's eye and Pause on its bar while it's open, at its right end.) */
+.bk-guest-proto .bk-guest-eye {
+  display: inline-flex;
+  color: var(--ink);
+}
+.bk-guest-proto .bk-guest-eye[hidden] {
+  display: none;
+}
+.bk-guest-proto .bk-guest-eye svg {
+  width: 20px;
+  height: 20px;
 }

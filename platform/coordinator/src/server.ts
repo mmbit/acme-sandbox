@@ -216,6 +216,8 @@ import * as callaway from './callaway.ts'; // (the board away, a guest carrying 
 import * as callpointers from './ink/callpointers.ts'; // pointer ink on a live call's page.
 import * as voiceprints from './voiceprints.ts'; // the voices calls recognise.
 import * as watchalong from './watchalong.ts';
+import * as watchturns from './watchturns.ts';
+import * as callmarks from './ink/callmarks.ts';
 import * as callviews from './callviews.ts';
 import * as careNumbers from './care-numbers.ts';   // the lines marked "Care › Numbers"
 import * as careCredit from './care-credit.ts';
@@ -377,6 +379,18 @@ async function cyclePage(req: IncomingMessage, res: ServerResponse, path: string
 }
 // The board's routes, from HQ's pages: a value is the JSON, a number an error status, a Refused a refusal in words
 type BoardRoute = (req: IncomingMessage, res: ServerResponse, body: any) => unknown;
+// A route that reads the forecast (forecast.ts current), itself or through what it calls, waits for the first play after a
+// start (forecast.ts afterFirstPlay) rather than play the queue whole on HQ's thread for the asking.
+const afterFirstPlay = <A extends unknown[], R>(handle: (...args: A) => R | Promise<R>) => async (...args: A): Promise<R> => {
+  await forecast.afterFirstPlay();
+  return handle(...args);
+};
+// The routes of a table that read the forecast: the wait goes before a wrapper's own checks (afterScrub's), never inside
+// them, where its await would part the last check from the handler.
+function readingForecast(table: Record<string, unknown>, routes: string[]) {
+  for (const route of routes) if (!(route in table)) throw new Error(`No route ${route} to wait for the first play`);
+  return new Set(routes);
+}
 // Its sign-in, before it has a session (auth.ts)
 const signIn: Record<string, BoardRoute> = {
   'POST /api/enroll/options': enrollOptions,
@@ -447,6 +461,8 @@ const api: Record<string, BoardRoute> = {
   'POST /api/calls/guest': (q, s, b) => refusal(callguests.joinLink(b)),
   // a watch-along on the board's live call, by the call's key (watchalong.ts).
   'POST /api/watchalong/start': (q, s, b) => watchalong.startOnCall(Number(b.call), String(b.key ?? '')),
+  // (and on one of the board's other screens, its live call's too.)
+  'POST /api/watchalong/screens/start': (q, s, b) => refusal(watchalong.startOnScreen(call.liveNow(), b)),
   'POST /api/chat': (q, s, b) => refusal(chat.fromBoard(String(b.text ?? ''), b.pictures)),
   // HQ's Seats: the board's own changes to the seats, each carried out by the worker (seats.ts).
   'POST /api/seats/add': (q, s, b) => refusal(seats.addSeat(b ?? {})),
@@ -619,6 +635,8 @@ const api: Record<string, BoardRoute> = {
   'GET /api/artifacts': () => artifacts.list(),   // HQ-OS › Artifacts
   'GET /api/artifacts/earlier-versions': (q, s, b) => URL.canParse(String(b.url)) ? earlierVersions.listEarlierVersions(String(b.url)) : new Refused(400, 'url is not an address'),   // the viewer's earlier versions
 };
+// (outlooks, a thread's pause and the board's holds: noteholds.ts, boardheld.ts)
+api['GET /api/projects'] = afterFirstPlay(api['GET /api/projects']);
 
 // Workers (platform/worker) authenticate with a shared token and never see the board's session. Only the worker
 // process holds that token; agents get a token of their own per job (below).
@@ -1797,6 +1815,25 @@ const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET
   'POST /api/agent/expedite', // (no call-answer route: a call's agent answers with the rest.)
   'POST /api/agent/pad/add', // (the CEO's page tool: it adds, never rewrites.)
   ...MANAGE_ROUTES, ...CALL_READS]);
+// (the forecast before a change: moves.ts before; a task's place held: noteholds.ts placeRefusal, holdOf; a deliverable's
+// chain and needs held by the board: newthread.ts, boardheld.ts; a queued job's outlook: estimates.ts openOutlook)
+const AGENT_READS_FORECAST = readingForecast(agentApi, [
+  'POST /api/agent/job',
+  'GET /api/agent/plan',
+  'POST /api/agent/plan/thread',
+  'POST /api/agent/plan/need',
+  'GET /api/agent/projects',
+  'GET /api/agent/thread',
+  'GET /api/agent/outlooks',
+  'GET /api/agent/now',
+  'POST /api/agent/proposals/accept',
+  'POST /api/agent/cancel',
+  'GET /api/agent/summary',
+  'GET /api/agent/route',
+  'POST /api/agent/route',
+  'GET /api/agent/estimate',
+  'POST /api/agent/sizes',
+]);
 // The company's own agent routes (kits.ts): answered like the platform's, never on a call
 for (const [k, r] of kits.agentRoutes(new Set(Object.keys(agentApi)))) agentApi[k] = async (b, me) => refusal(await r(b, me));
 // The voice line (platform/voice), with its own token: a call's context (and its agent's call token), the transcript
@@ -1825,14 +1862,15 @@ const voice: Record<string, (b: any) => unknown> = {
   'GET /api/voice/picture': b => pictures.forVoice(Number(b.id), Number(b.call)),
   // (a walk-through: the screen's moments and a picture with a caller's turn, and the agent's screen tool, by the
   // watch-along's purpose and what it belongs to: watchalong.ts).
-  'POST /api/voice/screen-turn': b => watchalong.screenTurn(b), // (each purpose's briefing: watchalong.ts)
-  'POST /api/voice/screen': async b => refusal(await watchalong.screen(b)),
+  // (watchturns.ts)
+  'POST /api/voice/screen-turn': b => watchturns.screenTurn(b), // (each purpose's briefing: watchturns.ts)
+  'POST /api/voice/screen': async b => refusal(await watchturns.screen(b)),
   // (a board call's sketch tool: one of the book's pages by its number or label, bookreads.ts.).
   'POST /api/voice/sketch': async b => refusal(await bookreads.forVoice(b)),
   // (a note the board drew on the live call, as the Pencil lifted: bookcalls.ts.)
   'GET /api/voice/note': b => bookcalls.forVoice(Number(b.id), Number(b.call)),
-  // (a mark on the call's notes page, with who drew it: callguests.ts.)
-  'GET /api/voice/drawn': b => callguests.markForVoice(Number(b.id), Number(b.call)),
+  // (a mark on the call's notes page, with who drew it: ink/callmarks.ts.)
+  'GET /api/voice/drawn': b => callmarks.markForVoice(Number(b.id), Number(b.call)),
   // (the agent's turn on a pointer done: its ink goes. ink/callpointers.ts.)
   'POST /api/voice/pointed': b => refusal(callpointers.clear(b)),
   // (a call's notes page: the agent's notes, one per change, and its title. callnotes.ts)
@@ -1844,7 +1882,7 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/change': b => refusal(callpage.change(b)),
   // (a drawing of its own, as a picture in the company's look: drawing.ts.)
   'POST /api/voice/drawing': async b => refusal(await callpage.drawing(b)),
-  // (a prototype of its own, shown on both iPads: callprototypes.ts.)
+  // (a prototype of its own, shown on their screens: callprototypes.ts.)
   'POST /api/voice/prototype': async b => refusal(await callprototypes.fromVoice(b)),
   // (its versions to pick from)
   'POST /api/voice/try': b => refusal(callpage.versions(b)),
@@ -1854,6 +1892,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/voiceprints-heard': b => refusal(voiceprints.heardVoiceprints(b)),
   'POST /api/voice/voiceprint-forget': b => voiceprints.forgetVoiceprint(b.name),
 };
+// (what's going on and the goals, in a call's context: call.ts companyNow)
+const VOICE_READS_FORECAST = readingForecast(voice, ['GET /api/voice/call-context', 'POST /api/voice/call-context']);
 const voiceAuthed = (h?: string) => !!VOICE_TOKEN && timingSafeEqual(digest(h ?? ''), digest(`Bearer ${VOICE_TOKEN}`));
 const workerAuthed = (h?: string) => !!WORKER_TOKEN && timingSafeEqual(digest(h ?? ''), digest(`Bearer ${WORKER_TOKEN}`));
 const bearer = (h?: string) => h?.startsWith('Bearer ') ? h.slice(7) : '';
@@ -1932,6 +1972,9 @@ const afterScrub = <A extends unknown[], R>(handle: (...args: A) => R | Promise<
   while (scrubbing()) await latency.exclude(scrubbed());
   return handle(...args);
 };
+// (a forecast read's wait for the first play comes before the scrub's check)
+const readAfterScrub = <A extends unknown[], R>(readsForecast: boolean, handle: (...args: A) => R | Promise<R>) =>
+  readsForecast ? afterFirstPlay(afterScrub(handle)) : afterScrub(handle);
 // A table's rows, each handler inside its wrapper
 type Wrap<H> = (key: string, handle: H) => RouteHandler;
 const wrapped = <H>(table: Record<string, H>, wrap: Wrap<H>) => Object.fromEntries(Object.entries(table).map(([key, handle]) => [key, wrap(key, handle)]));
@@ -1942,7 +1985,7 @@ const forWorker: Wrap<(b: any) => unknown> = (key, handle) => request => {
     key !== 'POST /api/worker/heartbeat');
 };
 const forVoice: Wrap<(b: any) => unknown> = (key, handle) => request =>
-  voiceAuthed(request.req.headers.authorization) ? answered(request, afterScrub(handle), JSON_MAXES[key]) : send(request.res, 401, { error: 'voice token' });
+  voiceAuthed(request.req.headers.authorization) ? answered(request, readAfterScrub(VOICE_READS_FORECAST.has(key), handle), JSON_MAXES[key]) : send(request.res, 401, { error: 'voice token' });
 const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => {
   const me = agentOf(bearer(request.req.headers.authorization));
   if (!me) return send(request.res, 401, { error: 'agent token' });
@@ -1951,7 +1994,7 @@ const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => 
   // (a guest is never the board: while the board has left its call to one, the call's tools reach nothing of HQ.
   if (me.call && callaway.boardAway(me.callId)) return send(request.res, 403, { error: 'the board has left this call to its guest, who isn’t the board: this stays off until the board comes back. Note it for your follow-up instead.' });
   if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
-  return answered(request, afterScrub(b => handle(b, me)), JSON_MAXES[key], () => me.id || undefined);
+  return answered(request, readAfterScrub(AGENT_READS_FORECAST.has(key), b => handle(b, me)), JSON_MAXES[key], () => me.id || undefined);
 };
 // A job's token, a live call's (call.ts) or a call out's (callline.ts)
 function agentOf(token: string): Me | undefined {
@@ -2335,7 +2378,10 @@ const stallCheck = () => { try { stallSweep(); } catch (err) { console.error('Co
 const crashSweep = () => { try { crashCheck(); } catch (err) { console.error('Could not check the services for crashes:', err); } };
 const followThroughCheck = () => {
   try { pausewake.sweep(); } catch (err) { console.error('Could not sweep the pauses (decided, or their owner to wake):', err); }
-  try { followthrough.followThroughSweep(); } catch (err) { console.error("Could not run the CEO's follow-through check:", err); }
+  // (its summary reads the forecast: after the first play since the start.)
+  void forecast.firstPlay().then(() => {
+    try { followthrough.followThroughSweep(); } catch (err) { console.error("Could not run the CEO's follow-through check:", err); }
+  });
 };
 const overseerSweep = () => { try { overseer.sweep(); } catch (err) { console.error("Could not sweep the Overseer's notes:", err); } };
 const reviveSweep = () => review.reviveRounds().catch(err => console.error('Could not look for lost reviews:', err));
@@ -2403,9 +2449,9 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   setInterval(shareSweep, 60_000); // an outside reviewer's link past its date ends (feedback.ts endDue)
   setInterval(laterSweep, 60_000); // a card for later that shows now rings, if it's urgent (later.ts), and the tips time brings come (tips.ts)
   // new work gets its estimate (predictions.ts), and the queue is played (forecast.ts, again a moment after every change),
-  // first a moment after the start: until then a request plays it, and hq job twice; its moved predictions written each
-  // minute (predictionlog.ts)
-  forecast.start(); forecast.playSoon(); ordering.start(); setInterval(forecastSweep, 60_000); setInterval(predictionWrite, 60_000);
+  // first once the start's reads ahead are in: until then a request plays it, and hq job twice; its moved predictions
+  // written each minute (predictionlog.ts).
+  forecast.start(); ordering.start(); setInterval(forecastSweep, 60_000); setInterval(predictionWrite, 60_000);
   commitLines.refresh(); setInterval(commitLines.refresh, 60_000); // main's new commits onto the days' lines changed (commitlines.ts)
   setInterval(hireSweep, 60_000); // work queued for a colleague being hired starts once org.yaml has them
   setInterval(stallCheck, 60_000); // an engine with a ready seat and waiting work that starts nothing: HQ's feed and the CEO's summary (stalls.ts)

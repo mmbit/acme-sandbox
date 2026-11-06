@@ -83,6 +83,14 @@ export const bookAtRest = (page, mode) =>
     mode,
   );
 
+// Nothing on the page moving: every animation and transition that ends has ended (the book's swing or slide, HQ's page
+// fading into its room, the bookmarks folding in), the endless ones (a call's face breathing) aside.
+export const nothingMoving = page =>
+  page.waitForFunction(
+    () =>
+      !document.getAnimations().some(a => a.playState === 'running' && isFinite(a.effect?.getComputedTiming().endTime)),
+  );
+
 // Open or fold the Notebook and wait until HQ is visible again.
 export async function bookOpen(page, open, mouse = false) {
   const closed = await page.evaluate(() => ['folded', 'shut'].includes(document.documentElement.dataset.book));

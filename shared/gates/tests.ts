@@ -30,7 +30,7 @@ import { dirname, join, relative } from 'node:path';
 import { compareBase } from './comparison.ts';
 import { HqUnreachable, NO_ROOM_EXIT, NoRoom, onLent, UNREACHED_EXIT } from './lent.ts';
 import { areaOf, git, gitFiles, plural, TOOLS_HOME, workingTree } from './repo.ts';
-import { helperBundle } from './bundle.ts';
+import { browsersOf, helperBundle } from './bundle.ts';
 import { changeAt, noTests, SUITES, type Run } from './suites.ts';
 import type { FileEnd } from './timings.ts';
 
@@ -57,13 +57,9 @@ const stopAt = process.env.LENT_UNTIL ? Number(process.env.LENT_UNTIL) * 1000 - 
 const OUTCOMES_FILE = 'tests-outcomes.json';
 const COMPARISON_INPUT = 'base-comparison.json';
 const COMPARISON_OUTPUT = 'base-outcomes.json';
-// Browser test areas include the HQ-load entry points that import the coordinator's check.
-const BROWSER_AREAS = new Set(['platform/coordinator', 'platform/hq', 'shared/review', 'shared/browser']);
-const bundleFor = (runs: Run[]) =>
-  helperBundle({
-    tools: runs.some(run => run.kind !== 'node'),
-    browsers: runs.some(run => BROWSER_AREAS.has(run.area)) ? 'shell' : 'none',
-  });
+// The browsers its tests import, as they are at `at` when that's given (a base comparison runs the base's tests).
+const bundleFor = (runs: Run[], at?: string) =>
+  helperBundle({ tools: runs.some(run => run.kind !== 'node'), browsers: browsersOf(root, runs, at) });
 
 type Failure = { key: string; file: string; text: string };
 type FailureTargets = Map<Run, { failures: Pick<Failure, 'key' | 'file'>[] }>;
@@ -401,7 +397,7 @@ async function failingOnHelper(
     args: ['--comparison', `../${COMPARISON_INPUT}`, '--outcomes', `../${COMPARISON_OUTPUT}`],
     minutes: HELPER_MINUTES,
     bring: [COMPARISON_OUTPUT],
-    ...bundleFor(failing),
+    ...bundleFor(failing, base),
     inputs: { [COMPARISON_INPUT]: request },
     // (it can only run on the push's helper, so it waits while that helper is busy with other pushes' tests, as they do)
     waitWhilePresent: true,

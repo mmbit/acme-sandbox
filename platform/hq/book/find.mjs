@@ -108,8 +108,8 @@ function seeded() {
   };
 }
 
-// On a desktop, in the overview: a word typed finds as it's written; the overview closed and opened again, the words
-// and their finds still there; Esc wipes the words.
+// On a desktop, in the overview: a word typed finds as it's written; the overview left by a find (it has no bar of its
+// own: a page opens by a tap) and opened again, the words and their finds still there; Esc wipes the words.
 export async function keptStory(browser, c) {
   const { page, errors, done } = await searchable(browser, c, c.desktop, { hasTouch: false });
   try {
@@ -119,7 +119,10 @@ export async function keptStory(browser, c) {
     await field.click();
     await page.keyboard.type('tea');
     await found(page, 'tear line');
-    await overview.click();
+    await page
+      .getByRole('search')
+      .getByRole('button', { name: /tear line/ })
+      .click();
     await until(async () => !(await field.isVisible()), 'the field gone with the overview');
     await overview.click();
     assert.equal(await field.inputValue(), 'tea', 'the words written last still there');

@@ -169,7 +169,7 @@ async function scraps(p, c, name, { sat }) {
   const { band } = panned;
   assert.ok(panned.over, 'scrolled: the band frosted over what passes under the title');
   assert.ok(band.top <= 0.5 && band.left <= 0.5, `the band from the screen's top-left: ${JSON.stringify(band)}`);
-  assert.ok(band.right >= band.tools, `the band across the paper, under the tools too: ${JSON.stringify(band)}`);
+  assert.ok(band.right >= band.paper - 1, `the band across the paper's width: ${JSON.stringify(band)}`);
   await p.waitForTimeout(250); // (the band's fade in done)
   await c.shot(`viewtitle-${name}-panned`, p);
   await dateHandedOver(p, c, name, middle);
@@ -300,11 +300,11 @@ function headSeen() {
     desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
     under = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   const head = document.querySelector('#book .bk-view-head'),
-    band = head.getBoundingClientRect(),
-    strip = document.querySelector('#book .bk-strip').getBoundingClientRect();
+    band = head.getBoundingClientRect();
   return {
-    // (the band: from the screen's top across the paper, under the tools too, frosted while something's under it)
-    band: { top: band.top - desk.top, left: band.left - desk.left, right: band.right, tools: strip.left },
+    // (the band: from the screen's top across the paper's width, frosted while something's under it. The tools an
+    // opened scrap's)
+    band: { top: band.top - desk.top, left: band.left - desk.left, right: band.right, paper: desk.right },
     over: head.hasAttribute('data-over'),
     title: { top: r.top, left: r.left, width: r.width, height: r.height },
     size: getComputedStyle(title).fontSize,

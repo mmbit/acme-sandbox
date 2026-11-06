@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { playLine } from './call.mjs';
 import { inputs } from './hands.mjs';
-import { MINI, UPRIGHT, bookOpen } from './kit.mjs';
+import { MINI, UPRIGHT, bookOpen, nothingMoving } from './kit.mjs';
 import { openSmallCall, minimiseCall } from './callview.mjs';
 import { watchedPage } from './start.mjs';
 
@@ -64,7 +64,9 @@ async function resizedKeys(page, hand, c, viewport) {
       [width + edge.width / 2, viewport.height * 0.7],
     ]);
     if (width >= 560) await openSmallCall(page);
+    // (the book's slide and HQ's page fading into its new room over.)
     await page.waitForFunction(() => getComputedStyle(document.body).visibility !== 'hidden');
+    await nothingMoving(page);
     await readableKeys(page, c, `${viewport.width}-resized-${width}`);
   }
   await minimiseCall(page);

@@ -1,7 +1,7 @@
 // node platform/hq/book-check.mjs --stories 'the small call stays where' [--webkit] [--shots dir]
 import assert from 'node:assert/strict';
 import { playLine } from './call.mjs';
-import { MINI, UPRIGHT, middleOf, bookOpen } from './kit.mjs';
+import { MINI, UPRIGHT, middleOf, bookOpen, nothingMoving } from './kit.mjs';
 import { inputs } from './hands.mjs';
 import { minimiseCall } from './callview.mjs';
 import { watchedPage } from './start.mjs';
@@ -139,9 +139,8 @@ async function tappedOpen(page, hand, fitted) {
 }
 
 async function dropAt(page, hand, type, [x, y]) {
-  const was = await box(page),
-    face = middleOf(await page.locator('.cb-face').boundingBox());
-  const target = [face[0] + x - was.x, face[1] + y - was.y];
+  const { was, face } = await atRest(page),
+    target = [face[0] + x - was.x, face[1] + y - was.y];
   await hand.stroke(type, [face, target]);
   await page.waitForTimeout(1200);
   samePlace(await box(page), { x, y }, `${type}: release stays at the requested point`);
@@ -149,6 +148,17 @@ async function dropAt(page, hand, type, [x, y]) {
 }
 
 const box = page => page.locator('.callbubble').boundingBox();
+// The small call and its face where they rest, read together: what it keeps clear of done moving (the book's swing,
+// its bookmarks folding in, a tool's card), and the frame it settles in after that (callbubble.js refit) gone by.
+async function atRest(page) {
+  await nothingMoving(page);
+  return page.evaluate(async () => {
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const was = document.querySelector('.callbubble').getBoundingClientRect(),
+      face = document.querySelector('.callbubble .cb-face').getBoundingClientRect();
+    return { was: { x: was.x, y: was.y }, face: [face.x + face.width / 2, face.y + face.height / 2] };
+  });
+}
 // The coordinates are the user's input, not a prescribed layout. A drop must not snap or throw elsewhere.
 function samePlace(actual, expected, why) {
   assert.ok(

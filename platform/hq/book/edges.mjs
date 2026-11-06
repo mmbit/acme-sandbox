@@ -95,19 +95,15 @@ function cornerShown() {
   const r = shown.getBoundingClientRect();
   return { left: r.left, top: r.top, paper: desk.getBoundingClientRect().left };
 }
-// Every 8 px of the book's paper that isn't the page or a control: an island, the Undo pill, a bookmark, the pull tab,
-// the cover's edge, the open asks' counter (a few, for the message).
+// Every 8 px of the book's paper that isn't the page or a control: an island, a bookmark, the pull tab, the cover's
+// edge, the open asks' counter (a few, for the message). (no Undo pill)
 function notPage() {
   const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
     missed = [];
   for (let y = 0; y < paper.bottom && missed.length < 6; y += 8)
     for (let x = Math.max(0, paper.left); x < Math.min(innerWidth, paper.right) && missed.length < 6; x += 8) {
       const el = document.elementFromPoint(x, y);
-      if (
-        !el?.closest(
-          '#book :is(.bk-desk, .bk-strip, .bk-bar, .bk-undo-pill, .bk-marks, .bk-lip, .bk-edge, .bk-for-you-count)',
-        )
-      )
+      if (!el?.closest('#book :is(.bk-desk, .bk-strip, .bk-bar, .bk-marks, .bk-lip, .bk-edge, .bk-for-you-count)'))
         missed.push(`${x},${y}: ${el?.className || el?.tagName}`);
     }
   return missed;

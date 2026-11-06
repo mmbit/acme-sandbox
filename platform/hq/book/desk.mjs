@@ -177,7 +177,7 @@ export async function inkPixels(page) {
     paper = await paperBox(page),
     k = w / paper.width,
     // (the tools' and the bar's boxes in the shot's px, with a few px round them for their shadows, and the page's
-    // title on the view, never ink.)
+    // title on the view, never ink; no Undo pill)
     strip = await page.evaluate(() =>
       [...document.querySelectorAll('#book .bk-strip, #book .bk-bar, #book .bk-view-head')]
         .filter(el => el.offsetParent)
@@ -201,7 +201,7 @@ export async function inkPixels(page) {
 }
 // The patches of the paper (its left edge, its foot's left, its top) whose colour is far from the
 // paper's: a table, an edge, a shadow. [] when it's all paper.
-export async function notPaper(page) {
+async function notPaper(page) {
   const { data, w, h } = await onPaper(page),
     far = [];
   for (const [px, py] of [

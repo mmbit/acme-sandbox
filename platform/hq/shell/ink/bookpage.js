@@ -13,7 +13,7 @@ import { meets, union } from './bookselectmath.js';
 import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
-import { fixed, layUnits, reachOn } from './bookunits.js';
+import { fitted, fixed, layUnits, reachOn } from './bookunits.js';
 import { drawCards } from './bookunitcards.js';
 
 // zoomed in, a unit's canvas holds what's this share of the view's size beyond each of its sides too, so a pan paints
@@ -182,11 +182,6 @@ const reachOf = (page, p, scraps, fit) =>
 // A canvas drawing in page px turned to draw a fitted card's own px where the card shows them
 const onFit = (g, fit, o) =>
   g.transform(fit.k, 0, 0, fit.k, o.x - (o.x + fit.x0) * fit.k, o.y - (o.y + fit.y0) * fit.k);
-// A unit's card fitted on the grid (bookunits.js cardOf), or null where it shows as drawn
-const fitted = (page, id) => {
-  const fit = page.fits?.get(id);
-  return fit && !fit.plain && page.origins?.has(id) ? fit : null;
-};
 // A unit's canvas made, under the canvases already there: the units painted in their order lie each over the ones
 // after it, as the page picture stacks them (bookrender.ts inkSvg)
 function made(st, id) {
@@ -301,9 +296,8 @@ function photos(st) {
     // (an agent's drawing: its lines straight on the post-it.)
     photo.toggleAttribute('data-drawing', !!s.drawing);
     // (on a fitted card, as small as the rest of it.)
-    const fit = fitted(page, s.g),
-      k = fit?.k ?? 1,
-      at = fit ? fitPhoto(photoOf(s), fit, page.origins.get(s.g)) : photoOf(s),
+    const k = fitted(page, s.g)?.k ?? 1,
+      at = photoShown(page, s),
       tape = tapeOf(s);
     Object.assign(photo.style, {
       ...{ left: `${at.x}px`, top: `${at.y}px`, width: `${at.w}px`, height: `${at.h}px`, rotate: `${s.tilt}deg` },
@@ -313,6 +307,12 @@ function photos(st) {
     layer.append(photo);
   }
   for (const gone of had.values()) gone.remove();
+}
+// A scrap's photo's box ({ x, y, w, h }, page px) as the page draws it: inset by its margin, and on a fitted card as
+// small as the rest of it (where a lifted mark lands on it: booklanding.js).
+export function photoShown(page, s) {
+  const fit = fitted(page, s.g);
+  return fit ? fitPhoto(photoOf(s), fit, page.origins.get(s.g)) : photoOf(s);
 }
 // A photo's box ({ x, y, w, h }, page px) where its fitted card shows it
 const fitPhoto = (at, fit, o) => ({

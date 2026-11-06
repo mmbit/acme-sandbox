@@ -8,15 +8,15 @@
 // it away, back on the dots. Moved down the spine it's the page's own (the Pencil draws there); pressed under the
 // status bar's blur or on the tools, nothing tears (on an iPad mini upright). With a call on, the page carried onto the
 // call's window, a picture file dropped there, and a paste once the board pressed in it all go to Juno, the window lit
-// as they come, and the book takes none; a picture taped on the page, picked with Select and carried onto the window
-// or its bubble, goes too, and stays taped where it was. Things deleted crumple over the paper, already gone
-// underneath: the store has them gone at once, a press goes through the crumple, and it falls straight down past the
-// screen's foot within two seconds.
+// as they come, and the book takes none; a picture taped on a scrap, picked with Select on the scrap opened and carried
+// onto the window or its bubble, goes too, and stays taped where it was. Things deleted crumple over the paper,
+// already gone underneath: the store has them gone at once, a press goes through the crumple, and it falls straight
+// down past the screen's foot within two seconds.
 // (the gestures and the presses that aren't a tear: tearing.mjs; torn where a hand finds it: tearhand.mjs; a long
 // page's: sharelong.mjs.)
 import assert from 'node:assert/strict';
 import { playLine } from './call.mjs';
-import { freePage, line, paperBox, pick, savedWhere, tool } from './mouse.mjs';
+import { freePage, inScrap, line, pick, savedWhere, tool } from './mouse.mjs';
 import { DESKTOP, QUIET_MS, crumpled, fellAway, until } from './kit.mjs';
 import { dragTo, notATearStory, spineOf, targetsShown, tearOffMenu } from './tearing.mjs';
 import { tearHandStories } from './tearhand.mjs';
@@ -168,8 +168,9 @@ async function ontoTheCall(c, s) {
   await page.waitForTimeout(800);
   assert.equal(taped, 0, 'the book took none of them');
 }
-// A picture taped on the page, picked with Select and carried onto the call's window, then onto its bubble: each time
-// it goes to Juno, the place lit under it while it's held there, and lands back where it was taped
+// A picture taped on the page's scrap, picked with Select on the scrap opened (the grid takes no tool) and carried onto
+// the call's window, then onto its bubble: each time it goes to Juno, the place lit under it while it's held there, and
+// lands back where it was taped.
 async function tapedOntoTheCall(c, s, free) {
   const { page } = s;
   // (the call turned the book to its notes page: back to the picture's by its chapter's bookmark)
@@ -179,9 +180,9 @@ async function tapedOntoTheCall(c, s, free) {
       !document.querySelector('#book .bk-turn-picture') &&
       document.querySelector('#book .bk-view-head .bk-page-title')?.textContent.includes('Shop: the price'),
   );
-  const box = await paperBox(page);
+  const sheet = await inScrap(page, c, free);
   await pick(page, 'Select');
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.move(sheet.x + sheet.width / 2, sheet.y + sheet.height / 2);
   await page.keyboard.press('Control+a');
   const frame = page.locator('#book .bk-sel');
   await frame.waitFor({ timeout: 3000 });
@@ -238,12 +239,13 @@ async function crumpleStory(browser, c) {
   const s = await opened(browser, c);
   const { page } = s;
   try {
-    const box = await paperBox(page);
+    // (drawn on a scrap opened: the grid takes no ink.)
+    const box = await inScrap(page, c, free);
     await tool(page, 'Pen').click();
-    await line(page, box.x + 120, box.y + 200, 260);
+    await line(page, box.x + 60, box.y + 120, 260);
     await savedWhere(c, free.id, p => p.ink.length === 1);
     await tool(page, 'Select').click();
-    await page.mouse.move(box.x + 300, box.y + 400);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.keyboard.press('Control+a');
     const fall = crumpled(page);
     fall.catch(() => {}); // (a failure below shows first; awaiting it later still throws)

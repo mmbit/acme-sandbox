@@ -1,10 +1,11 @@
 // book-check.mjs's story of the board's controls on an iPad mini in WebKit, the iPad's engine (--stories "in WebKit"
-// --webkit): the Pencil and a finger as Safari hands them over (pointer events on what's under them), the strip slid
-// along to a tool, the Pencil writing and a finger after it drawing nothing (it pans, by default), the Pencil held still
-// only ink, and its tap on the rail's mic, then a spot held, a voice note whose words write themselves there. Chromium's trusted touch and pen: strip.mjs.
+// --webkit): the Pencil and a finger as Safari hands them over (pointer events on what's under them), the Pencil's tap
+// on the grid opening a new scrap, its strip slid along to a tool, on it the Pencil writing and a finger after it
+// drawing nothing (it pans, by default), the Pencil held still only ink, and its tap on the rail's mic, then a spot
+// held, a voice note whose words write themselves there. Chromium's trusted touch and pen: strip.mjs.
 import assert from 'node:assert/strict';
-import { freePage, paperBox, savedWhere } from './mouse.mjs';
-import { dictated, pressed, stillFor, stored } from './strip.mjs';
+import { freePage, inScrap, savedWhere } from './mouse.mjs';
+import { afterSlide, dictated, pressed, stillFor, stored } from './strip.mjs';
 import { QUIET_MS, middleOf, until } from './kit.mjs';
 import { bookOnTouch } from './start.mjs';
 
@@ -20,9 +21,7 @@ async function webkit(browser, c) {
   const free = freePage(c);
   const { context, page, errors } = await bookOnTouch(browser, c);
   try {
-    const paper = await paperBox(page),
-      mid = middleOf(paper);
-    await slidAndDrawn(page, c, free, mid);
+    const mid = await slidAndDrawn(page, c, free);
     await voice(page, c, free, mid);
     // (a made-up pointer can't be captured, as a real one can: the other WebKit stories leave it out too, and so in
     // Chromium, where the whole check runs it as well.)
@@ -35,9 +34,17 @@ async function webkit(browser, c) {
   }
 }
 
-// The Pencil held on Select slides down the strip to the eraser, its name showing, and lifts there; then the Pencil
-// writes, and a finger after it pans and draws nothing (the preferences' default)
-async function slidAndDrawn(page, c, free, mid) {
+// The Pencil's tap on the empty grid opens a new scrap; on it the Pencil held on Select slides down the strip to the
+// eraser, its name showing, and lifts there (the tools an opened scrap's); then
+// the Pencil writes on it, and a finger after it pans and draws nothing (the preferences' default). The opened scrap's
+// middle on the screen
+async function slidAndDrawn(page, c, free) {
+  const mid = middleOf(
+    await inScrap(page, c, free, async at => {
+      await safari(page, 'pen', 'pointerdown', at);
+      await safari(page, 'pen', 'pointerup', at);
+    }),
+  );
   const b = name => page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox();
   const [select, eraser] = [middleOf(await b('Select')), middleOf(await b('Eraser'))];
   await safari(page, 'pen', 'pointerdown', select);
@@ -46,13 +53,18 @@ async function slidAndDrawn(page, c, free, mid) {
   await until(async () => (await page.locator('#bk-tip').textContent()).startsWith('Eraser'), "the eraser's name");
   await safari(page, 'pen', 'pointerup', eraser);
   await until(async () => (await pressed(page)) === 'Eraser', 'the eraser picked by the slide');
+  await afterSlide(page);
   await page.locator('#book .bk-strip').getByRole('button', { name: 'Pen', exact: true }).tap();
+  await until(async () => (await pressed(page)) === 'Pen', 'the pen picked');
   // the Pencil writes, and a finger doesn't
   await safariLine(page, 'pen', [mid[0] - 120, mid[1] - 80], [mid[0] + 60, mid[1] - 80]);
   await savedWhere(c, free.id, p => p.ink.length === 1);
-  await safariLine(page, 'touch', [mid[0] - 120, mid[1] - 20], [mid[0] + 60, mid[1] - 20]);
+  // (down the sheet: the scrap's left edge stays put, and the words held for below land across from their spot, inside
+  // the scrap's width: booktexts.js spotFor)
+  await safariLine(page, 'touch', [mid[0] + 20, mid[1] - 120], [mid[0] + 20, mid[1] + 60]);
   await page.waitForTimeout(QUIET_MS);
   assert.equal(stored(c, free).ink.length, 1, 'the finger drew nothing');
+  return mid;
 }
 // The Pencil held still: a dot, nothing listening or opening; then a line written, the Pencil's tap on the mic and a
 // spot held under the line: its words there

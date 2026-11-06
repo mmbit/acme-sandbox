@@ -1,11 +1,16 @@
 // node --test src/callguests.test.ts (the harness: the real server, the board's session, a guest's door and the voice
 // line). The board's guests on its live call: the call's QR code and its join page, each scan's pen on the call's page
 // alone, and each mark heard by the call's agent with who drew it (callguests.ts).
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import sharp from 'sharp';
 import { harness } from './harness.ts';
+import { playwright } from '../../../shared/browser/browser.mjs';
+
+// (a screen's pictures are taken in the coordinator's Chromium: the push checks' is Playwright's)
+process.env.CHROMIUM_PATH ??= process.env.BROWSER_HEADLESS_SHELL ?? playwright().chromium.executablePath();
 
 // (the privacy page a guest's call bar links: brand.yaml callsOut.privacy)
 const PRIVACY = 'https://shop.example.test/privacy-nl.html#partner-calls';
@@ -56,8 +61,8 @@ function device() {
   };
   // (the code's link, as the scan opens it on this server)
   const path = (link: string) => new URL(link).pathname;
-  const join = async (link: string, name: string) => {
-    const joined = await as(path(link), undefined, `name=${encodeURIComponent(name)}`);
+  const join = async (link: string, name: string, screen = 'no') => {
+    const joined = await as(path(link), undefined, `name=${encodeURIComponent(name)}&screen=${screen}`);
     assert.equal(joined.status, 303, JSON.stringify(joined.body));
     return Number(new URL(joined.location!, ORIGIN).searchParams.get('notebook'));
   };
@@ -190,13 +195,19 @@ test('each scan is someone new for this call: never an invited guest of that nam
   await second.join(link, 'esmee');
   // (the board's iPad is a pen like any other, never the board)
   await board.join(link, 'Board');
+  // (nor the board's screens, as the screen tool takes them: watchturns.ts)
+  const screens = [device(), device(), device()];
+  await screens[0].join(link, "Board's screen");
+  await screens[1].join(link, "The board's screen");
+  await screens[2].join(link, "the board's screen 2");
   const marks = [] as { by: string; id: number }[];
-  for (const d of [first, second, board]) marks.push(said(await d.as(`${api}/groups/create`, { page, ink: [stroke] })));
-  assert.equal(new Set(marks.map(m => m.by)).size, 3);
+  for (const d of [first, second, board, ...screens])
+    marks.push(said(await d.as(`${api}/groups/create`, { page, ink: [stroke] })));
+  assert.equal(new Set(marks.map(m => m.by)).size, 6);
   assert.ok(marks.every(m => /^guest:\d+$/.test(m.by)));
   const who = [] as string[];
   for (const m of marks) who.push(said(await h.voice(`drawn?id=${m.id}&call=${call}`)).who);
-  assert.deepEqual(who, ['Esmee', 'esmee 2', 'Board 2']);
+  assert.deepEqual(who, ['Esmee', 'esmee 2', 'Board 2', 'Guest', 'Guest 2', "the board's screen 2 2"]);
   // The invited Esmee's notebooks aren't theirs: the shelf is empty, the rail of people with a book has her alone
   assert.deepEqual(said(await first.as(`${api}/shelf`)).books, []);
   const rail = said(await h.board('/api/book/people')) as { who: string; name: string }[];
@@ -271,3 +282,285 @@ test('the board leaves its call to a guest: their device gets a one-time ticket,
   assert.equal((await h.voice('guest-ticket', { ticket: over })).status, 404);
   assert.equal((await esmee.as('/guest/scan/voice', {})).status, 409);
 });
+
+// ---- every screen on the call: a guest's room records itself for the call's agent, and the agent sees it
+// with each turn under their name, beside the board's, with what their pen points at. Pictures need Chromium.
+const WALK = JSON.parse(
+  gunzipSync(readFileSync(new URL('../../../shared/watchalong/walk.test.json.gz', import.meta.url))).toString('utf8'),
+) as { type: number; timestamp: number; data: Record<string, unknown> }[][];
+const chromium = !!process.env.CHROMIUM_PATH && existsSync(process.env.CHROMIUM_PATH);
+const JPEG = (data: string) => Buffer.from(data, 'base64').subarray(0, 2).toString('hex') === 'ffd8';
+// The walk's first batch as a page sends it now, and a pen's circle around a button on it
+const walked = () => {
+  const shift = Date.now() - WALK[0].at(-1)!.timestamp;
+  return WALK[0].map(event => ({ ...event, timestamp: event.timestamp + shift }));
+};
+const circled = (label: string) => ({
+  type: 5,
+  timestamp: Date.now(),
+  data: {
+    tag: 'ink',
+    payload: {
+      phase: 'end',
+      stroke: {
+        points: [
+          [100, 50],
+          [150, 100],
+          [100, 150],
+          [50, 100],
+          [98, 52],
+        ],
+      },
+      under: [{ label, role: 'button' }],
+    },
+  },
+});
+const posted = async (events: string, batch: unknown[]) =>
+  (
+    await fetch(new URL(events, h.base), {
+      method: 'POST',
+      headers: { origin: ORIGIN },
+      body: JSON.stringify({ events: batch }),
+    })
+  ).status;
+
+test(
+  'the agent sees every screen on the call, the board’s other one by its number, a guest’s with their name and what their pen points at, and nothing of those is kept',
+  { timeout: 120_000 },
+  async () => {
+    // (HQ's other screens hear the call go live, and show themselves on it: boardscreen.js)
+    const live: unknown[] = [];
+    const deaf = onPublish(e => void (e.type === 'book' && e.text === 'call' && live.push(e.call)));
+    const ctx = await h.liveCall('juno');
+    deaf();
+    const { call } = ctx;
+    assert.deepEqual(live, [call]);
+    said(await h.board('/api/notebooks/call', { call }));
+    const { link } = said(await h.board('/api/calls/guest', { call, lang: 'en' }));
+    const turn = (body: Record<string, unknown> = {}) =>
+      h.voice('screen-turn', { purpose: 'call', ref: String(call), after: 0, seen: 0, briefed: false, ...body });
+    assert.deepEqual((await turn()).body, { on: false });
+
+    // Her join page says what the agent sees if she shows her screen, and asks: show it, or join without, alike (Enter in
+    // her name chooses neither)
+    const esmee = device();
+    const door = await esmee.as(esmee.path(link));
+    assert.match(
+      door.body,
+      /If you show your screen, Juno sees this call’s page and the prototypes you open on it live, never another tab or app or what you type\. The transcript notes what you open, where you scroll and tap, and that you type, never what\. Nothing else of it is kept\. Pause stops it at any time\./,
+    );
+    assert.match(
+      door.body,
+      /<button type="submit" hidden disabled aria-hidden="true"><\/button><button type="submit" name="screen" value="show">Join and show my screen<\/button><button type="submit" name="screen" value="no">Join without showing it<\/button>/,
+    );
+    // (in Dutch the same, with the privacy page linked where the brand has one for the language)
+    const nl = said(await h.board('/api/calls/guest', { call, lang: 'nl' })).link;
+    const lotte = device();
+    const deur = (await lotte.as(lotte.path(nl))).body;
+    assert.match(
+      deur,
+      /Het verslag noemt wat je opent, waar je scrolt en tikt, en dat je typt, maar nooit wat\. Verder wordt er niets van bewaard\. Met Pauze stopt het meteen\./,
+    );
+    assert.ok(
+      deur.includes(`<a href="${PRIVACY}" target="_blank" rel="noopener noreferrer">Hoe we daarmee omgaan</a>`),
+    );
+    // (one who joins without: nothing of theirs is captured, and the agent sees no screen of theirs)
+    const ilse = device();
+    await ilse.join(link, 'Ilse');
+    assert.equal((await ilse.as(`${api}/screen`, {})).status, 409);
+    await esmee.join(link, 'Esmee', 'show');
+    // Her room starts its screen: its page posts as any watch-along's, only that she typed kept
+    const screen = said(await esmee.as(`${api}/screen`, {}));
+    assert.match(screen.events, /^\/api\/watchalong\/events\?id=\d+&key=/);
+    assert.equal(h.db.prepare('select typed from watchalong_sessions where id = ?').get(screen.id)!.typed, 'hidden');
+    assert.equal(await posted(screen.events, [...walked(), circled('Palette')]), 200);
+    await new Promise(resolve => setTimeout(resolve, 600)); // (the moments settle)
+
+    // Her turn's lines come under her name, her pen's circle among them, with her screen's picture and the briefing
+    const first = said(await turn());
+    assert.equal(first.on, true);
+    assert.equal(first.paused, false);
+    assert.match(
+      first.brief,
+      /A guest in the room who joined the call from a device of their own shows you their screen too/,
+    );
+    const heading = first.lines.findIndex((l: string) => l.startsWith("Esmee's screen"));
+    assert.ok(heading >= 0, first.lines.join('\n'));
+    assert.ok(
+      first.lines.some((l: string) => /circled "Palette" \(button\)/.test(l)),
+      first.lines.join('\n'),
+    );
+    assert.deepEqual(Object.keys(first.last), [String(screen.id)]);
+    if (chromium) {
+      assert.equal(first.lines[heading], "Esmee's screen (its picture comes with this turn):");
+      assert.equal(first.pictures.length, 1);
+      assert.ok(JPEG(first.pictures[0].data));
+    }
+    // nothing new since: no lines, no picture, no briefing
+    const again = said(await turn({ after: first.last, seen: first.version, briefed: true }));
+    assert.deepEqual([again.lines, again.pictures, again.brief], [[], [], undefined]);
+
+    // The board shows its screen too: both, each under whose it is, the board's first; the line's cursor from before a
+    // guest's came (a number) is the board's
+    const started = await h.board('/api/watchalong/start', { call, key: ctx.key });
+    assert.equal(started.status, 200);
+    {
+      assert.equal(await posted(started.body.events, walked()), 200);
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const both = said(await turn({ after: first.last, seen: first.version, briefed: true }));
+      assert.equal(
+        both.lines.findIndex((l: string) => l.startsWith("The board's screen")),
+        0,
+        both.lines.join('\n'),
+      );
+      assert.ok(!both.lines.some((l: string) => l.startsWith("Esmee's screen")), both.lines.join('\n'));
+      if (chromium) assert.equal(both.pictures.length, 1);
+    }
+
+    // The board's iPad, another of its screens on the call, shows itself too: its own entry after the call's screen,
+    // the board's screen 2, never a name. A reload goes on as the same screen.
+    const ipad = said(await h.board('/api/watchalong/screens/start', { screen: 'board-ipad-1' }));
+    assert.equal(ipad.call, call);
+    assert.equal(ipad.agent, 'juno');
+    assert.equal(await posted(ipad.events, [...walked(), circled('Flip me')]), 200);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    {
+      const all = said(await turn({ briefed: true }));
+      const at = (heading: string) => all.lines.findIndex((l: string) => l.startsWith(heading));
+      assert.equal(at("The board's screen"), 0, all.lines.join('\n'));
+      assert.ok(at("The board's screen 2") > 0, all.lines.join('\n'));
+      assert.ok(at("Esmee's screen") > at("The board's screen 2"), all.lines.join('\n'));
+    }
+    const reloaded = said(await h.board('/api/watchalong/screens/start', { screen: 'board-ipad-1' }));
+    assert.equal(await posted(ipad.events, [circled('Late')]), 409);
+    assert.equal(await posted(reloaded.events, [...walked(), circled('Flip me again')]), 200);
+    await new Promise(resolve => setTimeout(resolve, 600));
+
+    // The screen tool looks at hers by her name; another name says whose there are
+    const tool = (body: Record<string, unknown>) => h.voice('screen', { purpose: 'call', ref: String(call), ...body });
+    const since = said(await tool({ who: 'esmee', since: '-5m' }));
+    assert.ok(
+      since.lines.some((l: string) => /circled "Palette"/.test(l)),
+      since.lines.join('\n'),
+    );
+    if (chromium) assert.ok(JPEG(said(await tool({ who: 'Esmee' })).picture.data));
+    // ...and at the board's iPad by its number
+    const second = said(await tool({ who: "the board's screen 2", since: '-5m' }));
+    assert.ok(
+      second.lines.some((l: string) => /circled "Flip me again"/.test(l)),
+      second.lines.join('\n'),
+    );
+    if (chromium) assert.ok(JPEG(said(await tool({ who: 'screen 2' })).picture.data));
+    const nobody = await tool({ who: 'Ilse' });
+    assert.equal(nobody.status, 404, 'Ilse joined without showing hers');
+    assert.match(JSON.stringify(nobody.body), /the others shown are screen 2, Esmee/);
+    // The board leaves the call to her: its iPad reaches her session no more, hers still does, until the board is back
+    said(await h.voice('call-away', { agent: 'juno', token: ctx.token, away: true }));
+    {
+      const away = said(await turn({ briefed: true }));
+      assert.ok(!away.lines.some((l: string) => l.startsWith("The board's screen 2")), away.lines.join('\n'));
+      assert.ok(
+        away.lines.some((l: string) => l.startsWith("Esmee's screen")),
+        away.lines.join('\n'),
+      );
+      assert.equal((await tool({ who: 'screen 2' })).status, 404);
+    }
+    said(await h.voice('call-away', { agent: 'juno', token: ctx.token, away: false }));
+    {
+      const back = said(await turn({ briefed: true }));
+      assert.ok(
+        back.lines.some((l: string) => l.startsWith("The board's screen 2")),
+        back.lines.join('\n'),
+      );
+    }
+
+    // The iPad goes quiet (closed, asleep, or ringing the call itself: boardscreen.js): its page posts nothing for
+    // watchalong.ts QUIET_MS, and it leaves the agent's list, until it posts again
+    mock.timers.enable({ apis: ['Date'], now: Date.now() + 21_000 });
+    try {
+      assert.equal(await posted(screen.events, [circled('Swatch')]), 200);
+      const quiet = said(await turn({ briefed: true }));
+      assert.ok(!quiet.lines.some((l: string) => l.startsWith("The board's screen 2")), quiet.lines.join('\n'));
+      assert.equal((await tool({ who: 'screen 2' })).status, 404);
+      assert.equal(said(await tool({ who: 'Esmee', since: '-5m' })).lines.length > 0, true);
+      assert.equal(await posted(reloaded.events, []), 200);
+      assert.equal(said(await tool({ who: 'screen 2', since: '-5m' })).lines.length > 0, true);
+    } finally {
+      mock.timers.reset();
+    }
+
+    // The call over: her screen and the board's iPad go, nothing of them kept to watch back
+    said(await h.voice('call-end', { agent: 'juno', lines: ['Board: look'], token: ctx.token }));
+    const kept = h.db.prepare(
+      "select count(*) n from watchalong_sessions where purpose in ('callguest', 'callscreen')",
+    );
+    assert.equal(kept.get()!.n, 0);
+    assert.equal(await posted(screen.events, [circled('Late')]), 404);
+    assert.equal(await posted(reloaded.events, [circled('Late')]), 404);
+    assert.notEqual((await esmee.as(`${api}/screen`, {})).status, 200);
+    // (and it shows itself on no call it was on: an earlier test's call may still be live)
+    assert.notEqual((await h.board('/api/watchalong/screens/start', { screen: 'board-ipad-1' })).body?.call, call);
+    // ...nor on a call on the phone line, the newest live one, where nobody looks at a screen
+    const phone = said(await h.voice('call-context', { agent: 'juno', lang: 'en', phone: true })).call;
+    const onPhone = await h.board('/api/watchalong/screens/start', { screen: 'board-ipad-1' });
+    assert.notEqual(onPhone.body?.call, phone, JSON.stringify(onPhone.body));
+  },
+);
+
+// ---- a guest pauses their screen: as easy to withdraw as to give, and it holds through a reload or a
+// scan again, until they show it again
+test(
+  'a guest pauses their screen: the agent sees nothing of it, through a scan again, until they show it again',
+  {
+    timeout: 120_000,
+  },
+  async () => {
+    const ctx = await h.liveCall('juno');
+    const { call } = ctx;
+    said(await h.board('/api/notebooks/call', { call }));
+    const { link } = said(await h.board('/api/calls/guest', { call, lang: 'en' }));
+    const turn = (body: Record<string, unknown> = {}) =>
+      h.voice('screen-turn', { purpose: 'call', ref: String(call), after: 0, seen: 0, briefed: true, ...body });
+    const hers = (lines: string[]) => lines.filter(l => l.startsWith("Esmee's screen"));
+    const esmee = device();
+    await esmee.join(link, 'Esmee', 'show');
+    const shown = said(await esmee.as(`${api}/screen`, {}));
+    assert.equal(shown.paused, false);
+    assert.equal(await posted(shown.events, walked()), 200);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const before = said(await turn());
+    assert.equal(hers(before.lines).length, 1, before.lines.join('\n'));
+    if (chromium) assert.equal(before.pictures.length, 1);
+
+    // Her Pause: what was recorded ends, and the screen-turn brings nothing of hers, no picture, no lines
+    assert.deepEqual(said(await esmee.as(`${api}/screen`, { paused: true })), { paused: true });
+    assert.equal(await posted(shown.events, [circled('Late')]), 409);
+    const paused = said(await turn());
+    assert.deepEqual(paused, { on: false });
+    const tool = await h.voice('screen', { purpose: 'call', ref: String(call), who: 'Esmee' });
+    assert.equal(tool.status, 404);
+
+    // Her room read again, or the code scanned again: still paused, nothing started
+    const back = await esmee.as(esmee.path(link));
+    assert.equal(back.status, 303);
+    assert.deepEqual(said(await esmee.as(`${api}/screen`, {})), { paused: true });
+    assert.equal(
+      h.db.prepare("select count(*) n from watchalong_sessions where purpose = 'callguest' and ended is null").get()!.n,
+      0,
+    );
+    assert.deepEqual(said(await turn()), { on: false });
+
+    // Show again: a new recording, and the agent sees her screen again
+    const again = said(await esmee.as(`${api}/screen`, { paused: false }));
+    assert.equal(again.paused, false);
+    assert.notEqual(again.id, shown.id);
+    assert.equal(await posted(again.events, walked()), 200);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const resumed = said(await turn());
+    assert.equal(hers(resumed.lines).length, 1, resumed.lines.join('\n'));
+    if (chromium) assert.equal(resumed.pictures.length, 1);
+    // (the call over: both her recordings go, as every guest's)
+    said(await h.voice('call-end', { agent: 'juno', lines: ['Board: look'], token: ctx.token }));
+    assert.equal(h.db.prepare("select count(*) n from watchalong_sessions where purpose = 'callguest'").get()!.n, 0);
+  },
+);

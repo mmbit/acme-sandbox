@@ -90,7 +90,7 @@ test('downtime needs headroom: under 60% of the 5-hour window, and never on an u
   assert.equal((await claim(0.85))?.id, normal);
 });
 
-test("a seat ahead of its week's pace takes only urgent work: the board's word and a deadline wait for the pace", async () => {
+test("a seat ahead of its week's pace takes only urgent work, a board call's follow-up among it: the rest of the board's word and a deadline wait for the pace", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const undated = queue('Tidy the docs'), spare = queue('Log scan', { downtime: true });
@@ -100,23 +100,24 @@ test("a seat ahead of its week's pace takes only urgent work: the board's word a
   h.storedCall(1, 'bolt', board);
   // (work handed an open item from the call is the board's word too; dropping the item cancels its work)
   const gate = item(1), fence = item(1);
-  const carries = queue('The gate, as the board asked', { item: gate, queuedBy: 'bolt' });
+  const carries = queue('The gate, as the board asked', { item: gate, queuedBy: 'bolt', thread: h.dueThread({ deadline: Date.now() + H }) });
   const dropped = queue('The fence, dropped since', { item: fence, queuedBy: 'bolt' });
   assert.deepEqual((ledger.drop(fence, 'The board took it back', board) as { cancelled: number[] }).cancelled, [dropped]);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
-  assert.equal(await paced(), undefined, 'the board lane and a deadline order work within the pace');
+  assert.equal(await paced(), board, "a board call's follow-up crosses it");
+  assert.equal(await paced(), undefined, 'the windowed work carrying its item and a deadline order work within the pace');
   urgent('task', due);
   assert.deepEqual([await paced(), await paced()], [due, undefined], 'urgent work alone crosses it');
   assert.equal(h.job(later).status, 'queued');
   const unpaced = async () => (await claim(0.2))?.id;
   assert.deepEqual(
-    [await unpaced(), await unpaced(), await unpaced(), await unpaced(), await unpaced()],
-    [board, carries, later, undated, spare],
+    [await unpaced(), await unpaced(), await unpaced(), await unpaced()],
+    [carries, later, undated, spare],
     'not paced: all, the board lane first',
   );
 });
 
-test("a board item's pull request keeps the board lane but waits for the pace; urgent, its fixes and reviews cross it", async () => {
+test("a board item's pull request keeps the board lane but waits for the pace; urgent, its fixes and reviews cross it, as a call's follow-up's do", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const followUp = h.ended({ agent: 'bolt', title: 'The call followed up' });
@@ -152,8 +153,12 @@ test("a board item's pull request keeps the board lane but waits for the pace; u
   assert.deepEqual([passedOn, gone].map(i => ledger.item(i)!.status), ['ready', 'dropped']);
   const board = (id: number) => (db.prepare(`select ${jobs.BOARD_CALL('j')} board from jobs j where id = ?`).get(id) as { board: number }).board;
   assert.deepEqual([carries, decided, withBoard, replaced, review, merged, dropped, plain].map(board), [1, 1, 1, 1, 1, 0, 0, 0]);
+  // (the call's follow-up is urgent by itself: its pull request's fix carries that)
+  h.storedPr(9008, followUp, 'open');
+  const followUpFix = h.queue({ agent: 'bolt', title: 'Fixing the tests', engine: 'claude', branch: `job/${followUp}`, pr: 9008 });
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
-  assert.equal(await paced(), undefined, 'the board lane orders work within the pace');
+  assert.equal(await paced(), followUpFix, "the call's follow-up's fix crosses it");
+  assert.equal(await paced(), undefined, 'the rest of the board lane orders work within the pace');
   urgent('task', painted);
   const taken = [await paced(), await paced(), await paced()];
   assert.deepEqual(taken, [carries, review, undefined], "the urgent work's fix and review, then nothing");

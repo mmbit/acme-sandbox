@@ -20,7 +20,7 @@ import {
 import { MARGIN } from './masonry.js';
 import { UNIT_W } from './scrapunit.js';
 
-const view = { w: 455, h: 700, top: 0, right: 0 };
+const view = { w: 455, h: 700, top: 0 };
 const page = { w: 455, h: 1050 };
 
 // (the page grows every way)
@@ -91,24 +91,22 @@ test('an opened scrap zooms in to the most, and out past its least only as far a
   assert.equal(zoomWithin(1.5, far, view), 1.5);
 });
 
-test('a page with ink and a scrap above and left of its corner pans as far as they reach, and no further', () => {
-  const stroke = {
+test('a page of scraps at its fit never pans sideways, whatever its cards hold', () => {
+  // (a tall picture on a card fitted to its column, and ink drawn past its side on the opened scrap: their own boxes
+  // reach past the card's left, the card shows them inside it)
+  const tall = { x: 36, y: 100, w: 296, h: 643 },
+    stroke = {
       size: 4,
       points: [
         [-80, -30],
         [20, 40],
       ],
     },
-    scrap = { x: -10, y: -200, w: 100, h: 60 },
-    drawn = { x: -120, y: -240, w: 1000, h: 2000, ink: [stroke], scraps: [scrap] },
-    blurred = { ...view, top: 54 },
-    // (a stroke's reach is its widest line's half past its points: 4 × 0.75 + 1)
-    reach = { x: -80 - 4, y: -200 + 30 - Math.hypot(100, 60) / 2 };
-  const units = unitsPans(drawn, blurred, 2, 120);
-  assert.equal(units.x0, reach.x, "left to the stroke's left edge, not the page box's");
-  assert.equal(units.y0, reach.y - 27, "up to the scrap's top, the blur's room above it");
-  const unread = unitsPans({ ...drawn, ink: null, scraps: [] }, blurred, 2, 120);
-  assert.deepEqual([unread.x0, unread.y0], [0, -27], "a page whose ink isn't read yet: its title's corner");
+    laid = { w: 380, h: 2000, ink: [stroke], scraps: [tall] },
+    fit = view.w / laid.w;
+  const pans = unitsPans(laid, { ...view, top: 54 }, fit, 120);
+  assert.deepEqual([pans.x0, pans.x1], [0, 0], 'no way across');
+  assert.equal(pans.y0, -54 / fit, "up to its title's corner, the blur's room above it");
 });
 
 // (every page pinch-zooms, a page of scraps too)
@@ -126,9 +124,8 @@ test('a page of scraps pans across as far as it is zoomed past its width, and do
   const zoomed = unitsPans(laid, view, 2, 120);
   assert.equal(zoomed.x1, 380 - 455 / 2, 'zoomed in, across to its right side');
   assert.equal(zoomed.y1, 2000 - 60);
-  const blurred = unitsPans(laid, { ...view, top: 54, right: 75 }, 2, 120);
+  const blurred = unitsPans(laid, { ...view, top: 54 }, 2, 120);
   assert.equal(blurred.y0, -27, "its corner under the blur's room, never higher");
-  assert.equal(blurred.x1, 380 - (455 - 75) / 2, 'across till its right side is left of the tools');
 });
 
 test("a pinch keeps the page's point under the fingers' middle where it is", () => {

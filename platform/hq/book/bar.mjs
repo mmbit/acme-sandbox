@@ -1,10 +1,10 @@
 // book-check.mjs's story of the book's two islands over its paper (shell/ink/bookui.js, bookstrip.js,
 // bookcontrols.js, bookrail.js): on a phone (under a home-screen app's blurred strip) and an iPad mini both ways and a
-// desktop with the notebook wide and narrow. The tools upright at the paper's right, centred in the room above the bar,
-// in their order with one pen, and well under half a phone's height; the bar along the foot, the overview at its left,
-// the page's arrows and where it is ("3 / 12") in its very middle, its dots at its right, Undo and Redo a pill of their
-// own left of it (above its left end where there's no room), New page in the dots menu at every size, every row of
-// which does what it says. The bar's spacing smaller inward: its margin at its ends the largest, then the room each
+// desktop with the notebook wide and narrow. On the page the bar along the foot, the overview at its left, the page's
+// arrows and where it is ("3 / 12") in its very middle, its dots at its right, New page in the dots menu at every size,
+// every row of which does what it says; on an opened scrap the tools upright at the paper's right, centred, in their
+// order with one pen, Undo and Redo after them, and well under half a phone's height, the bar put away.
+// The bar's spacing smaller inward: its margin at its ends the largest, then the room each
 // side of a rule, alike at every rule, then the gap between two keys, alike in every group. No island scrolls or
 // leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's written ends left
 // of the tools. Undo, Redo and the page's keys never move. A tool's card opens left of the tools and
@@ -12,10 +12,10 @@
 // with no hold (the mouse, and a finger). No long press: a tool held picks it and opens nothing. Run with
 // --webkit for the same in the iPad's engine. (the blur set by islands.mjs) (at rest once its slide is over)
 import assert from 'node:assert/strict';
-import { freePage } from './mouse.mjs';
-import { OVERVIEW, PREFERENCES, until } from './kit.mjs';
-import { hands } from './hands.mjs';
-import { fits } from './barfits.mjs';
+import { freePage, paperBox } from './mouse.mjs';
+import { OVERVIEW, PREFERENCES, closeScrap, middleOf, nothingMoving, openScrap, say, until } from './kit.mjs';
+import { hands, mouseOf } from './hands.mjs';
+import { fits, historyStays, keysOf } from './barfits.mjs';
 import { blurred } from './islands.mjs';
 import { watchedPage } from './start.mjs';
 
@@ -28,9 +28,10 @@ const SIZES = [
   { name: 'desktop-wide', viewport: { width: 1920, height: 1080 }, touch: false },
   { name: 'desktop-narrow', viewport: { width: 1920, height: 1080 }, touch: false, narrow: 420 },
 ];
-// the dots menu's rows: New page, then its own (bookui.js), Rename page first of the page's, no Close notebook (the pull
-// tab closes the book).
-const ROWS = ['New page', 'Rename page', 'Tear off and send', 'Archive this page', PREFERENCES, 'Tips'];
+// the dots menu's rows: New page, then its own (bookui.js), Rename page first of the page's, Give a copy last of them
+// (bookgive.js), no Close notebook (the pull tab closes the book).
+const GIVE = say('givePage'),
+  ROWS = ['New page', 'Rename page', 'Tear off and send', 'Archive this page', GIVE, PREFERENCES, 'Tips'];
 // a slide's lift picks its tool this soon (ms)
 const PICK_MS = 100;
 
@@ -62,12 +63,22 @@ async function atSize(browser, c, size) {
     if (size.narrow) await narrowed(page, size.narrow);
     await atRest(page);
     await c.shot(`book-islands-${size.name}`, page);
-    await fits(page);
+    await fits(page, false);
     await spaced(page);
     await keysStay(page, size);
-    await cards(page, c, size);
+    await cards(page, c, size, false);
+    // (the tools on an opened scrap)
+    const mouse = mouseOf(page);
+    await openScrap(page, mouse, undefined, middleOf(await paperBox(page)));
+    await atRest(page);
+    await c.shot(`book-islands-${size.name}-scrap`, page);
+    await fits(page, true);
+    await historyStays(page, size);
+    await cards(page, c, size, true);
     await slides(page, size);
     await noHold(page);
+    await closeScrap(page, mouse);
+    await atRest(page);
     await menuRows(page, c, size);
     assert.deepEqual(errors, []);
   } finally {
@@ -81,7 +92,7 @@ async function opened(page) {
   await page.waitForTimeout(800);
   if (!['open', 'spread'].includes(await state())) await page.locator('#book .bk-lip').click();
   await until(async () => ['open', 'spread'].includes(await state()), 'the book open');
-  await page.locator('#book [data-island=tools] .bk-btn').first().waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator('#book .bk-bar .bk-btn').first().waitFor({ state: 'visible', timeout: 30_000 });
   await page.waitForTimeout(800);
 }
 // The cover's edge dragged until the notebook is about this wide
@@ -96,9 +107,10 @@ async function narrowed(page, width) {
 }
 // The book at rest, its swing over, its slide too (book.js glide: the cover's edge let go slides the book to its new
 // width, the leaf laid out wide enough for both till it lands) and both islands laid out (on a loaded machine, frames
-// come late: WebKit's slide was still under way a second after the cover's edge was let go)
-const atRest = page =>
-  until(
+// come late: WebKit's slide was still under way a second after the cover's edge was let go), and nothing on it moving
+// still (the bar and Undo's pill sliding back in from the overview.)
+const atRest = async page => {
+  await until(
     () =>
       page.evaluate(
         () =>
@@ -106,10 +118,15 @@ const atRest = page =>
           ['.bk-edge', '.bk-leaf', '.bk-lip'].every(
             s => !document.querySelector(`#book ${s}`).getAnimations().length,
           ) &&
-          ['.bk-strip', '.bk-bar'].every(s => document.querySelector(`#book ${s}`).getBoundingClientRect().width),
+          // (the tools only on an opened scrap)
+          [document.querySelector('#book[data-scrap-open]') ? '.bk-strip' : '.bk-bar'].every(
+            s => document.querySelector(`#book ${s}`).getBoundingClientRect().width,
+          ),
       ),
     'the book at rest, its islands laid out',
   );
+  await nothingMoving(page);
+};
 
 // A control of the book's pressed: on its islands, or from the dots menu where the bar has folded it away (the book's
 // other checks' too)
@@ -166,30 +183,13 @@ function barGaps() {
 
 // ---- what stays where it was
 
-// Undo, Redo and the page's keys (the pill, the bar's left and middle), where they are on the screen (px)
-const keysOf = page =>
-  // (Undo and Redo a pill of their own beside the bar: the Ink README, The book's frame.)
-  page.evaluate(() =>
-    [...document.querySelectorAll('#book :is(.bk-undo-pill, .bk-bar-start, .bk-bar-middle) .bk-btn')].map(b => {
-      const r = b.getBoundingClientRect();
-      return [b.className.split(' ').find(n => n !== 'bk-btn') ?? '', ...[r.x, r.y, r.width, r.height].map(Math.round)];
-    }),
-  );
-// Undo, Redo and the page's keys never move, so a tap does what the board meant: where they were at rest with another
-// tool in use and with each card open; and in the overview no bar (it's all the pages already), its page's tile
-// bringing the page back with them where they were
+// The page's keys never move, so a tap does what the board meant: where they were at rest with each card open; and in
+// the overview no bar (it's all the pages already), its page's tile bringing the page back with them where they were
 async function keysStay(page, size) {
   const rest = await keysOf(page),
-    stays = async state =>
-      assert.deepEqual(await keysOf(page), rest, `${size.name}, ${state}: Undo, Redo and the page's keys moved`);
-  const tools = page.locator('#book [data-island=tools]');
-  for (const name of ['Eraser', 'Text', 'Pen']) {
-    await tools.getByRole('button', { name, exact: true }).click();
-    await stays(`${name} in use`);
-  }
+    stays = async state => assert.deepEqual(await keysOf(page), rest, `${size.name}, ${state}: the page's keys moved`);
   for (const [name, opened, selector] of [
     [PREFERENCES, () => press(page, PREFERENCES), '.bk-prefs'],
-    ['Pen', () => press(page, 'Pen'), '.bk-palette'],
     ['the pages', () => page.locator('#book .bk-where').click(), '.bk-pages-menu'],
     ['More', () => press(page, 'More'), '.bk-more-card'],
   ]) {
@@ -203,7 +203,7 @@ async function keysStay(page, size) {
   await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
   const far = await page.evaluate(() => ({
     tools: document.querySelector('#book .bk-strip').checkVisibility(),
-    bar: [...document.querySelectorAll('#book :is(.bk-bar, .bk-undo-pill) .bk-btn')]
+    bar: [...document.querySelectorAll('#book .bk-bar .bk-btn')]
       .filter(b => b.checkVisibility({ visibilityProperty: true }))
       .map(b => b.getAttribute('aria-label')),
   }));
@@ -213,16 +213,14 @@ async function keysStay(page, size) {
   await atRest(page);
   await stays('back from the overview');
 }
-
 // ---- the cards
 
-// The preferences and the pen's card (the pen in use pressed again) whole on the screen and on top: the pen's left of
-// the tools, the preferences above the bar
-async function cards(page, c, size) {
-  for (const [name, selector, side] of [
-    [PREFERENCES, '.bk-prefs', 'above the bar'],
-    ['Pen', '.bk-palette', 'left of the tools'],
-  ]) {
+// The preferences on the page and the pen's card (the pen in use pressed again) on an opened scrap (scrap) whole on the
+// screen and on top: the pen's left of the tools, the preferences above the bar
+async function cards(page, c, size, scrap) {
+  for (const [name, selector, side] of scrap
+    ? [['Pen', '.bk-palette', 'left of the tools']]
+    : [[PREFERENCES, '.bk-prefs', 'above the bar']]) {
     await press(page, name);
     const card = page.locator(`#book ${selector}`);
     await card.waitFor({ state: 'visible', timeout: 5000 });
@@ -252,8 +250,8 @@ async function cards(page, c, size) {
 
 // ---- the dots menu
 
-// The dots menu's rows, New page first; each row does what it says: New page, the tear's targets, the preferences and
-// the tips book; and the pull tab, in reach at every size, folds the book.
+// The dots menu's rows, New page first; each row does what it says: New page, the tear's targets, the card that gives
+// a copy, the preferences and the tips book; and the pull tab, in reach at every size, folds the book.
 async function menuRows(page, c, size) {
   const dots = page.locator('#book .bk-more'),
     menu = page.locator('#book .bk-more-card'),
@@ -287,6 +285,7 @@ async function menuRows(page, c, size) {
   );
   for (const [name, shows, gone] of [
     ['Tear off and send', '#book .bk-share:not([hidden])', '#book .bk-share:not([hidden])'],
+    [GIVE, '#book .bk-give', '#book .bk-give'],
     [PREFERENCES, '#book .bk-prefs', '#book .bk-prefs'],
     ['Tips', '.tb-book', '.tb'],
   ]) {
@@ -302,16 +301,20 @@ async function menuRows(page, c, size) {
   );
 }
 
-// A line with the mouse across the page's middle, the pen in hand
+// A line with the mouse across a new scrap's middle, the pen in hand: a click on the grid opens the scrap, drawn on, and
+// Klaar puts it down
 async function written(page) {
+  const mouse = mouseOf(page),
+    desk = await page.locator('#book .bk-desk').boundingBox(),
+    { sheet } = await openScrap(page, mouse, undefined, [desk.x + 60, desk.y + 160]),
+    [x, y] = [sheet.x + sheet.width * 0.2, sheet.y + sheet.height * 0.5];
+  // (the pen picked on the opened scrap's tools)
   await page.locator('#book [data-island=tools]').getByRole('button', { name: 'Pen', exact: true }).click();
-  const desk = await page.locator('#book .bk-paper').first().boundingBox(),
-    [x, y] = [desk.x + desk.width * 0.2, desk.y + desk.height * 0.5];
   await page.mouse.move(x, y);
   await page.mouse.down();
   for (let i = 1; i <= 12; i++) await page.mouse.move(x + i * 10, y + 8 * Math.sin(i / 2));
   await page.mouse.up();
-  await page.waitForTimeout(600);
+  await closeScrap(page, mouse);
 }
 
 // ---- the tools picked

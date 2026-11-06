@@ -1,6 +1,7 @@
 // A minimised call floats over the page. Its first position keeps clear of controls and readable content.
 // A pen or finger can then put it anywhere. The chosen position survives layout changes, clamped to the visible screen.
 // HQ and the join page supply their face, words, icons and callbacks, and can keep the position in localStorage.
+// A bubble without onHangUp has no hang-up key: the board's other screen, whose call is held on another (boardscreen.js).
 import { clearSpot, floating, inSight, keptClear, room } from './floating.js';
 
 // A shorter movement is a tap, so opening the call never competes with dragging it.
@@ -27,13 +28,13 @@ export class CallBubble {
       <span class="cb-eye" role="img" aria-label="${attr(words.watched)}" title="${attr(words.watched)}" hidden>${icons.eye ?? EYE}</span>
       <div class="cb-keys">
         <button type="button" class="cb-pause" hidden></button>
-        <button type="button" class="cb-hangup" aria-label="${attr(words.hangUp)}" title="${attr(words.hangUp)}">${icons.hangUp ?? HANG_UP}</button>
+        ${onHangUp ? `<button type="button" class="cb-hangup" aria-label="${attr(words.hangUp)}" title="${attr(words.hangUp)}">${icons.hangUp ?? HANG_UP}</button>` : ''}
       </div>`;
     el.querySelector('.cb-face').append(face);
     this.pauseKey = el.querySelector('.cb-pause');
     this.pauseKey.onclick = () => (this.isPaused ? onResume?.() : onPause?.());
     this.watching('off');
-    el.querySelector('.cb-hangup').onclick = () => onHangUp?.();
+    if (onHangUp) el.querySelector('.cb-hangup').onclick = () => onHangUp();
     this.onOpen = onOpen;
     this.wireDrag();
     this.fit = () => this.settle();

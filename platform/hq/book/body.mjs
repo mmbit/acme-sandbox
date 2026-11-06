@@ -6,7 +6,7 @@
 // a phone the book over HQ, its page the whole screen, its tab in reach; a touch on the tab taken from the browser's swipe between pages; a page turned forward and back by one turn played either way. Each
 // asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge) (the book's least, BOOK.min:
 import assert from 'node:assert/strict';
-import { MINI, middleOf, pixelsIn } from './kit.mjs';
+import { MINI, middleOf, pixelsIn, until } from './kit.mjs';
 import { hands } from './hands.mjs';
 import { BOOK } from '../shell/ink/booklayout.js';
 
@@ -45,19 +45,22 @@ async function pulledIn(browser, c) {
     await putAway(page, c);
     const tab = page.locator('#book .bk-lip');
     await c.shot('book-body-handle', page);
-    // drawn left a little more than half the book's width: the tab goes with the pointer, the cover's edge just behind
-    // it, and the book comes in at its own width, never stretched
+    // drawn left two thirds of the book's width, far enough down that it falls open (bookswingmath.js letGo): the tab
+    // catches up with the pointer (the board's weight lags it a little), the cover's edge just behind it, and the book
+    // comes in at its own width, never stretched.
     const from = await tab.boundingBox(),
       x = from.x + from.width / 2,
       y = from.y + from.height / 2,
-      dx = -open * 0.55;
+      dx = -open * 0.66;
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + dx, y, { steps: 12 });
-    await page.waitForTimeout(HOLD_MS);
-    const held = await tab.boundingBox(),
-      edge = await page.locator('#book .bk-edge').boundingBox();
-    assert.ok(Math.abs(held.x - (from.x + dx)) <= 2, `the tab at ${held.x}, the pointer moved it ${dx} from ${from.x}`);
+    let held;
+    await until(
+      async () => Math.abs((held = await tab.boundingBox()).x - (from.x + dx)) <= 2,
+      () => `the tab with the pointer: at ${held.x}, the pointer moved it ${dx} from ${from.x}`,
+    );
+    const edge = await page.locator('#book .bk-edge').boundingBox();
     assert.ok(
       Math.abs(edge.x - (held.x + held.width)) <= 2,
       `the edge at ${edge.x}, the tab ends at ${held.x + held.width}`,
@@ -185,8 +188,10 @@ async function table(browser, c) {
     await page.mouse.down();
     await page.mouse.move(x + 160, y, { steps: 12 });
     await page.waitForTimeout(HOLD_MS);
-    // mid-drag, between HQ's page and the book, top to bottom: HQ's ground, one flat fill
-    const tones = await lightsIn(page, { x: hq + 20, y: 0, width: 100, height: MINI.height });
+    // mid-drag, between HQ's page and the book (its tab and bookmarks stick out left of its edge), top to bottom and
+    // clear of the book's one shadow: HQ's ground, one flat fill.
+    const book = await leftmost(page, ['.bk-edge', '.bk-lip', '.bk-marks']),
+      tones = await lightsIn(page, { x: hq + 2, y: 0, width: book - SHADOW_PX - hq - 2, height: MINI.height });
     await c.shot('book-body-table', page);
     await page.mouse.up();
     assert.equal(tones.size, 1, `the table's tones: ${JSON.stringify(tones)}`);
@@ -342,6 +347,14 @@ const edgeX = async page => {
 const hqWidth = page => page.evaluate(() => document.body.getBoundingClientRect().width);
 // (its laid width, as open.mjs reads it: mid-swing its box on the screen is the turned board's)
 const bookWidth = page => page.evaluate(() => document.querySelector('#book .bk-leaf').offsetWidth);
+// The leftmost of the book's parts on the screen (selectors in #book), and how far its one soft shadow reaches past it
+// (book.css: 22 px of blur)
+const leftmost = (page, parts) =>
+  page.evaluate(
+    parts => Math.min(...parts.map(s => document.querySelector(`#book ${s}`).getBoundingClientRect().left)),
+    parts,
+  );
+const SHADOW_PX = 30;
 // The cover's edge dragged to x (its left edge), held there a moment and let go
 async function dragEdge(page, x) {
   const from = await edgeX(page);

@@ -13,24 +13,27 @@ export function groupsOf(play) {
 export const newestPage = play =>
   landingPage(play.route('/api/notebooks/pages', { notebook: mineOf(play) }).pages, p => p.sending || !!p.sent);
 const mineOf = play => play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
-// A scrap as the page shown draws it, on screen: its photo (one of the page's pictures), the right edge of it and its
-// words under it, those words, the paper, and the left of the tools' island over its right edge (null: not drawn there
-// yet)
+// A scrap as the page shown draws it, on screen: its photo, the right edge of its card, its words on it, the paper, and
+// the left of the tools' island over its right edge (null: not drawn there yet). On the grid, or on its own sheet
+// while it's opened (README, A page of scraps).
 export const shownScrap = (page, g) =>
   page.evaluate(g => {
-    const el = document.querySelector('#book .bk-world .bk-page:not([hidden])'),
-      under = el?.querySelector(`:scope > .bk-groups > .bk-under[data-g="${g.id}"]`);
-    if (!under) return null;
-    const o = el.getBoundingClientRect(),
-      k = o.width / el.offsetWidth,
-      c = g.pictures[0],
-      photo = { x: o.left + c.x * k, y: o.top + c.y * k, w: c.w * k, h: c.h * k },
-      words = under.querySelector('.bk-scrap-words');
+    const el =
+        document.querySelector('#book .bk-world .bk-page[data-focus]') ??
+        document.querySelector('#book .bk-world .bk-page:not([hidden])'),
+      photo = el?.querySelector(`.bk-photo[data-g="${g.id}"]`),
+      card = el?.querySelector(`.bk-unit[data-unit="${g.id}"]`);
+    if (!photo || (!card && !el.hasAttribute('data-focus'))) return null;
+    const r = photo.getBoundingClientRect(),
+      words = el.querySelector(`:scope > .bk-groups > .bk-words[data-g="${g.id}"] .bk-scrap-words`);
     return {
-      photo,
-      right: Math.max(photo.x + photo.w, under.getBoundingClientRect().right),
+      photo: { x: r.left, y: r.top, w: r.width, h: r.height },
+      right: Math.max(r.right, card?.getBoundingClientRect().right ?? 0),
       words: words?.value ?? words?.textContent ?? '',
-      paper: document.querySelector('#book .bk-desk').getBoundingClientRect().toJSON(),
-      tools: document.querySelector('#book .bk-strip').getBoundingClientRect().left,
+      paper: document.querySelector('#book .bk-desk:not(.bk-turn-picture *)').getBoundingClientRect().toJSON(),
+      // (the paper's right side where no tools show, as on the grid)
+      tools: document.querySelector('#book .bk-strip').checkVisibility()
+        ? document.querySelector('#book .bk-strip').getBoundingClientRect().left
+        : document.querySelector('#book .bk-desk:not(.bk-turn-picture *)').getBoundingClientRect().right,
     };
   }, g);

@@ -120,11 +120,11 @@ type ListedSeat = {
 };
 
 // A seat's stop level: the share of its windows it runs to before it takes no new work, in percent. A seat the board
-// hasn't set runs to the worker's own level, DRAIN_AT (downtime.ts), which this mirrors for HQ's rows. Pacing (the
-// worker's pacedUntil: a week running ahead of its pace takes only urgent work and board conversations) is on for all
-// seats unless the board turned it off. A seat whose account has credits keeps to its plan all the
-// same, paced and stopping at its level, unless the board lets it spend them (use_credits): spending past the plan is
-// the board's choice, never a default.
+// hasn't set runs to the worker's own level, DRAIN_AT (downtime.ts), which this mirrors for HQ's rows. Pacing is on for
+// all seats unless the board turned it off. A paced seat (the worker's pacedUntil) whose week runs ahead of its pace
+// takes only urgent work, a board call's follow-up among it, and board conversations. A seat whose account has credits
+// keeps to its plan all the same, paced and stopping at its level, unless the board lets it spend them (use_credits):
+// spending past the plan is the board's choice, never a default.
 export const STOP_DEFAULT = 90;
 const STOP_MIN = 50,
   STOP_MAX = 100;

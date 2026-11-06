@@ -1,10 +1,11 @@
-/* The book's two islands (bookui.js), floating over the paper (README, The book's frame): the tools upright on the
-   right, roughly centred and short (bookstrip.js); one bar along the foot between the screen's curved corners, the
-   overview's key at its left, the page's arrows and where it is in its very middle, its dots at its right, and Undo
-   and Redo a pill of their own left of it. They are HQ's own on-screen controls in the look HQ wears (bookui.css
-   .bk-island), never a piece of the book: only the page is paper. The paper runs on under them to the screen's edges;
-   what's written ends left of the tools (--bk-rail-width, book.css). Nothing of them sits under the status bar's blur
-   (--sat). The cards they open (a tool's, the preferences, the pages, the dots menu) hang beside them, on the paper.
+/* The book's two islands (bookui.js), floating over the paper (README, The book's frame): an opened scrap's tools
+   upright on the right, roughly centred and short (bookstrip.js), its Undo and Redo with them; the page's bar along
+   the foot between the screen's curved corners, the overview's key at its left, the page's arrows and where it is in
+   its very middle, its dots at its right, a guest's Undo of its send there too, where Send was. They are HQ's own on-screen
+   controls in the look HQ wears (bookui.css .bk-island), never a piece of the book: only the page is paper. The paper
+   runs on under them to the screen's edges; what's written on an opened scrap ends left of the tools (--bk-rail-width,
+   book.css). Nothing of them sits under the status bar's blur (--sat). The cards they open (a tool's, the
+   preferences, the pages, the dots menu) hang beside them, on the paper.
  */
 #book .bk-controls {
   position: absolute;
@@ -15,7 +16,7 @@
    bars), its line, corners and shadow. The panel lets a third of the page through, blurred and brightened, a hairline
    of light on its top edge. A look sets its own light (--bk-glass-sheen) and keeps its own edge (the renderers'
    skin.css); a dark panel dims what it lets through (--bk-glass-frost), so it stays dark and its keys read on it. */
-#book :is(.bk-strip, .bk-bar, .bk-undo-pill) {
+#book :is(.bk-strip, .bk-bar) {
   --bk-glass-sheen: color-mix(in srgb, white 85%, transparent);
   --bk-glass-frost: blur(16px) saturate(1.5) brightness(1.05);
   box-sizing: border-box;
@@ -34,12 +35,12 @@
 }
 /* (while the book swings or its tab is held the frost is off: what's under the bars is moving with them, and blurring
    it would cost the swing its frames.) */
-#book:is(.bk-swinging, :has(.bk-gripped)) :is(.bk-strip, .bk-bar, .bk-undo-pill) {
+#book:is(.bk-swinging, :has(.bk-gripped)) :is(.bk-strip, .bk-bar) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 /* (the groups in them are theirs: no card of their own) */
-#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-island {
+#book :is(.bk-strip, .bk-bar) .bk-island {
   display: flex;
   flex-direction: row;
   gap: 2px;
@@ -49,17 +50,17 @@
   box-shadow: none;
   border-radius: 0;
 }
-#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-btn {
+#book :is(.bk-strip, .bk-bar) .bk-btn {
   width: var(--bk-key);
   height: var(--bk-key);
   border-radius: 50%;
 }
-#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-btn svg {
+#book :is(.bk-strip, .bk-bar) .bk-btn svg {
   width: var(--bk-key-icon);
   height: var(--bk-key-icon);
 }
 /* (--bk-touch across, past the island's edge) */
-#book :is(.bk-strip, .bk-bar, .bk-undo-pill) .bk-btn::after {
+#book :is(.bk-strip, .bk-bar) .bk-btn::after {
   inset: calc((var(--bk-key) - var(--bk-touch)) / 2);
 }
 
@@ -73,6 +74,12 @@
   max-height: calc(100% - var(--bk-key) - 10px - var(--bk-foot) - 2 * var(--bk-rail-gap));
   overflow-y: auto;
   scrollbar-width: none;
+}
+/* (on an opened scrap the bar is put away, bookscrapopen.css: the tools, its Undo and Redo with them, centred in the
+   whole height, so a phone on its side holds them all unscrolled.) */
+#book[data-scrap-open] .bk-strip {
+  top: calc((100% - var(--bk-foot)) / 2);
+  max-height: calc(100% - var(--bk-foot) - 2 * var(--bk-rail-gap));
 }
 #book .bk-strip .bk-island {
   flex-direction: column;
@@ -114,8 +121,10 @@
 #book .bk-strip .bk-island[data-sliding] .bk-btn:active {
   transform: none;
 }
-/* (the overview has no tools) */
-#book[data-far] .bk-strip {
+/* (the overview has no tools, nor has the page, which takes no ink: they're an opened scrap's, bookscrapopen.js. A sent
+   sketch page's Duplicate stays, bookshare.css.) */
+#book[data-far] .bk-strip,
+#book:not([data-scrap-open]) .bk-strip:not([data-locked]) {
   display: none;
 }
 
@@ -129,12 +138,6 @@
   justify-content: center;
   padding: 0 var(--bk-rail-gap);
   pointer-events: none;
-}
-/* (a page wide enough: centred on the paper left of the tools) */
-@container bk-rail (min-width: 700px) {
-  #book .bk-foot {
-    padding-right: var(--bk-rail-width);
-  }
 }
 /* (its spacing smaller inward: the island's own margin round its ends, then the room each side of a rule, then the
    gap between two keys of a group; both ends' parts against the middle, what one has less of left at its outer
@@ -162,29 +165,7 @@
   margin: 0 3px;
   border-inline: 1px solid var(--bk-ui-line);
 }
-/* Undo and Redo, a pill of their own left of the bar, out of its layout: on a locked page it goes (bookcontrols.js)
-   and the bar stays where it is, at any width (the Ink README, The book's frame). Where the room left of the bar can't
-   hold it (a phone, a wide bar), it floats above the bar's left end: bookrail.js measures the room. */
-#book .bk-bar-at {
-  position: relative;
-  display: flex;
-  max-width: 100%;
-}
-#book .bk-undo-pill {
-  --bk-pill-gap: 6px;
-  position: absolute;
-  right: calc(100% + var(--bk-pill-gap));
-  bottom: 0;
-}
-#book .bk-undo-pill:not(:has(.bk-btn:not([hidden]))) {
-  display: none;
-}
-#book .bk-undo-pill[data-above] {
-  right: auto;
-  left: 0;
-  bottom: calc(100% + var(--bk-pill-gap));
-}
-#book :is(.bk-bar, .bk-undo-pill) .bk-btn[hidden],
+#book .bk-bar .bk-btn[hidden],
 #book .bk-menu-only {
   display: none;
 }

@@ -2,16 +2,17 @@
 // book-check.mjs's stories of the mic's voice note at a spot (shell/ink/bookvoice.js, bookheard.js; the board, call
 // 192), on the board's iPhone, an iPad on its side and an iPad mini upright, by finger (pointer events as Safari hands a
 // finger's over, on what's under them, the same in Chromium and WebKit) over the stand-in voice line (voice.mjs)
-// and the microphone's stand-in (kit.mjs heard). The mic tapped only lights: nothing records, and the paper is
-// left as it is. A spot then pressed and held records there: the words write themselves at the spot while it's held,
-// in the page's own type, an ink loader after them, nothing floating beside the mic and nothing drawn. Let go, the mic
-// is out at once and no Listening stays; the words land at the spot as the page's own box, kept in the store, and the
-// loader goes. The mic tapped twice lets go: the next press draws.
+// and the microphone's stand-in (kit.mjs heard), on a new scrap opened by a finger's tap on the grid's bare paper (the
+// mic is on an opened scrap's tools). The mic tapped only lights: nothing records, and the paper is left as it is. A
+// spot then pressed and held records there: the words write themselves at the spot while it's held, in the page's own
+// type, an ink loader after them, nothing floating beside the mic and nothing drawn. Let go, the mic is out at once and
+// no Listening stays; the words land where they showed as the page's own box, on the scrap, kept in the store, and the
+// loader goes. The mic tapped twice lets go: the next press records nothing.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, savedWhere } from './mouse.mjs';
 import { stored } from './strip.mjs';
 import { SAID } from './voice.mjs';
-import { MINI, UPRIGHT, QUIET_MS, heard, middleOf, until, wordsHeard } from './kit.mjs';
+import { MINI, UPRIGHT, QUIET_MS, heard, middleOf, openScrap, until, wordsHeard } from './kit.mjs';
 
 const PHONE = { width: 390, height: 844 };
 
@@ -38,29 +39,28 @@ async function story(browser, c, viewport) {
     await page.waitForSelector('#loading.gone', { state: 'attached' });
     await opened(page, c, viewport);
     const paper = await paperBox(page),
-      mid = middleOf(paper);
-    await letGo(page, c, free, [mid[0] - 60, mid[1] + 140], size);
-    await spot(page, c, free, [paper.x + paper.width * 0.25, paper.y + paper.height * 0.45], viewport);
+      { sheet } = await openScrap(page, fingerTap(page), undefined, middleOf(paper));
+    await spot(page, c, free, [sheet.x + sheet.width * 0.25, sheet.y + sheet.height * 0.45], viewport);
+    await letGo(page, c, free, [sheet.x + sheet.width * 0.5, sheet.y + sheet.height * 0.75], size);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
   }
 }
 
-// The mic tapped twice: lit, then out, nothing recorded; the next press draws as ever
+// The mic tapped twice: lit, then out; the next press records nothing
 async function letGo(page, c, free, at, size) {
-  const mic = page.locator('#book .bk-mic');
+  const mic = page.locator('#book .bk-mic'),
+    texts = stored(c, free).texts.length;
   await mic.tap();
   assert.equal(await mic.getAttribute('aria-pressed'), 'true', `at ${size}, the mic tapped lights`);
   await mic.tap();
   assert.equal(await mic.getAttribute('aria-pressed'), 'false', `at ${size}, tapped again it's out`);
-  await fingerSteps(page, [
-    ['pointerdown', at],
-    ...Array.from({ length: 8 }, (_, i) => ['pointermove', [at[0] + (i + 1) * 10, at[1]]]),
-    ['pointerup', [at[0] + 80, at[1]]],
-  ]);
-  await savedWhere(c, free.id, p => p.ink.length === 1);
-  assert.equal(await page.locator('#book .bk-heard').count(), 0, `at ${size}, the line drawn recorded nothing`);
+  await fingerTap(page).tap(at);
+  await page.waitForTimeout(QUIET_MS);
+  assert.equal(await page.locator('#book .bk-heard').count(), 0, `at ${size}, the tap recorded nothing`);
+  assert.equal(await mic.getAttribute('data-listening'), null, `at ${size}, nor shows it recording`);
+  assert.equal(stored(c, free).texts.length, texts, `at ${size}, no words kept by it`);
 }
 
 // The mic tapped, then a spot held: what the board sees while it talks, as it lets go, and once the words are in
@@ -91,9 +91,10 @@ async function spot(page, c, free, at, viewport) {
   });
   assert.ok(live.bars, `at ${size}, the voice's bars after the words while they come`);
   assert.ok(live.slip, `at ${size}, the words on a slip of paper as they come`);
+  // (across from the spot, or nearer its left where the spot leaves too little room before the scrap's edge)
   assert.ok(
-    at[0] >= live.box.x - 4 && at[0] <= live.box.x + 24 && at[1] >= live.box.y - 4 && at[1] <= live.box.y + live.box.h,
-    `at ${size}, the words where the spot is held: ${JSON.stringify({ at, live })}`,
+    at[0] >= live.box.x - 4 && at[0] <= live.box.x + live.box.w,
+    `at ${size}, the words across from the spot held: ${JSON.stringify({ at, live })}`,
   );
   assert.equal(await page.locator('#book .bk-voice').count(), 0, `at ${size}, nothing floating beside the mic`);
   await c.shot(`book-mic-spot-held-${viewport.width}`, page);
@@ -122,6 +123,12 @@ async function landed(page, c, free, { live, ink, viewport }) {
   assert.ok(
     Math.abs(box.x - live.box.x) <= 2 && Math.abs(box.y - live.box.y) <= 2,
     `at ${size}, the words land where they showed: ${JSON.stringify({ box, live })}`,
+  );
+  const sheet = await page.locator('#book .bk-sheet').boundingBox(),
+    { x, y, w, h } = live.box;
+  assert.ok(
+    x >= sheet.x && x + w <= sheet.x + sheet.width && y >= sheet.y && y + h <= sheet.y + sheet.height,
+    `at ${size}, the words on the opened scrap: ${JSON.stringify({ sheet, live })}`,
   );
   assert.equal(
     await page.locator('#book .bk-typed .bk-typed-words').evaluate(el => getComputedStyle(el).fontFamily),
@@ -156,3 +163,5 @@ const fingerSteps = (page, steps) =>
       );
   }, steps);
 const finger = (page, type, at) => fingerSteps(page, [[type, at]]);
+// A finger's tap as the touch screen makes one, for kit.mjs openScrap
+const fingerTap = page => ({ tap: ([x, y]) => page.touchscreen.tap(x, y) });
