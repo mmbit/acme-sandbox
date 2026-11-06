@@ -108,8 +108,14 @@ takes back not counted as used) holds what its worker may still grow by beside w
 by (each a worker at its fullest less what it holds), or once nothing else plays. A machine pushed into swap goes quiet
 for minutes. Each part's line gives its time and how much of it went in timed waits, and the last line the most memory
 in use, the check's share of it and how long parts waited for memory. Off the worker, it runs on the shots helper
-from this checkout (shared/browser/README.md, "Checks from an agent's checkout"): `hq run --kind shots --minutes 120
--- node platform/hq/book-check.mjs`.
+from this checkout (shared/browser/README.md, "Checks from an agent's checkout"). The tips' films are renders, out of
+git, so they're fetched first and carried along (the Tips story checks every one is served):
+
+```sh
+films=$(git ls-files 'theme/hq/tips/*.render.json' | sed 's/\.render\.json$//')
+node shared/demo/renders.mjs fetch $films
+hq run --kind shots --minutes 120 --with "$(echo $films | tr ' ' ,)" -- node platform/hq/book-check.mjs
+```
 
 **Where its time goes** (measured on the shots helper, 5 November, 601 parts):
 

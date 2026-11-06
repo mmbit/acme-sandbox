@@ -919,6 +919,7 @@ test("a commit main took outside a pull request is tested against main before it
   // the foundation's side of a carry: a commit of its own, merged into main as its second parent
   git('-C', seed, 'checkout', '-q', '--orphan', 'foundation'); git('-C', seed, 'rm', '-rqf', '.');
   writeFileSync(`${seed}/shared.md`, 'from the foundation\n');
+  writeFileSync(`${seed}/tool.ts`, 'export const from = "the foundation";\n');
   git('-C', seed, 'add', '-A'); git('-C', seed, 'commit', '-qm', 'the foundation');
   const foundation = at('HEAD');
   git('-C', seed, 'checkout', '-q', '--detach', direct);
@@ -927,13 +928,15 @@ test("a commit main took outside a pull request is tested against main before it
   git('-C', seed, 'push', '-q', 'origin', 'HEAD:main');
   flow.ensureMirror(); flow.fetchMirror();
 
+  // (each with whether it changes what a push's checks run on: the carry's code against main before it, the direct
+  // commit's note not.)
   assert.deepEqual(flow.mainLine(2), [
-    { sha: carry, parents: [direct, foundation] },
-    { sha: direct, parents: [before] },
+    { sha: carry, parents: [direct, foundation], code: true },
+    { sha: direct, parents: [before], code: false },
   ]);
   assert.deepEqual(flow.mainSince(before), [
-    { sha: direct, parents: [before] },
-    { sha: carry, parents: [direct, foundation] },
+    { sha: direct, parents: [before], code: false },
+    { sha: carry, parents: [direct, foundation], code: true },
   ]);
   assert.deepEqual(flow.mainSince(carry), []);
   assert.equal(flow.mainSince('f'.repeat(40)), undefined, '(a commit the mirror has not)');

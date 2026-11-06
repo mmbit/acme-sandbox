@@ -12,8 +12,8 @@
 // with no hold (the mouse, and a finger). No long press: a tool held picks it and opens nothing. Run with
 // --webkit for the same in the iPad's engine. (the blur set by islands.mjs) (at rest once its slide is over)
 import assert from 'node:assert/strict';
-import { freePage, paperBox } from './mouse.mjs';
-import { OVERVIEW, PREFERENCES, closeScrap, middleOf, nothingMoving, openScrap, say, until } from './kit.mjs';
+import { freePage } from './mouse.mjs';
+import { OVERVIEW, PREFERENCES, closeScrap, nothingMoving, openScrap, openScrapInMiddle, say, until } from './kit.mjs';
 import { hands, mouseOf } from './hands.mjs';
 import { fits, historyStays, keysOf } from './barfits.mjs';
 import { blurred } from './islands.mjs';
@@ -69,7 +69,7 @@ async function atSize(browser, c, size) {
     await cards(page, c, size, false);
     // (the tools on an opened scrap)
     const mouse = mouseOf(page);
-    await openScrap(page, mouse, undefined, middleOf(await paperBox(page)));
+    await openScrapInMiddle(page, mouse);
     await atRest(page);
     await c.shot(`book-islands-${size.name}-scrap`, page);
     await fits(page, true);

@@ -18,9 +18,10 @@ import {
   type Typical,
   type Quality,
 } from './comparisons.ts';
-import { changeLines } from './deadlines.ts';
 import { minute, plural, print, stop, TIME_ZONE } from './output.ts';
 import * as scoring from './scoring.ts';
+// (hq estimate set and adjust)
+import { adjustTimes, setSize, WRITES_HELP } from './estimatewrites.ts';
 import { printTaskAudit } from './taskaudit.ts';
 import { duration, waitWords as wordsOf, type Wait } from './waits.ts';
 
@@ -60,16 +61,13 @@ export const estimate = {
                                                      time held. --save writes the snapshots with what landed, for
                                                      platform/coordinator/scripts/backtest.ts to score a branch's play
                                                      beside main's
-   hq estimate set <job> <JSON> "why"                re-size a queued or running job: its agent time (90m, 2h, 1h30m)
-                                                     changes the saved task estimate and names the deliverables whose
-                                                     ETA moved. Your own running job, once you know it's bigger or
-                                                     smaller (the why goes on the feed and to the CEO); the CEO any
-                                                     job, HQ's fix and merge rounds included
+${WRITES_HELP}
 
 ${TOKEN_ESTIMATE_GUIDANCE}`,
 
   async run(given: string[]) {
     if (given[0] === 'set') return setSize(given.slice(1));
+    if (given[0] === 'adjust') return adjustTimes(given.slice(1));
     const { words, flags } = takeFlags(given);
     const scored = new URLSearchParams(flags.days ? { days: flags.days } : {});
     if (flags.until) scored.set('until', flags.until);
@@ -124,7 +122,14 @@ type Engine = {
   unmeasured_seats: number;
   next_reset: number | null;
 };
-export type Basis = { kind: string | null; agent: string | null; words: string[]; entry?: string; routine?: string };
+export type Basis = {
+  kind: string | null;
+  agent: string | null;
+  words: string[];
+  entry?: string;
+  routine?: string;
+  code?: boolean;
+};
 type Outlook = {
   unpricedSeats?: string[];
   start: number | null;
@@ -192,9 +197,11 @@ export const comparedWords = (n: number, b: Basis) =>
       ? `${plural(n, 'earlier run')} of the ${b.routine} routine's entries`
       : `${plural(n, 'done job')} like it: ${basisWords(b)}`;
 
+const carryKind = (b: Basis) =>
+  b.code === undefined ? '' : ` of commits ${b.code ? 'that change what' : 'with nothing'} the checks run on`;
 const basisWords = (b: Basis) =>
   b.kind === 'carry'
-    ? 'mechanical carry checks, by measured worker occupancy'
+    ? `mechanical carry checks${carryKind(b)}, by measured worker occupancy`
     : b.entry
       ? `this entry's earlier runs (${b.entry})`
       : b.routine
@@ -288,20 +295,6 @@ export function safeWords(eta: number | null, safe: number | null) {
     : `; the one time to tell the board: live ${at(safe)}, four times in five, never the ETA beside it`;
 }
 
-// ---- queue changes
-
-// hq estimate set: the job's new size, and what it moved.
-async function setSize([target, time, why = '', ...rest]: string[]) {
-  const job = /^#?([0-9]+)$/.exec(target ?? '')?.[1];
-  if (!job || !time || rest.length) stop('usage: hq estimate set <job> <time: 90m, 2h, 1h30m> ["why"]');
-  const answer = await api.change('sizes', { body: api.withSpeaker({ job: Number(job), time, why }) });
-  const set = api.parseOrNull(answer.body);
-  if (set?.ok !== true) stop(`Couldn't re-size #${job}: ${api.errorIn(answer.body, 'no answer')}`);
-  print(`Job #${job} is sized at ${duration(set.size.agent_ms / 60_000)} of agent time now.`);
-  print(budgetLine(set.size.token_budget), confidenceLine(set.size.confidence));
-  if (set.moves) print(...changeLines(set, 'the new size'));
-}
-
 // ---- accuracy
 
 export type Spread = {
@@ -327,6 +320,7 @@ type Accuracy = {
   matching: (Spread & { way: string })[];
   matching_by_thread?: scoring.ByThread;
   matching_by_schedule?: Record<'scheduled' | 'rest', { jobs: number; now: Spread; matching_alone: Spread }>;
+  matching_carries?: scoring.Carries;
 };
 type Moved = {
   start_minutes: number | null;
@@ -378,6 +372,7 @@ function printAccuracy(a: Accuracy) {
         `    HQ's way now: ${g.now.count ? spreadWords(g.now) : 'no jobs'}`,
         `    the matching alone, as before: ${g.matching_alone.count ? spreadWords(g.matching_alone) : 'no jobs'}`,
       );
+  if (a.matching_carries) scoring.carries(a.matching_carries);
 }
 
 export const spreadWords = (s: Spread) =>

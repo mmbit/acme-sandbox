@@ -5,9 +5,9 @@
 // iPad turns on its side and its screen gets shorter. (the islands) The pen's colours are an opened scrap's, as its
 // tools are: a scrap is opened for them.
 import assert from 'node:assert/strict';
-import { onDesk, paperBox } from './mouse.mjs';
+import { onDesk } from './mouse.mjs';
 import { press } from './bar.mjs';
-import { MINI, PREFERENCES, UPRIGHT, middleOf, openScrap } from './kit.mjs';
+import { MINI, PREFERENCES, UPRIGHT, middleOf, openScrapInMiddle } from './kit.mjs';
 import { mouseOf } from './hands.mjs';
 import { mini } from './start.mjs';
 
@@ -30,7 +30,7 @@ async function cards(browser, c) {
     await press(page, PREFERENCES);
     await whole(page, '.bk-prefs', 'the preferences on a desktop');
     await page.keyboard.press('Escape');
-    await scrapOpened(page, mouseOf(page).tap);
+    await openScrapInMiddle(page, mouseOf(page));
     await press(page, 'Pen');
     await whole(page, '.bk-palette', 'the colours on a desktop');
     await tipGoes(page);
@@ -47,7 +47,7 @@ async function onIPad(browser, c, viewport) {
     await preferencesTapped(pad, size);
     await c.shot(`book-prefs-${size}`, page);
     await page.keyboard.press('Escape');
-    await scrapOpened(page, point => tapped(pad.touch, point));
+    await openScrapInMiddle(page, pad.touch);
     const scrolls = await page.locator('#book .bk-strip').evaluate(el => el.scrollHeight > el.clientHeight + 1);
     assert.equal(scrolls, false, `the tools never scroll (${size})`);
     await coloursTapped(pad, size);
@@ -65,8 +65,8 @@ async function turned(browser, c) {
   ]) {
     const { page, touch, errors, done } = await mini(browser, c, { viewport: UPRIGHT });
     try {
-      if (name === 'Pen') await scrapOpened(page, point => tapped(touch, point));
-      await tapOn(page, point => tapped(touch, point), name);
+      if (name === 'Pen') await openScrapInMiddle(page, touch);
+      await tapOn(page, touch.tap, name);
       await whole(page, selector, `${selector} upright`);
       for (const viewport of [MINI, SHORT]) {
         const size = `${viewport.width}x${viewport.height}`;
@@ -84,9 +84,9 @@ async function turned(browser, c) {
 // The preferences opened from the dots menu by a finger and by the Pencil, a hold time picked by the finger
 async function preferencesTapped({ page, pen, touch }, size) {
   const long = () => page.locator('#book .bk-prefs').getByLabel('Long');
-  await tapOn(page, point => tapped(touch, point), PREFERENCES);
+  await tapOn(page, touch.tap, PREFERENCES);
   await whole(page, '.bk-prefs', `the preferences at ${size}, a finger's tap`);
-  await tapped(touch, middleOf(await long().boundingBox()));
+  await touch.tap(middleOf(await long().boundingBox()));
   assert.equal(await long().isChecked(), true, 'Long picked by a finger');
   await page.keyboard.press('Escape');
   await page.locator('#book .bk-prefs').waitFor({ state: 'detached' });
@@ -99,10 +99,10 @@ async function coloursTapped({ page, pen, touch }, size) {
   await whole(page, '.bk-palette', `the colours at ${size}, the Pencil's tap`);
   await pen.tap(middleOf(await ink(page, 'Red').boundingBox()));
   await page.keyboard.press('Escape');
-  await tapped(touch, await at(page, 'Pen'));
+  await touch.tap(await at(page, 'Pen'));
   await whole(page, '.bk-palette', `the colours at ${size}, a finger's tap`);
   assert.equal(await ink(page, 'Red').getAttribute('aria-pressed'), 'true', 'Red picked by the Pencil');
-  await tapped(touch, middleOf(await ink(page, 'Blue').boundingBox()));
+  await touch.tap(middleOf(await ink(page, 'Blue').boundingBox()));
   assert.equal(await ink(page, 'Blue').getAttribute('aria-pressed'), 'true', 'Blue picked by a finger');
 }
 
@@ -129,12 +129,6 @@ async function tapOn(page, tap, name) {
   await row.waitFor({ timeout: 5000 });
   await tap(middleOf(await row.boundingBox()));
 }
-async function tapped(touch, point) {
-  await touch.down([point]);
-  await touch.up();
-}
-// A scrap opened by tap(point) at the paper's middle (its card there, or a new one in the gap), the tools with it
-const scrapOpened = async (page, tap) => openScrap(page, { tap }, undefined, middleOf(await paperBox(page)));
 
 // The card open and nothing of it hidden: its corners (inside their rounding) and both ends of each of its lines and
 // buttons are the card's own on the screen, so neither a clipping box nor the screen's edge nor anything over it hides

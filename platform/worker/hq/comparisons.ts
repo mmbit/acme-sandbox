@@ -27,6 +27,7 @@ export type Job = {
   added?: number | null;
   removed?: number | null;
   timing_quality?: string[];
+  adjusted?: { agent_minutes: number; why: string; by: string; at: string } | null;
 };
 export type Typical = { agent_minutes: number; low: number; high: number; spend: number | null; unit: string | null };
 export type Quality = { total: number; excluded: number; clean: number; reasons: Record<string, number> };
@@ -37,7 +38,9 @@ export function printJobs({ job, jobs, typical }: { job?: Job; jobs: Job[]; typi
   print(
     `Clean past jobs found for ${words ? `"${words}"` : 'that'}, search matches first. Compare their scope before choosing a size.`,
   );
-  print('Whole time includes reviews, fixes, re-syncs and previews. Queue, seat, deploy and card waits are out.');
+  print(
+    "Whole time includes reviews, fixes, send-backs (a check's before review, or main merged in) and previews. Queue, seat, deploy and card waits are out.",
+  );
   print('--size.time covers the work split only. The forecast adds review and fix rounds once per deliverable.');
   print(
     'Shared follow-up time is divided equally among the tasks on the branch. A shared preview is divided by branch first.',
@@ -64,6 +67,11 @@ function jobLines(j: Job) {
     `#${j.id} ${j.agent}, done ${minute(j.finished)}: ${j.title}`,
     `  ${j.rebuilt ? '≈' : ''}${workDuration(j.agent_minutes, j.origin)} of ${workUnit(j.origin)} in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
   ];
+  // (what its work would cost now, where a process change made the measurement stale)
+  if (j.adjusted)
+    lines.push(
+      `  Measured ${workDuration(j.agent_minutes, j.origin)}, now about ${workDuration(j.adjusted.agent_minutes, j.origin)}: ${j.adjusted.why} (${j.adjusted.by}, ${minute(j.adjusted.at)}). Comparisons count the adjusted time.`,
+    );
   lines.push(wholeLine(j.whole, j.origin));
   if (j.whole.cost) lines.push(taskCostLine('Whole-task tokens', j.whole.cost));
   lines.push(...costLines(j.feature_cost));
@@ -78,8 +86,9 @@ function jobLines(j: Job) {
 }
 
 function wholeLine(whole: Job['whole'], origin?: string) {
+  // (syncs as send-backs: taskphases.ts.)
   const split = Object.entries(whole.split)
-    .map(([phase, minutes]) => `${phase} ${workDuration(minutes, origin)}`)
+    .map(([phase, minutes]) => `${phase === 'syncs' ? 'send-backs' : phase} ${workDuration(minutes, origin)}`)
     .join(', ');
   const state = whole.complete ? 'Whole task' : 'Task so far';
   const shared =

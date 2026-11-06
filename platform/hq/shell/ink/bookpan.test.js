@@ -37,7 +37,7 @@ function paper(page = { w: 800, h: 20_000, ink: [], scraps: [] }) {
       remember() {},
       head: { update() {} },
     };
-  panning(desk, book, { drawing: () => false });
+  const table = panning(desk, book, { drawing: () => false });
   // (bare paper)
   const target = { closest: () => null };
   // (a finger's events: the first one down, unless id says another)
@@ -53,7 +53,7 @@ function paper(page = { w: 800, h: 20_000, ink: [], scraps: [] }) {
     });
   // (the Pencil coming down)
   const pen = y => fire('pointerdown', { pointerId: 9, pointerType: 'pen', clientX: 300, clientY: y });
-  return { book, finger, pen };
+  return { book, finger, pen, table };
 }
 // Frames at a whole ms each, every 16 ms from the first: Safari's clocks
 function play(first, n) {
@@ -69,6 +69,20 @@ test("a flick whose glide's first frame lands in the lift's own ms glides on", (
   const lifted = book.pan.y;
   play(50, 30);
   assert.ok(book.pan.y > lifted + 200, `glided on from ${lifted}: at ${book.pan.y}`);
+});
+
+test('a glide stops as the page turns: the next page never glides on with it', () => {
+  const { book, finger, table } = paper();
+  finger('pointerdown', 600, 0);
+  for (let t = 10; t <= 50; t += 10) finger('pointermove', 600 - 6 * t, t);
+  clock = 50;
+  finger('pointerup', 300, 50);
+  play(50, 2);
+  // (bookpages.js show1: the page turned)
+  table.letGo();
+  const turned = book.pan.y;
+  play(82, 30);
+  assert.equal(book.pan.y, turned, 'no further');
 });
 
 test("a glide stops where the page's reach ends", () => {

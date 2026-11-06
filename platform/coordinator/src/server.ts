@@ -170,6 +170,7 @@ import * as goingon from './goingon.ts';
 import * as predictionlog from './predictionlog.ts';   // each play's predictions logged where they moved, written a minute's at a time
 import * as snapshots from './snapshots.ts';   // the play's input kept hourly, for the backtest, written with the log
 import * as backtest from './backtest.ts';
+import * as adjusted from './adjusted.ts'; // past jobs' adjusted times
 import * as calibration from './calibration.ts';
 import * as accuracy from './accuracy.ts';
 import * as meetinggist from './meetinggist.ts';
@@ -210,6 +211,7 @@ import * as reviewBriefs from './reviewbriefs.ts';   // review runs' briefs a we
 import * as callouts from './callouts.ts';   // calls out to partners, filed by agents, approved by the board
 import * as callcard from './callcard.ts';   // their card on the desk phone, Call and Don't call
 import * as callsweep from './callsweep.ts';   // the dial, and the sweep every minute
+import * as callguestsweep from './callguestsweep.ts';   // a guest's part of the board's call, 12 months on
 import * as callline from './callline.ts';   // and the call itself: the voice line's routes, Twilio's word, the join page
 import * as callguests from './callguests.ts'; // the board's guest on its call.
 import * as callaway from './callaway.ts'; // (the board away, a guest carrying its call.)
@@ -1702,6 +1704,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const size = sizes.setSize(Number(b.job), String(b.time ?? ''), String(b.why ?? ''), agent);
     return Array.isArray(size) ? refusal(size) : { ok: true, size, ...moves.since(earlier) };
   },
+  // hq estimate adjust: past jobs' adjusted times, each beside its measurement with its reason (adjusted.ts).
+  'POST /api/agent/estimate/adjust': (b, me) => {
+    const agent = speaker(b.as, me);
+    if (!agent) return 403;
+    return refusal(adjusted.adjust(b.adjustments as adjusted.Adjustment[], agent));
+  },
   // hq estimate --accuracy: how well the estimates held, set against what happened (accuracy.ts)
   'GET /api/agent/estimate/accuracy': b => accuracy.report(b),
   // hq estimate --calibration: both layers' misses, the sizes by agent, area and sizer, the ETAs by lead (calibration.ts);
@@ -2415,6 +2423,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
   bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone
+  callguestsweep.startSweep(); // a guest's part of the board's call, 12 months after it
   watchGazette(); // new posts: a toast in HQ, the unread count, a push
   onair.watchOnAir(); // new episodes: a push
   studio.watch(); // the photo studio's waiting photos, once its key is in.

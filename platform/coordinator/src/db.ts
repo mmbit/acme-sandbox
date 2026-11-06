@@ -883,6 +883,9 @@ once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table
 once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
 once('2026-10-27-jobs-carry', () => lacks('jobs', 'carry') && db.exec('alter table jobs add column carry text'));
 db.exec('create index if not exists jobs_carry on jobs (carry) where carry is not null');
+// What a carry's commit changes, as the worker read it in its mirror (carries.ts): code: 1 when it changes anything a
+// push's checks run on, 0 when nothing (company files only). Its check is sized from carries of the same kind (matching.ts).
+db.exec('create table if not exists carry_commits (sha text primary key, code integer not null)');
 // Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
 // job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
 // names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.

@@ -91,24 +91,6 @@ test('an opened scrap zooms in to the most, and out past its least only as far a
   assert.equal(zoomWithin(1.5, far, view), 1.5);
 });
 
-test('a page of scraps at its fit never pans sideways, whatever its cards hold', () => {
-  // (a tall picture on a card fitted to its column, and ink drawn past its side on the opened scrap: their own boxes
-  // reach past the card's left, the card shows them inside it)
-  const tall = { x: 36, y: 100, w: 296, h: 643 },
-    stroke = {
-      size: 4,
-      points: [
-        [-80, -30],
-        [20, 40],
-      ],
-    },
-    laid = { w: 380, h: 2000, ink: [stroke], scraps: [tall] },
-    fit = view.w / laid.w;
-  const pans = unitsPans(laid, { ...view, top: 54 }, fit, 120);
-  assert.deepEqual([pans.x0, pans.x1], [0, 0], 'no way across');
-  assert.equal(pans.y0, -54 / fit, "up to its title's corner, the blur's room above it");
-});
-
 // (every page pinch-zooms, a page of scraps too)
 test("a page of scraps zooms in to the most and out to its masonry's fit, never past the paper's width", () => {
   assert.equal(unitsZoom(9, 1.2), ZOOM_MAX);

@@ -1,7 +1,10 @@
 // node --test src/mainline.test.ts   (main's history and HQ played in memory)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAIN_LINE, tellMainLine, type ToldMain } from './mainline.ts';
+import { execFileSync } from 'node:child_process';
+import { MAIN_LINE, checkedChange, tellMainLine, testedAreas, type ToldMain } from './mainline.ts';
+import { areaOf as gatesAreaOf } from '../../../shared/gates/repo.ts';
+import { SUITES } from '../../../shared/gates/suites.ts';
 
 const sha = (n: number) => n.toString(16).padStart(40, '0');
 // Main as commits 1..tip in a line, the mirror having those from `kept` on
@@ -72,4 +75,22 @@ test('a commit HQ heard of that the mirror has not sends the line as lost histor
   assert.equal(to.told.length, 2);
   assert.equal(to.told[1].lost, sha(50));
   assert.equal(to.heard(), sha(300));
+});
+
+test("a commit's kind follows what the push's checks run on: code, or a file in an area with tests", () => {
+  const tested = testedAreas(['platform/coordinator/src/a.test.ts', 'infra/test_sync.py', 'company/people/bolt.md']);
+  assert.deepEqual([...tested].sort(), ['infra', 'platform/coordinator']);
+  assert.equal(checkedChange(['company/people/bolt.md', 'knowledge/notes/a.md'], tested), false);
+  assert.equal(checkedChange(['company/people/bolt.md', 'platform/coordinator/README.md'], tested), true);
+  assert.equal(checkedChange(['theme/hq/look.css'], tested), true);
+  assert.equal(checkedChange(['company/package.json'], tested), true);
+  assert.equal(checkedChange([], tested), false);
+});
+
+test("the worker's reading of the checks' areas and test files is shared/gates' own, over the repo's files", () => {
+  const root = new URL('../../..', import.meta.url);
+  const files = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
+  const suite = (f: string) => Object.values(SUITES).some(s => s.files.test(f));
+  const differ = files.filter(f => String([...testedAreas([f])]) !== (suite(f) ? gatesAreaOf(f) : ''));
+  assert.deepEqual(differ, []);
 });

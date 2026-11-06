@@ -62,6 +62,9 @@ departments:
 #   finance       hears of money swings on the live apps: sales falling after steady ones, orders bringing in less,
 #                 refunds or unpaid orders jumping, ad spend up with sales flat (HQ's watch). A top-level `watch:` may
 #                 tune its thresholds by name (infra/products.md, "HQ's watch").
+#   estimates     runs the weekly estimate check (shared/routines/estimates.md): adjusts the times of past jobs a process
+#                 change made stale and re-sizes queued work that leans on them; only they and the CEO may write an
+#                 adjusted time (the Estimates playbook). Left out: the CEO.
 roles:
   reviewers: []
   consolidator: ceo

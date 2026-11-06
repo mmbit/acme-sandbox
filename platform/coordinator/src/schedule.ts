@@ -4,7 +4,7 @@ import { db } from './db.ts';
 import { REPO_DIR } from './config.ts';
 import { createJob, WORK_LEAD } from './jobs.ts';
 import { codeIn, codeOf } from './jobcodes.ts';
-import { companyFormats } from './company.ts';
+import { companyFormats, yamlFile } from './company.ts';
 import * as meetings from './meetings.ts';
 import { oneTaskThread } from './made.ts';
 import { projectDone } from './projectdone.ts';
@@ -39,6 +39,7 @@ function turn(week: string, date: string) {
 function due(e: Entry, t: ReturnType<typeof local>) {
   if (!e.at) return;
   if (e.week && !turn(e.week, t.date)) return;
+  if (e.each === 'agent') return dueEach(e, t);
   const every = e.at.match(/^every (\d+)h$/);   // every N hours, counted from local midnight
   if (every) {
     const n = Number(every[1]), hour = Number(t.time.slice(0, 2)), slot = `${t.date} ${String(hour - hour % n).padStart(2, '0')}h`;
@@ -53,6 +54,35 @@ function due(e: Entry, t: ReturnType<typeof local>) {
   if (fresh) run(e, slot);
 }
 
+// An entry with `each: agent` (schedulelist.ts) runs once a week for every agent on a department's desk in org.yaml, each
+// at its own moment (deskMoments), due from then until the week's end. Its slot is the week's Monday and the agent
+// ("2026-11-02 bolt"), so each agent runs once a week however a hire or a departure moves the moments. One agent's
+// refusal (createJob's: an engine no seat runs) is logged and leaves the others to run.
+function dueEach(e: Entry, t: ReturnType<typeof local>) {
+  const { monday, dayStart } = weekOf(t.date), now = dayStart + minutesOf(t.time);
+  for (const moment of deskMoments()) {
+    const slot = `${monday} ${moment.agent}`;
+    if (moment.minute > now || !db.prepare('insert or ignore into schedule_runs (id, slot) values (?, ?)').run(e.id, slot).changes) continue;
+    try { run(e, slot, moment); } catch (err) { console.error(`Schedule entry ${e.id} for ${moment.agent}:`, err); }
+  }
+}
+// The agents on a department's desk in org.yaml's order (never the board, alumni or a lead's team members, which org.yaml
+// doesn't seat), agent i of n at Monday 00:00 + i × 7 days / n: minutes into the week on the company's clock.
+type Moment = { agent: string; name: string; minute: number };
+const WEEK_MINUTES = 7 * 1440;
+function deskMoments(): Moment[] {
+  const desk = ((yamlFile('company/org.yaml')?.departments ?? []) as { agents?: { id: string; name?: string }[] }[])
+    .flatMap(d => d.agents ?? []);
+  return desk.map((a, i) => ({ agent: a.id, name: a.name ?? a.id, minute: Math.floor((i * WEEK_MINUTES) / desk.length) }));
+}
+// A day's week: its Monday, and how far into the week the day starts, in minutes
+function weekOf(date: string) {
+  const noon = Date.parse(`${date}T12:00:00Z`), daysIn = (new Date(noon).getUTCDay() + 6) % 7;
+  return { monday: new Date(noon - daysIn * 864e5).toISOString().slice(0, 10), dayStart: daysIn * 1440 };
+}
+const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+const clockOf = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
 // The job's prompt: the shared routine's text with the company's own additions after it, or the entry's prompt alone.
 function prompt(e: Pick<Entry, 'prompt' | 'routine'>) {
   if (!e.routine) return e.prompt ?? '';
@@ -63,27 +93,30 @@ function prompt(e: Pick<Entry, 'prompt' | 'routine'>) {
 
 // A routine that can't be read, or an entry whose project isn't its routine's,
 // leaves the slot open, so the entry runs once it can (and logs every minute till then).
-function run(e: Entry, slot: string) {
+// moment: the agent an entry for each agent runs for (dueEach), else the entry's own agent.
+function run(e: Entry, slot: string, moment?: Moment) {
   let text, project;
   try { text = prompt(e); project = routineProject(e); } catch (err) { db.prepare('delete from schedule_runs where id = ? and slot = ?').run(e.id, slot); throw err; }
   // (an entry's runs share its code, the entry's `code:` word: a standing task.)
   // (in its routine's project, each job a one-task thread there)
   const word = e.code?.toUpperCase(), code = word && codeIn({ project }, word);
   const title = `${e.title} (${slot})`;
-  const jobs = e.with ? meet(e, slot, text, code) : [createJob({ agent: e.agent, title, prompt: text,
+  const jobs = e.with ? meet(e, slot, text, code) : [createJob({ agent: moment?.agent ?? e.agent, title, prompt: text,
     schedule: { entry: e.id, routine: e.routine ?? null, slot },
     downtime: e.downtime === true, model: e.model, effort: e.effort, thread: null, code: code || undefined }).id];
   db.prepare('update schedule_runs set job = ?, kind = ?, routine = ? where id = ? and slot = ?')
     .run(jobs[0], typeof e.kind === 'string' ? e.kind : null, e.routine ?? null, e.id, slot);
   // (a meeting's seats share its thread: they aren't tasks, so its order holds none of them. threadorder.ts isTask)
-  const thread = oneTaskThread(project, { id: jobs[0], title: runName(e, slot) })!;
+  const thread = oneTaskThread(project, { id: jobs[0], title: runName(e, slot, moment?.name) })!;
   db.prepare('update jobs set thread = ? where id in (select value from json_each(?))').run(thread, JSON.stringify(jobs));
 }
 // A run's thread's name: the entry's title and its slot in plain words ("Weekly books check, 26 Oct", "Morning round,
-// 21 Oct 04:00")
-const runName = (e: Pick<Entry, 'title'>, slot: string) => {
-  const [, date, hour, time] = slot.match(/^(\d{4}-\d\d-\d\d)(?: (\d\d)h| (\d\d:\d\d))?/)!;
-  return `${e.title}, ${companyFormats().day(date, 'en', { short: true })}${hour ? ` ${hour}:00` : time ? ` ${time}` : ''}`;
+// 21 Oct 04:00", "Memory, Bolt, week of 2 Nov": an agent's run of an entry for each agent, named as org.yaml names it)
+const runName = (e: Pick<Entry, 'title'>, slot: string, name?: string) => {
+  const [, date, hour, time, agent] = slot.match(/^(\d{4}-\d\d-\d\d)(?: (\d\d)h| (\d\d:\d\d)| ([a-z0-9-]+)$)?/)!;
+  const day = companyFormats().day(date, 'en', { short: true });
+  if (agent) return `${e.title}, ${name ?? agent}, week of ${day}`;
+  return `${e.title}, ${day}${hour ? ` ${hour}:00` : time ? ` ${time}` : ''}`;
 };
 
 // An entry with `with:` sets a meeting now: its seats' jobs, its agent's first (the job its run records). An agent whose
@@ -152,8 +185,9 @@ function routineProject(e: Pick<Entry, 'id' | 'project'>) {
 
 // When an entry runs next, in the company's time and plain words: "today 18:00", "tomorrow 07:45", "Monday 07:30", "Mon 12
 // Oct 07:30" (a week or more away: a rotation's turn). One whose time has come today but hasn't run is "due now" (it runs
-// within the minute). `soon` orders them: minutes from the start of today, in the company's time.
-function nextRun(e: Pick<Entry, 'id' | 'at' | 'week'>, now = new Date()) {
+// within the minute). `soon` orders them: minutes from the start of today, in the company's time. An entry for each agent
+// runs next when its next agent's does.
+function nextRun(e: Pick<Entry, 'id' | 'at' | 'week' | 'each'>, now = new Date()) {
   const t = local(now), ran = (slot: string) => !!db.prepare('select 1 from schedule_runs where id = ? and slot = ?').get(e.id, slot);
   const day = (d: number) => { const x = new Date(Date.parse(`${t.date}T12:00:00Z`) + d * 864e5); return { date: x.toISOString().slice(0, 10), x }; };
   const f = companyFormats();
@@ -162,10 +196,18 @@ function nextRun(e: Pick<Entry, 'id' | 'at' | 'week'>, now = new Date()) {
   const say = (d: number, time: string) => { const { date } = day(d), [h, m] = time.split(':').map(Number);
     return { label: `${named(d, date)} ${time}`, soon: d * 1440 + h * 60 + m }; }, now_ = { label: 'due now', soon: -1 };
   if (!e.at) return null;
-  const every = e.at.match(/^every (\d+)h$/);
+  const every = e.at.match(/^every (\d+)h$/), moments = e.each === 'agent' ? deskMoments() : null;
   for (let d = 0; d < 7 * 53; d++) {
     const { date, x } = day(d);
     try { if (e.week && !turn(e.week, date)) continue; } catch { return null; }
+    if (moments) {
+      const { monday, dayStart } = weekOf(date), from = dayStart + (d ? 0 : minutesOf(t.time));
+      const open = moments.filter(m => m.minute < dayStart + 1440 && !ran(`${monday} ${m.agent}`));
+      if (!d && open.some(m => m.minute <= from)) return now_;
+      const first = open.find(m => m.minute >= from);
+      if (first) return say(d, clockOf(first.minute - dayStart));
+      continue;
+    }
     if (every) {
       const n = Number(every[1]), hour = Number(t.time.slice(0, 2)), slot = hour - hour % n;
       if (!(n > 0)) return null;
@@ -184,14 +226,14 @@ function nextRun(e: Pick<Entry, 'id' | 'at' | 'week'>, now = new Date()) {
 
 const next = (e: Entry) => { const n = nextRun(e); return { next: n?.label ?? null, soon: n?.soon ?? null }; };
 
-// An entry's time in plain words: "daily 07:00", "Mondays 08:00", "every 4 hours", "on demand"
-const when = (at: string) => { if (!at) return 'on demand'; const n = at.match(/^every (\d+)h$/)?.[1]; if (n) return `every ${n} hours`; const [d, t] = at.includes(' ') ? at.split(' ') : [null, at]; return d ? `${FULL[DAYS.indexOf(d)]}s ${t}` : `daily ${t}`; };
+// An entry's time in plain words: "daily 07:00", "Mondays 08:00", "every 4 hours", "weekly, each agent", "on demand"
+const when = ({ at, each }: Pick<Entry, 'at' | 'each'>) => { if (!at) return 'on demand'; if (each) return 'weekly, each agent'; const n = at.match(/^every (\d+)h$/)?.[1]; if (n) return `every ${n} hours`; const [d, t] = at.includes(' ') ? at.split(' ') : [null, at]; return d ? `${FULL[DAYS.indexOf(d)]}s ${t}` : `daily ${t}`; };
 
 // The recurring work as the board sees it (GET /api/schedule: On Air and the HUD's line): who, what, when in plain words,
 // when it last ran, when it runs next, and its project.
 export function recurring(list = entries()) {
   const last = db.prepare('select max(slot) as slot from schedule_runs where id = ?');
-  return list.map(e => ({ id: e.id, agent: e.agent, title: e.title, when: when(e.at) + (e.week ? `, week ${e.week}` : ''),
+  return list.map(e => ({ id: e.id, agent: e.agent, title: e.title, when: when(e) + (e.week ? `, week ${e.week}` : ''),
     downtime: e.downtime === true, last: (last.get(e.id) as { slot: string | null }).slot, ...next(e), project: projectOf(e) }));   // (next, soon)
 }
 
@@ -208,7 +250,7 @@ export function routines() {
     const soonest = schedules.toSorted((a, b) => (a.soon ?? Infinity) - (b.soon ?? Infinity))[0];
     const intervals = projectEntries.map(e => {
       const rotation = e.week && !takesTurns(projectEntries, e.at) ? `, week ${e.week}` : '';
-      return when(e.at) + rotation;
+      return when(e) + rotation;
     });
     const last = schedules.map(row => row.last).filter(Boolean).sort().at(-1) ?? null;
     return [project, { when: [...new Set(intervals)].join(' · '), next: soonest.next, soon: soonest.soon,
@@ -225,6 +267,7 @@ function takesTurns(list: Entry[], at: string) {
 export function runNow(id: string, now = new Date()) {
   const list = entries(), e = list.find(x => x.id === id);
   if (!e) return [404, `No recurring entry ${id}`];
+  if (e.each) return [400, `${id} runs once a week for each agent, each at its own time: it has no Run now`];
   keepProjects(list); // (one named since the last tick has its project too.)
   const t = local(now), slot = `${t.date} ${t.time}, on demand`;
   if (!db.prepare('insert or ignore into schedule_runs (id, slot) values (?, ?)').run(e.id, slot).changes)

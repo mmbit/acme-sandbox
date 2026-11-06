@@ -49,7 +49,8 @@ const about = (agent: string, id: number) => id ? db.prepare(`select id, title, 
 const CALL_MS = 3 * 3600_000;
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 // voice: the agent's own English voice on calls (company.ts voiceOf), for the
-// voice line. phone: a call on the phone line (Twilio), which has no screen to share pictures on.
+// voice line; voices: its voice in a language where it has another (voicesOf).
+// phone: a call on the phone line (Twilio), which has no screen to share pictures on.
 // What the line itself says when the agent can't answer: whether a Claude seat has room now (callSeat), and the company's
 // clock for the time a limit ends. respell: the company's words as the speech engines should say them (company.ts).
 const line = () => ({ seat: callSeat(), timeZone: timeZone(), respell: respellings() });
@@ -70,11 +71,11 @@ export function context(agent: string, lang: string, request = 0, again = '', ph
   if (again && !live) return 409;
   const req = about(agent, live ? live.request ?? 0 : request);
   if (live && guest)
-    return { prompt: fit(guestPrompt(spoken(lang), agent, live.id, guest)), token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, ...callModel(), ...line() };
+    return { prompt: fit(guestPrompt(spoken(lang), agent, live.id, guest)), token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, voices: who.voices, ...callModel(), ...line() };
   if (live) {  // a restart
     const p = heard(prompt(spoken(lang), agent, req, live.id, phone, JSON.parse(live.resumes ?? '[]'))), listed = [...new Set([...JSON.parse(live.listed) as number[], ...p.listed])];
     db.prepare('update call_tokens set listed = ? where hash = ?').run(JSON.stringify(listed), sha256(again));
-    return { prompt: p.text, token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, ...callModel(), ...line() };
+    return { prompt: p.text, token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, voices: who.voices, ...callModel(), ...line() };
   }
   const token = randomBytes(32).toString('base64url');
   db.prepare('delete from call_tokens where expires < ?').run(Date.now() - 86400e3);
@@ -89,7 +90,7 @@ export function context(agent: string, lang: string, request = 0, again = '', ph
   // (the board's other HQ screens show themselves on it: watchalong.ts startOnScreen.
   if (!phone) publish({ type: 'book', text: 'call', call });
   // call: HQ watches its follow-up by it. key: HQ's picture uploads for this call carry it (pictures.ts)
-  return { prompt: p.text, token, call, key: pictures.callKey(sha256(token)), voice: who.voice, ...callModel(), ...line() };
+  return { prompt: p.text, token, call, key: pictures.callKey(sha256(token)), voice: who.voice, voices: who.voices, ...callModel(), ...line() };
 }
 // The board can ring an agent again before its last call is followed up: a correction, or something else entirely. That
 // call carries on from the agent's calls still waiting for their follow-up (calls.resumes, kept for a restart): their
@@ -380,8 +381,7 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // only when a time it set itself will be missed or it asks; whether one is safe or tight and where new work goes is the
   // agent's judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
   // The call's language is the line's, one value for its voice, its ears and these words, and it holds against any
-  // other language in the briefing (talk of a meeting in Dutch on an English call). An answer is what we'll do, the
-  // rest when asked.
+  // other language in the briefing (talk of a meeting in Dutch on an English call) or a tool's answer. An answer is what we'll do, the rest when asked.
   // The call's notes read later without the call: per idea a sketch and full sentences of what was said; the page about
   // the call's subject, a fault in our tools on the list alone (write_down's page).
   // The board's ink in the call's notes is its agent's alone, and on the agent's own scraps it points and goes once the
@@ -389,8 +389,8 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   const spokenIn = LANGUAGES[lang].name;
   return `You are ${name}${pron}, ${role} at ${names().name}, an AI-run company. You're on a live voice call with the board (the human owner).
 The call's language is ${spokenIn}: HQ's language setting, in which the line voices your words and hears the board.
-Speak ${spokenIn} from your first word to your last, whatever language the briefing, the intercom, earlier calls or
-the work are in: talk of a meeting in another language is about that meeting, not this call. To have a call in another
+Speak ${spokenIn} from your first word to your last, whatever language the briefing, your tools' answers, the
+intercom, earlier calls or the work are in: talk of a meeting in another language is about that meeting, not this call. To have a call in another
 language, the board changes HQ's language and calls again.
 ${spokenAloud(lang)} When the board raises a
 problem or asks for something, say what we'll do about it, and stop there: not who it goes to, what you don't know

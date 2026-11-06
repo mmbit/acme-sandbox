@@ -11,9 +11,9 @@ import {
   runOf,
   RUN_COLUMNS,
   RUN_JOIN,
+  CARRY_CODE,
   sizeOf,
   type Basis,
-  type JobOrigin,
   type PastJob,
   type Run,
   type Work,
@@ -25,6 +25,7 @@ import type { ProspectiveRun } from './reviewplan.ts';
 import { playOrder } from './simulation.ts';
 import { loopSizes, SLOW_SHARE, type Pace } from './reviewtime.ts';
 import { fitIn, wholeSeconds } from './arithmetic.ts';
+import { countedMs } from './adjusted.ts';
 import { history, latestGiven, original } from './sizes.ts';
 import { corrected } from './sizerbias.ts';
 import * as threadorder from './threadorder.ts';
@@ -61,10 +62,7 @@ function slowOf(picks: PastJob[], usual: Size): Size {
   if (!sizeOf(picks)) return { agent_ms: usual.agent_ms * SLOW_GUESS };
   const at = (values: number[], least: number) => Math.max(wholeSeconds(fitIn(values, SLOW_SHARE) ?? 0), least);
   return {
-    agent_ms: at(
-      picks.map(j => j.agent_ms),
-      usual.agent_ms,
-    ),
+    agent_ms: at(picks.map(countedMs), usual.agent_ms),
   };
 }
 
@@ -73,7 +71,7 @@ type Row = Size & { job: number; picks: string; basis: string; guessed: number; 
 export function recordQueued(job: number, now = Date.now(), schedule?: Run) {
   const work = db
     .prepare(
-      `select j.agent, j.title, ${ORIGIN} origin from jobs j where j.id = ? and j.kind = 'work'
+      `select j.agent, j.title, ${ORIGIN} origin, ${CARRY_CODE} from jobs j where j.id = ? and j.kind = 'work'
       and not exists(select 1 from predictions p where p.job = j.id)`,
     )
     .get(job) as Work | undefined;
@@ -112,10 +110,11 @@ export function stored(job: number, pool = pastJobs()): Prediction | undefined {
 export function newWork(now: number) {
   const missing = db
     .prepare(
-      `select j.id, j.agent, j.title, ${ORIGIN} origin, ${RUN_COLUMNS} from jobs j ${RUN_JOIN} where j.kind = 'work'
-      and j.status in ${OPEN_JOBS} and not exists (select 1 from predictions p where p.job = j.id)`,
+      `select j.id, j.agent, j.title, ${ORIGIN} origin, ${CARRY_CODE}, ${RUN_COLUMNS} from jobs j ${RUN_JOIN}
+      where j.kind = 'work' and j.status in ${OPEN_JOBS}
+      and not exists (select 1 from predictions p where p.job = j.id)`,
     )
-    .all() as ({ id: number; agent: string; title: string; origin: JobOrigin } & Run)[];
+    .all() as (Work & { id: number; agent: string } & Run)[];
   if (missing.length) {
     const pool = pastJobs();
     const insert = db.prepare(`insert into predictions (job, made, agent_ms, picks, basis, guessed,

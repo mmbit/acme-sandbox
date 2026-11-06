@@ -3,9 +3,18 @@ import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { recording, cross, screen, sameInk } from './picture.mjs';
 import { playLine } from './call.mjs';
-import { MINI, UPRIGHT, DESKTOP, PREFERENCES, closeScrap, middleOf, openScrap, until, bookOpen } from './kit.mjs';
+import {
+  MINI,
+  UPRIGHT,
+  DESKTOP,
+  PREFERENCES,
+  closeScrap,
+  middleOf,
+  openScrapInMiddle,
+  until,
+  bookOpen,
+} from './kit.mjs';
 import { mouseOf } from './hands.mjs';
-import { paperBox } from './mouse.mjs';
 import { minimiseCall } from './callview.mjs';
 import { nothingDrawn } from './ink.mjs';
 
@@ -102,7 +111,7 @@ async function overlays(browser, c, viewport) {
     await cardNotMarked(s, PREFERENCES, '.bk-prefs', 'preferences');
     // (the colours on a scrap opened: the tools an opened scrap's.)
     const mouse = mouseOf(page);
-    await openScrap(page, mouse, undefined, middleOf(await paperBox(page)));
+    await openScrapInMiddle(page, mouse);
     await cardNotMarked(s, 'Pen', '.bk-palette', 'colours');
     await closeScrap(page, mouse);
     await bookOpen(page, false);

@@ -57,6 +57,26 @@ test('the cohort distinguishes kept calls, new jobs, published HQ changes and th
   assert.ok(after.start > 0);
 });
 
+test("HQ's queue rank reads the latest plan, kept or not, and never plays one for the asking", async () => {
+  const jobs = await import('./jobs.ts');
+  const observation = await import('./claimobservation.ts');
+  const plays = () =>
+    Object.entries(observation.listCohorts()[0].summary).reduce(
+      (n, [reason, s]) => n + (reason === 'kept' ? 0 : s.count),
+      0,
+    );
+  const plan = ordering.current().timings;
+  const queued = h.queue({ agent: 'bolt' });
+  const before = plays();
+  const [row] = jobs.jobRows('j.id = $id', Date.now(), { id: queued });
+  assert.equal(typeof row.rank, 'number', 'ranked');
+  assert.equal(plays(), before, 'no play for the rank');
+  assert.equal(ordering.lastTimings(), plan, 'the plan played before the job was queued');
+  const next = ordering.current().timings;
+  assert.equal(plays(), before + 1, "the claim's read plays it");
+  assert.equal(ordering.lastTimings(), next);
+});
+
 test('a kept plan still reads each claim whether a job it waits on has merged since', () => {
   const prior = h.ended({ agent: 'bolt' });
   h.storedPr(9101, prior, 'open');

@@ -13,9 +13,8 @@ export function groupsOf(play) {
 export const newestPage = play =>
   landingPage(play.route('/api/notebooks/pages', { notebook: mineOf(play) }).pages, p => p.sending || !!p.sent);
 const mineOf = play => play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
-// A scrap as the page shown draws it, on screen: its photo, the right edge of its card, its words on it, the paper, and
-// the left of the tools' island over its right edge (null: not drawn there yet). On the grid, or on its own sheet
-// while it's opened (README, A page of scraps).
+// A scrap as the page shown draws it, on screen: its photo, the right edge of its card, its words on it and the paper
+// (null: not drawn there yet). On the grid, or on its own sheet while it's opened (README, A page of scraps).
 export const shownScrap = (page, g) =>
   page.evaluate(g => {
     const el =
@@ -31,9 +30,5 @@ export const shownScrap = (page, g) =>
       right: Math.max(r.right, card?.getBoundingClientRect().right ?? 0),
       words: words?.value ?? words?.textContent ?? '',
       paper: document.querySelector('#book .bk-desk:not(.bk-turn-picture *)').getBoundingClientRect().toJSON(),
-      // (the paper's right side where no tools show, as on the grid)
-      tools: document.querySelector('#book .bk-strip').checkVisibility()
-        ? document.querySelector('#book .bk-strip').getBoundingClientRect().left
-        : document.querySelector('#book .bk-desk:not(.bk-turn-picture *)').getBoundingClientRect().right,
     };
   }, g);

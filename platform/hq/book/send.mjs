@@ -347,7 +347,7 @@ const stampOf = page =>
       }),
       lock: !!document.querySelector('#book .bk-view-locked')?.checkVisibility(),
       // (a guest's Undo on the bar, the page's own none: the Ink README, The book's frame.
-      history: [...document.querySelectorAll('#book .bk-bar :is(.bk-undo, .bk-redo)')]
+      history: [...document.querySelectorAll('#book .bk-bar .bk-undo')]
         .filter(b => b.checkVisibility())
         .map(b => b.ariaLabel),
       toolsHidden: !document

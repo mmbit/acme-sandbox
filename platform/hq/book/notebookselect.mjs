@@ -3,11 +3,11 @@
 // Move to page… and Delete take it. Move to page… takes any pick: everything on the page, or one line of a drawing,
 // lifted out of it onto a new page from the list's end. On a phone, every button of that bar on the paper and on one
 // line, held sideways too, the bar over the picture. Each in its scrap opened from the grid (bookscrapopen.js), where
-// Select picks: the grid itself takes no pick.
+// Select picks: the grid itself takes no pick, nor all of it with ⌘/Ctrl+A.
 import assert from 'node:assert/strict';
 import { group, ids, open } from './notebook.mjs';
 import { inSight, onPaper, tool } from './notebookscreen.mjs';
-import { DESKTOP, openScrap, until } from './kit.mjs';
+import { DESKTOP, closeScrap, middleOf, openScrap, until } from './kit.mjs';
 
 const PHONE = { width: 390, height: 844 },
   // (held sideways the book opens beside HQ, its paper about 340 px high: the bar's rows go over the picture)
@@ -30,6 +30,8 @@ export function notebookSelectStories(c) {
       barOnPhone(browser, c),
     "the Notebook on a phone held sideways: Select's bar over a lone picture low on the paper, whole on it": browser =>
       barOnPhone(browser, c, PHONE_SIDEWAYS),
+    "the Notebook on a desktop: Select all picks nothing on the grid, and on an opened scrap frames what's on it":
+      browser => selectAll(browser, c),
   };
 }
 
@@ -123,6 +125,52 @@ function aloneBox(ink) {
   const k = boxes.findIndex((a, i) => a[0] >= 0 && a[1] >= 0 && boxes.every((b, j) => i === j || apart(a, b)));
   assert.ok(k >= 0, 'a line of the drawing clear of the others');
   return [boxes[k].slice(0, 2), boxes[k].slice(2)];
+}
+
+// Select picked in a scrap, put back down: ⌘/Ctrl+A on the grid frames nothing (nor selects the page's words), and in
+// the drawing's scrap opened again it frames the drawing's lines where the sheet shows them.
+async function selectAll(browser, c) {
+  const { page, play, errors, done } = await open(browser, c, DESKTOP, { hasTouch: false, deviceScaleFactor: 1 });
+  const mouse = { tap: ([x, y]) => page.mouse.click(x, y) },
+    frame = page.locator('#book .bk-sel');
+  try {
+    await opened(page, DRAWING);
+    await tool(page, 'Select');
+    await closeScrap(page, mouse);
+    assert.equal(await page.locator('#book .bk-desk').getAttribute('data-tool'), 'select', 'Select still picked');
+    const card = await page.locator(`#book .bk-unit[data-unit="${DRAWING}"]`).filter({ visible: true }).boundingBox();
+    await page.mouse.move(...middleOf(card));
+    await page.keyboard.press('Control+a');
+    // (two frames for a frame to show)
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.equal(await frame.count(), 0, 'nothing framed on the grid');
+    assert.equal(await page.evaluate(() => getSelection().toString()), '', "nor the page's words selected");
+    await c.shot('notebook-select-all-grid', page);
+    await opened(page, DRAWING);
+    await page.mouse.move(...middleOf(await page.locator('#book .bk-sheet').boundingBox()));
+    await page.keyboard.press('Control+a');
+    await frame.waitFor();
+    const lines = group(play, DRAWING).ink.flatMap(s => s.points.map(p => [p[0], p[1]])),
+      on = await onPaper(page, lines),
+      b = await frame.boundingBox(),
+      xs = on.map(p => p[0]),
+      ys = on.map(p => p[1]),
+      // (the frame round the lines' width too: a few px past their points)
+      gaps = [
+        Math.min(...xs) - b.x,
+        Math.min(...ys) - b.y,
+        b.x + b.width - Math.max(...xs),
+        b.y + b.height - Math.max(...ys),
+      ];
+    assert.ok(
+      gaps.every(g => g >= 0 && g < 24),
+      `the frame round the drawing as the sheet shows it: ${gaps.map(Math.round)}`,
+    );
+    await c.shot('notebook-select-all-scrap', page);
+    c.noErrorsIn(errors);
+  } finally {
+    await done();
+  }
 }
 
 async function barOnPhone(browser, c, screen = PHONE) {

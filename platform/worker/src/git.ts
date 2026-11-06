@@ -14,6 +14,7 @@ import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { JOB_BRANCH, PROFILE_BRANCH, SHA, redact } from './safety.ts';
 import { MARKS, countedLines, markedPaths, numstatRow, type FileLines } from './countedlines.ts';
+import { checkedChange, testedAreas } from './mainline.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -1006,27 +1007,44 @@ export function gitFlow(o: {
     return { sha, base: baseSha, tree, baseTree };
   }
 
-  // Main's last `count` commits along its first parents, newest first, each with its parents (worker.ts tellMain,
+  // Main's last `count` commits along its first parents, newest first, each with its parents and whether it changes
+  // anything a push's checks run on (worker.ts tellMain, mainline.ts)
   function mainLine(count: number) {
-    return commitsOf(root('rev-list', '--first-parent', '--parents', `--max-count=${count}`, `refs/heads/${base}`));
+    return lineOf(`--max-count=${count}`, `refs/heads/${base}`);
   }
 
-  // The commits main took after `seen` along its first parents, oldest first, each with its parents: all on its line that
+  // The commits main took after `seen` along its first parents, oldest first, as mainLine has them: all on its line that
   // `seen` doesn't reach (main's history replaced since: its new commits back to where the two part). Undefined when the
   // mirror has no such commit (worker.ts tellMain)
   function mainSince(seen: string) {
     if (spawnSync('git', inMirror(['cat-file', '-e', `${seen}^{commit}`])).status !== 0) return undefined;
-    return commitsOf(root('rev-list', '--first-parent', '--parents', '--reverse', `refs/heads/${base}`, `^${seen}`));
+    return lineOf('--reverse', `refs/heads/${base}`, `^${seen}`);
   }
 
-  // rev-list --parents's lines: each commit and its parents
-  const commitsOf = (lines: string) =>
-    lines
-      ? lines.split('\n').map(line => {
-          const [sha, ...parents] = line.split(' ');
-          return { sha, parents };
-        })
-      : [];
+  // git log's first-parent line, each commit with the paths it changes against its first parent (-z: unquoted, each
+  // commit's header after a \x01), checked against the areas holding tests at main's tip
+  function lineOf(...range: string[]) {
+    const read = (...args: string[]) =>
+      execFileSync('git', inMirror(args), { encoding: 'utf8', env, maxBuffer: COMMAND_OUTPUT_MAX_BYTES });
+    const log = read(
+      'log',
+      '--first-parent',
+      '--diff-merges=first-parent',
+      '--name-only',
+      '-z',
+      '--format=%x01%H %P',
+      ...range,
+    );
+    const tested = testedAreas(read('ls-tree', '-r', '--name-only', '-z', `refs/heads/${base}`).split('\0'));
+    return log
+      .split('\x01')
+      .slice(1)
+      .map(entry => {
+        const [header, ...paths] = entry.split('\0');
+        const [sha, ...parents] = header.trim().split(' ').filter(Boolean);
+        return { sha, parents, code: checkedChange(paths.map(p => p.replace(/^\n/, '')).filter(Boolean), tested) };
+      });
+  }
 
   return { ensureMirror, gcMirror, fetchMirror, refreshMirror, mergeBase, forAgent, testedCode, mainLine, mainSince }; // (testedCode)
 }

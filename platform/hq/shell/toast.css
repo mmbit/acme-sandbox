@@ -1,13 +1,15 @@
 /* The shared toast and tap covers for words that hold job links. */
+/* centred on the page, in the room the book beside it leaves (--book-room on <html>): the toasts lie on <html> beside
+   the book (shell/ink/book.js), out of the page's width queries. */
 #toasts {
   position: fixed;
   top: calc(70px + var(--sat));
-  left: 50%;
+  left: calc((100vw - var(--book-room, 0px)) / 2);
   transform: translateX(-50%);
   display: grid;
   gap: 8px;
   z-index: 5;
-  width: min(92cqw, 420px);
+  width: min(calc(0.92 * (100vw - var(--book-room, 0px))), 420px);
 }
 .toast {
   -webkit-user-select: none;

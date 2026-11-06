@@ -165,6 +165,14 @@ where it suffices.
   promise on it is an item on the call's list, which the call's follow-up hands out with the transcript, so nothing on
   it is queued twice (`platform/coordinator/src/ink/callnotes.ts` ended, `notebooksend.ts` and `ink/booksend.ts`
   sendPage). Before it carries, Onlyonery's agreement is asked through the Overseer.
+- On a call's notes page only the call's agent reacts to the board's ink, for every company, with no setting: the
+  book's judge never reads a call's page, live or ended, and its prompt replies elsewhere only on a real ask, never an
+  order to build (`platform/coordinator/src/ink/bookjudge.ts`). The board's or its guest's ink on the agent's own scrap
+  there, and a reply on one of its versions, point while they talk (`ink/callpointers.ts`): the agent gets it as a
+  mark, the scrap or version with the ink over it, no note is sent, and it goes once the agent's turn on it is done
+  (`POST /api/voice/pointed`, `platform/voice/drawing.py`). After the call, a reply on one of the agent's versions with
+  ink alone stays on the page, read by the call's follow-up, and sends no note; words under the answer still go
+  (`notebooksend.ts` replyTo). Carried 6 November; a switch only if Knop asks for one.
 - Late notices only for times the board set, and any time told is the four-in-five one, for every company, with no
   setting: a window's time is the board's only when it named it itself (`hq window --board-set`, a call promise with
   `board_set`, `hq item add --board-set`: `deadline_by` BOARD, `platform/coordinator/src/windows.ts`), and only its
@@ -182,3 +190,8 @@ where it suffices.
   scrap's snip, and `POST /api/book/read`, `written.js` and the pen's word edits (`penwords.js`, `penedit.js`,
   `postitpen.js`) are gone. Carried to Onlyonery too (2 November): the board's own rule for its handwriting (call
   176: a model reads the ink, nothing parses it), and no code of Onlyonery's used them.
+- The tips book's stills of HQ itself, where the deck's picture shows what isn't built
+  (`platform/hq/shell/booktipslist.js`): Onlyonery's `theme/hq/tips/bars-final.jpg` (the bar's ‹ and › with the count,
+  and the chapter's pages listed by name) and `pen-button.jpg` (Settings › Pin on HQ switched on, HQ's pin at the
+  corner) replace the deck's before/now slides, and those two tips' alts describe the stills. Knop has its own two
+  stills under the same names.

@@ -2,8 +2,8 @@
 // - In its middle: the page before, where the page is in its chapter ("3 / 12") and the page after. "3 / 12" opens the
 //   notebook's pages by name.
 // - At its left the overview (on a page only: the overview shows all the pages already, a page opens by its tile), at
-//   its right the dots. New page folds into the dots menu. A guest's Undo of its send is a pill of its own left of
-//   the bar (bookui.js).
+//   its right the dots. New page folds into the dots menu. A guest's Undo of its send stands beside its Send, before
+//   the dots (bookui.js).
 // - The dots menu: Rename page (its title written where it shows, booktitle.js), Tear off and send (booktear.js),
 //   Archive this page (into the overview's archived pages, bookshelf.js) and Give a copy… (to a guest, bookgive.js).
 //   Then Preferences for this device (bookprefs.js).
@@ -76,8 +76,8 @@ export function mountControls(book, act) {
   };
 }
 // The bar's Undo, only on a guest's page whose send can still be taken back: in its seconds to undo, its step still
-// there (bookpagesend.js). The page itself takes no ink, so drawing's Undo and Redo are an opened scrap's
-// (bookscrapopen.js), the keys' on the page too.
+// there (bookpagesend.js). The page itself takes no ink: the Undo and Redo keys show on an opened scrap
+// (bookscrapopen.js), and on the page ⌘Z still takes back its last step (bookundokeys.js).
 function historyKeys(book, page) {
   const undoable = !!scope && !!page?.sending && book.steps.some(s => s.page === page);
   for (const b of island('history').children) b.hidden = !undoable;

@@ -2002,6 +2002,8 @@ test('a push that breaks a test goes back to its author before any review; one t
   assert.equal(rest.length, 0, 'no review');
   assert.match(fix.title, /^Fixing the tests/);
   assert.ok(fix.prompt.includes('lib/a.test.ts: sums two numbers'), fix.prompt);
+  // (its own files again, never the whole suites the push runs)
+  assert.doesNotMatch(fix.prompt, /npm run tests/);
   await submit(n, { files: NORMAL, gates, tests: { passed: true, report: 'Tests passed: 1 area against origin/main, 3 s\n- lib (node --test, 1 file): 4 passed, 3 s' } }, fix);
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
   const [panelist] = await claim(n);

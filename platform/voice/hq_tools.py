@@ -636,23 +636,29 @@ TOOLS += [
 TOOLS += [
     {'name': 'draw_picture', 'description': "Draw a picture into the call's notes: a diagram, a chart, a sketch of how "
      'something fits together, whenever the board asks to see something drawn or a drawing says it better than words. '
-     # (a note of what was said)
-     'It is also how you note what was said, so someone reading the notes later understands it without the call: '
-     'each idea or point a small sketch of it beside full sentences saying what was said and by whom, and why, their '
-     "vision in their own terms rather than keywords (a little shop page with the price circled, and beside it: \"Sam "
-     'wants the price seen first: customers asked twice last week, so it moves up next to the photo, as big as the '
-     'title."). One drawing per idea, and a second right after it when its words need more room. When you organise the '
-     'notes again, draw the new ones in place of the old (change_note deletes them), never a second list beside them. '
+     # (a note of what was said, one per topic as the talk goes; text fitted by drawing.ts)
+     'It is also how you note what was said, as the talk goes, so someone reading the notes later understands it '
+     'without the call: a note of its own for each topic, drawn once the talk has settled it or moved on from it, '
+     'never everything in one note at the end (a talk about a poster\'s two layers, who it\'s for and its print size '
+     'is three notes, not one). Each has full sentences saying what was said and by whom, and why, their vision in '
+     'their own terms rather than keywords, beside a small sketch of it where one helps (a little shop page with the '
+     'price circled, and beside it: "Sam wants the price seen first: customers asked twice last week, so it moves up '
+     'next to the photo, as big as the title."). Note more rather than less, and a second drawing right after one '
+     'when its words need more room. When a topic comes back, or you organise the notes again, draw the new ones in '
+     'place of the old (change_note deletes them), never a second list beside them. '
      'Write it as one SVG, <svg viewBox="0 0 640 480">…</svg>: 640 wide and about as tall or less. The notes show it '
-     'at about half that size, so keep words at font-size 28 or more, about 0.55 of the font-size wide a letter, each '
-     "line a <tspan> of its own (SVG doesn't wrap). The notes draw it in the company's own look, so give no colours, "
-     "line widths or fonts: every shape is an outline in one ink, its words in the company's type. A class says more: "
-     "accent fills the one shape the "
+     'at about half that size, so keep words at font-size 28 or more. Put each label as one <text> in the shape it '
+     'names, at its middle (text-anchor middle) or just inside its left edge, and a sentence as one <text> too: the '
+     'notes measure every text in the type it\'s drawn in and fit it to its shape (wrapped at its spaces, a little '
+     'smaller, or the shape made bigger round it) and keep it inside the picture, so never guess widths; a line '
+     'break of your own is a <tspan> with its own x and dy. The notes draw it in the company\'s own look, so give no '
+     "colours, line widths or fonts: every shape is an outline in one ink, its words in the company's type. A class "
+     'says more: accent fills the one shape the '
      'picture is about (one a picture), shade fills a shape with dots (never under words), arrow puts an arrowhead at '
      'the end of a line or path, thin draws a line at half weight, and muted makes words quieter. It goes at the end '
      'of the notes as a picture the board can draw on, as the board watches, and asks for nothing: what the team must '
-     'do is written down (write_down). Its answer shows you the picture as the board sees it: if words overlap or run '
-     'off it, delete it (change_note) and draw it again.',
+     'do is written down (write_down). Its answer shows you the picture as the board sees it and what was fitted: if '
+     'words still cover each other or it isn\'t clear, delete it (change_note) and draw it again.',
      'inputSchema': {'type': 'object', 'required': ['svg'], 'additionalProperties': False, 'properties': {
          'svg': {'type': 'string', 'minLength': 1,
                  'description': 'the drawing, from <svg viewBox="0 0 640 480"> to its </svg>'}}}},

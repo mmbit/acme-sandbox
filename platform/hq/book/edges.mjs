@@ -96,7 +96,7 @@ function cornerShown() {
   return { left: r.left, top: r.top, paper: desk.getBoundingClientRect().left };
 }
 // Every 8 px of the book's paper that isn't the page or a control: an island, a bookmark, the pull tab, the cover's
-// edge, the open asks' counter (a few, for the message). (no Undo pill)
+// edge, the open asks' counter (a few, for the message).
 function notPage() {
   const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
     missed = [];

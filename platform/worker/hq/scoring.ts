@@ -1,5 +1,5 @@
 // How the estimates score against what happened (the coordinator's calibration.ts, backtest.ts and accuracy.ts): hq
-// estimate --calibration, hq estimate --backtest [--save <file>], and --accuracy's thread matching.
+// estimate --calibration, hq estimate --backtest [--save <file>], and --accuracy's thread and carry matching.
 import { writeFileSync } from 'node:fs';
 import type { TaskAudit } from '../../coordinator/src/taskaudit.ts';
 import * as api from './api.ts';
@@ -72,6 +72,7 @@ type Calibration = {
     given_sizes: Spread;
     given_sizes_corrected: Spread;
   };
+  adjusted?: { done: number; set: number };
   eta: Lead[];
   threads: Threads;
 };
@@ -127,6 +128,10 @@ function printCalibration(c: Calibration) {
     `  Sizes given by agents and models, as given: ${given.count ? `${plural(given.count, 'job')}, ${spreadWords(given)}` : 'none.'}`,
     `    the same, as the play now counts them: ${corrected.count ? spreadWords(corrected) : 'none.'}`,
   );
+  if (c.adjusted)
+    print(
+      `  Adjusted times (a past job's cost now, beside its measurement; these sizes stay on the measurement): ${plural(c.adjusted.done, 'job')} of the window's carry one; ${plural(c.adjusted.set, 'past job')} adjusted in the window.`,
+    );
   print(
     '',
     "Task merge projections against the landings: the prediction log's row standing that long before each landing.",
@@ -227,6 +232,16 @@ export function byThread(b: ByThread) {
     `  on the ${plural(b.jobs, 'job')} with 3 or more of its deliverable done before it:`,
     `    agent, kind and words (the mean): ${b.usual.count ? spreadWords(b.usual) : 'no size'}`,
     `    the same within its deliverable: ${b.thread_first.count ? spreadWords(b.thread_first) : 'no size'}`,
+  );
+}
+
+export type Carries = { jobs: number; now: Spread; mixed: Spread };
+export function carries(c: Carries) {
+  const words = (s: Spread) => (s.count ? spreadWords(s) : 'no jobs');
+  print(
+    `  mechanical carry checks, worker occupancy: ${plural(c.jobs, 'job')}`,
+    `    on the latest of their own kind (code, or nothing the checks run on), HQ's way now: ${words(c.now)}`,
+    `    on the latest of every kind, as before: ${words(c.mixed)}`,
   );
 }
 

@@ -1,5 +1,6 @@
 // The select tool's cut, copy, paste, duplicate and delete (bookselect.js), and its keys: Delete or Backspace, ⌘ or
-// Ctrl with X, C, V, D (a duplicate a little down and right) and A (all on the page shown), Escape to let go, and the
+// Ctrl with X, C, V, D (a duplicate a little down and right) and A (all on the page shown; on a Notebook page's grid,
+// nothing), Escape to let go, and the
 // arrow keys to nudge (Shift: ten times as far). The bar beside the selection duplicates, moves to another page and
 // deletes with a Pencil or a finger; a tap on bare paper brings the Paste bubble for what a key copied
 // (bookselectpaste.js).
@@ -131,6 +132,9 @@ function all(clip) {
     view = sel.book.view(),
     page = view?.page;
   if (!page?.ink) return false;
+  // (a page's grid takes no pick, nor all of it: the key does nothing there, and Select picks on an opened scrap.
+  // README, The board's rules: The tools are an opened scrap's.)
+  if (page.groups && !page.focus) return true;
   choose(sel, view, { ink: page.ink.slice(), scraps: page.scraps.slice(), texts: page.texts.slice() });
   return true;
 }

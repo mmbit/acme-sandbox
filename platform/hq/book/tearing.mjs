@@ -3,8 +3,7 @@
 // (the blur)
 import assert from 'node:assert/strict';
 import { inputs, mouseOf } from './hands.mjs';
-import { QUIET_MS, UPRIGHT, closeScrap, middleOf, openScrap } from './kit.mjs';
-import { paperBox } from './mouse.mjs';
+import { QUIET_MS, UPRIGHT, closeScrap, openScrapInMiddle } from './kit.mjs';
 import { blurred } from './islands.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
 import { en } from '../shell/ink/notebookwordsen.js';
@@ -44,7 +43,7 @@ export async function notATearStory(browser, c) {
     ]);
     // (on a scrap opened, where the tools are)
     const mouse = mouseOf(page);
-    await openScrap(page, mouse, undefined, middleOf(await paperBox(page)));
+    await openScrapInMiddle(page, mouse);
     const key = await page.evaluate(() => {
       const tools = [...document.querySelectorAll('#book .bk-strip .bk-island button')],
         r = tools.find(b => b.offsetParent).getBoundingClientRect();

@@ -3,9 +3,8 @@
 // iOS's long-press callout where the engine knows it; while the intercom's words still select and copy. Run it in
 // WebKit too (--webkit), the iPad's engine.
 import assert from 'node:assert/strict';
-import { DESKTOP, UPRIGHT, heard, middleOf, nothingMoving, openScrap, ui } from './kit.mjs';
+import { DESKTOP, UPRIGHT, heard, nothingMoving, openScrapInMiddle, ui } from './kit.mjs';
 import { mouseOf } from './hands.mjs';
-import { paperBox } from './mouse.mjs';
 import { watchedPage } from './start.mjs';
 
 // c: book-check.mjs's played store and helpers
@@ -48,7 +47,7 @@ async function stray(browser, c) {
       // the notebook open: every point of it but its form fields, and on a scrap opened a drag down its strip and on
       // over HQ (the tools an opened scrap's)
       assert.deepEqual(await selectable(page, 'book'), [], `the notebook's controls select nothing (${size})`);
-      await openScrap(page, mouseOf(page), undefined, middleOf(await paperBox(page)));
+      await openScrapInMiddle(page, mouseOf(page));
       const strip = await page.locator('#book .bk-strip').boundingBox();
       await dragged(page, [strip.x + strip.width / 2, strip.y + 8], [8, strip.y + strip.height - 8]);
       assert.equal(await selected(page), '', `a drag down the notebook's strip selects nothing (${size})`);

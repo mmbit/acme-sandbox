@@ -26,5 +26,6 @@ Two or three lines: voice, quirks, what they care about.
 One line per notable piece of work, with a link.
 
 ## Working memory
-What I'm in the middle of and what to remember next session. Under 40 lines; lasting knowledge goes to `knowledge/notes/`.
+What I'm in the middle of, what I've learned about working here, things to remember next session: rewritten to
+what's true now, no size limit (the Memory playbook). Lasting knowledge others need goes to `knowledge/notes/`.
 ```

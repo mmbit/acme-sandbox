@@ -266,6 +266,23 @@ test('work a timed thread with no task yet needs takes its window: the claim giv
   assert.ok(latest != null && latest < thread(meeting).deadline!, 'its latest start comes before the meeting');
 });
 
+test("a thread's served window: up each serving thread's own line, the earliest at any depth, none through a loop", async () => {
+  const [windows, askwindow] = [await import('./windows.ts'), await import('./askwindow.ts')];
+  const source = h.dueThread({ deadline: Date.now() + 5 * HOUR }),
+    [top, mid, leaf] = [opened(), opened(), opened()];
+  windows.inherit(top, source);
+  assert.deepEqual(plan.need(top, mid, 'juno'), { ok: true });
+  assert.deepEqual(plan.need(mid, leaf, 'juno'), { ok: true });
+  assert.deepEqual({ ...askwindow.servedWindow(leaf) }, { thread: top, deadline: thread(source).deadline });
+  const sooner = h.dueThread({ deadline: Date.now() + 2 * HOUR });
+  assert.deepEqual(plan.need(sooner, leaf, 'juno'), { ok: true });
+  assert.deepEqual({ ...askwindow.servedWindow(leaf) }, { thread: sooner, deadline: thread(sooner).deadline });
+  const [a, b] = [opened(), opened()];
+  db.prepare('update threads set deadline_from = ? where id = ?').run(b, a);
+  db.prepare('update threads set deadline_from = ? where id = ?').run(a, b);
+  assert.equal(askwindow.servedWindow(a), null, 'a looped line has no window, as thread_windows leaves it out');
+});
+
 test('follow-ups inherit one changing deliverable deadline while remaining within seat pacing', async () => {
   const deliverable = opened();
   const owner = await h.start({ agent: 'moss', title: 'Make the shop', thread: deliverable });

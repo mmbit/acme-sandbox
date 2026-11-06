@@ -24,11 +24,9 @@ Every session pays for its start once in full and again on each turn, so context
 From the report's "up-front context per kind of job" (or HQ's Numbers, Tokens): each kind's median opening and its
 share of the kind's tokens, against last week's line. A kind whose opening grew by a tenth or more: find what came in.
 
-- The parts every work session loads: the shared memory index (`MEMORY.md` in your home's memory folder; keep it
-  under 16 KB, one line per memory that says when to open it: stage a compaction as the docs-sweep routine says), `AGENTS.md`, the
-  briefing (the worker's `briefing()`, and the brief, open-jobs list and lines it adds), and Claude Code's own system
-  prompt, tools and skills (a new CLI can add some: the ones only a person at a terminal uses go on the worker's off
-  list).
+- The parts every work session loads: `AGENTS.md`, the briefing (the
+  worker's `briefing()`, and the brief, open-jobs list and lines it adds), and Claude Code's own system prompt, tools
+  and skills (a new CLI can add some: the ones only a person at a terminal uses go on the worker's off list).
 - The first reads the briefing asks for: profiles over 20 KB are read into every job of their agent.
 - For each part that grew: is it relevant to most of the sessions that read it? What isn't goes, moves to where it's
   looked up when needed, or is loaded only for the kinds that use it.

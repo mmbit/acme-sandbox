@@ -287,6 +287,15 @@ test("an agent's voice on calls is org.yaml's, else one fitting their pronouns, 
   } finally { writeFileSync(org, before); }
 });
 
+test("an agent's voice in another language is org.yaml's voices, by language, and only names that can be a voice", async () => {
+  const org = `${repo}/company/org.yaml`, before = readFileSync(org, 'utf8');
+  writeFileSync(org, before.replace('name: Kit,', 'name: Kit, voices: { nl: anna, de: "Not a Name", fra: anna, en: [jane] },'));
+  try {
+    const voices = async (agent: string) => (await h.voice('call-context', { agent, lang: 'nl' })).body.voices;
+    assert.deepEqual([await voices('kit'), await voices('dex')], [{ nl: 'anna' }, {}]);
+  } finally { writeFileSync(org, before); }
+});
+
 test('an edited org.yaml or note is what HQ shows next, even at the same size', async () => {
   const org = `${repo}/company/org.yaml`, note = `${repo}/company/playbooks/support.md`;
   writeFileSync(note, '# Support\n\nThe first words.\n');

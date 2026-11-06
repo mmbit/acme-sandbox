@@ -1,8 +1,8 @@
 // book-check.mjs's stories of the Notebook's page with nothing to draw with on it (shell/ink/bookstrip.css,
 // bookcontrols.js, bookrow.js unitsPans, bookwrite.js drawable, bookmarks.css, book.css), on the played Notebook
 // seeded as dev mode's (mock/notebook.json), its last page holding a tall picture:
-//   - a phone: one column of scraps in the middle, as far from either side; no tools, Undo or Redo on it; its bookmarks
-//     big enough to see and hit and clear of the column; its pull tab flush with the screen's edge. A finger swiped
+//   - a phone: one column of scraps, whole on the screen; no tools, Undo or Redo on it; its bookmarks big enough to see
+//     and hit and clear of the column; its pull tab flush with the screen's edge. A finger swiped
 //     sideways moves none of it. A scrap opened by a finger's tap has its tools, Undo and Redo, which go with Done.
 //   - a phone: a finger's second tap as a scrap flies up, and again as it flies back down, inks neither the scrap nor
 //     the grid, on the screen or in the store.
@@ -19,8 +19,6 @@ import { DESKTOP, UPRIGHT, closeScrap, middleOf, openScrap, until } from './kit.
 const PHONE = { width: 390, height: 844 };
 // the seed's page the book opens at, and its scrap that's given a picture taller than any card holds
 const TALL = { group: 12, h: 900 };
-// a phone's one column stands as far from either side, to this many px
-const CENTRED_PX = 6;
 // a bookmark folded at a phone's edge, the least it shows: across (its icon whole beside the notch) and tall
 const MARK = { w: 30, h: 44 };
 // the least a card is wide on a phone and an iPad mini upright, laid in the room the tools take on an opened scrap too
@@ -30,7 +28,7 @@ const CARD_W = 300;
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function phonePageStories(c) {
   return {
-    'on a phone the page is one column in the middle with nothing to draw with on it, big bookmarks, the pull tab at the edge, never moved sideways':
+    'on a phone the page is one column on the screen with nothing to draw with on it, big bookmarks, the pull tab at the edge, never moved sideways':
       browser => onPhone(browser, c),
     "on a phone a finger's second tap as a scrap flies up or back down inks nothing": browser => flights(browser, c),
     'on an iPad mini upright the page has no tools or Undo, an opened scrap has them': browser =>
@@ -46,10 +44,9 @@ async function onPhone(browser, c) {
     await c.shot('phone-page', page);
     await nothingToDrawWith(page, 'on the page');
     const units = await unitBoxes(page);
-    const left = Math.min(...units.map(u => u.x)),
-      right = PHONE.width - Math.max(...units.map(u => u.x + u.width));
+    const left = Math.min(...units.map(u => u.x));
     assert.equal(new Set(units.map(u => Math.round(u.x))).size, 1, 'one column');
-    assert.ok(Math.abs(left - right) <= CENTRED_PX, `in the middle: ${left} px left of it, ${right} px right`);
+    assert.ok(left >= 0 && Math.max(...units.map(u => u.x + u.width)) <= PHONE.width, 'the column whole on the screen');
     const lip = await page.locator('#book .bk-lip').boundingBox();
     assert.ok(Math.abs(lip.x) <= 1, `the pull tab flush with the screen's edge, not ${lip.x} px in`);
     for (const mark of await page.locator('#book .bk-marks button').all()) {
@@ -71,18 +68,11 @@ async function onPhone(browser, c) {
       assert.deepEqual(await columns(), at, `a finger swiped from ${from} to ${to} moves nothing sideways`);
     }
     // (a finger's tap opens a scrap, the page still after the swipes: its tools, Undo and Redo with it, gone with Done)
-    let was;
-    await until(async () => {
-      const now = JSON.stringify(await viewNow(page)),
-        same = now === was;
-      was = now;
-      return same || (await page.waitForTimeout(150), false);
-    }, 'the page still');
-    const finger = { tap: async point => (await touch.down([point]), await touch.up()) };
-    await openScrap(page, finger, undefined, await cardInSight(page));
+    await until(() => viewStill(page), 'the page still');
+    await openScrap(page, touch, undefined, await cardInSight(page));
     await c.shot('phone-page-scrap-open', page);
     await toolsShown(page);
-    await closeScrap(page, finger);
+    await closeScrap(page, touch);
     await nothingToDrawWith(page, 'after Done');
     c.noErrorsIn(errors);
   } finally {
@@ -110,16 +100,15 @@ async function flights(browser, c) {
       for (const wet of document.querySelectorAll('#book .bk-wet')) watch.observe(wet, { attributes: true });
     });
     const { touch } = await hands(page),
-      tap = async point => (await touch.down([point]), await touch.up()),
-      line = () => touch.stroke([[200, 500]], [[260, 540]], 4);
+      line = () => touch.stroke([[200, 500]], [[260, 540]]);
     const card = await page.locator('#book .bk-page:not([hidden]) .bk-unit-paper').first().boundingBox();
-    await tap(middleOf(card));
+    await touch.tap(middleOf(card));
     await page.waitForTimeout(60);
     await line();
     await page.locator('#book .bk-sheet').waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#book .bk-lift[data-flying]'));
     assert.equal(await page.evaluate(() => window.__wet), 0, 'no line laid as the scrap flew up');
-    await tap(middleOf(await page.locator('#book .bk-sheet-keys .bk-sheet-done').boundingBox()));
+    await touch.tap(middleOf(await page.locator('#book .bk-sheet-keys .bk-sheet-done').boundingBox()));
     await page.waitForTimeout(60);
     await line();
     await page.waitForFunction(
@@ -176,17 +165,23 @@ const unitBoxes = page =>
 // No tool, Undo or Redo showing
 async function nothingToDrawWith(page, where) {
   const shown = await page.evaluate(() =>
-    [...document.querySelectorAll('#book :is(.bk-strip, .bk-undo, .bk-redo)')]
+    [...document.querySelectorAll('#book :is(.bk-strip, .bk-undo)')]
       .filter(el => el.checkVisibility({ opacityProperty: true }))
       .map(el => el.getAttribute('aria-label') ?? el.className),
   );
   assert.deepEqual(shown, [], `nothing to draw with ${where}`);
 }
-// The tools, Undo and Redo showing on an opened scrap: the tools' box
+// The tools, Undo and Redo showing on an opened scrap
 async function toolsShown(page) {
   const strip = page.locator('#book .bk-strip');
   await strip.waitFor({ state: 'visible' });
   for (const key of ['.bk-scrap-history button:first-child', '.bk-scrap-history button:last-child'])
     assert.ok(await strip.locator(key).isVisible(), `${key} on the opened scrap's tools`);
-  return strip.boundingBox();
+}
+// The page's view at rest: the same twice, 150 ms apart (a finger's flick glides on frame by frame, which no
+// animation shows)
+async function viewStill(page) {
+  const was = JSON.stringify(await viewNow(page));
+  await page.waitForTimeout(150);
+  return was === JSON.stringify(await viewNow(page));
 }

@@ -9,7 +9,11 @@ import { hands } from './hands.mjs';
 import { watchedPage } from './start.mjs';
 
 const ARTIFACT = 'https://shop.preview.test';
-const CALL = { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7' };
+const CALL = { agent: 'juno', name: 'Juno', color: '#7b5ea7' };
+// (each play a call of its own: a worker plays this story in both engines on one store, where the first play's page
+// for a call would be the next one's), numbered from 500: clear of the other stories' calls on the store (pin.mjs's 5,
+// call.mjs's, callsizes.mjs's and notespage.mjs's 9)
+let calls = 500;
 const loop = (cx, cy, rx, ry, n = 40) =>
   Array.from({ length: n + 1 }, (_, i) => [cx + rx * Math.cos((i / n) * 6.1), cy + ry * Math.sin((i / n) * 6.1)]);
 // The artifact's ink layer in a box (CSS px): how many pixels are drawn, and how many of them red
@@ -34,7 +38,7 @@ const FIRST = { x: 60, y: 60, w: 400, h: 200 },
 export async function frameInkStory(c) {
   const context = await c.hqIn(c.browser, DESKTOP, { deviceScaleFactor: 1, hasTouch: false });
   try {
-    const s = await opened(c, context);
+    const s = await opened(c, context, { ...CALL, call: ++calls });
     await heldForAgent(c, s);
     await hadAndHungUp(c, s);
     await offCall(c, s);
@@ -44,7 +48,7 @@ export async function frameInkStory(c) {
   }
 }
 // HQ on a call, the artifact open in its viewer: what the story draws and reads with
-async function opened(c, context) {
+async function opened(c, context, call) {
   await context.route(`${ARTIFACT}/**`, r => {
     const path = new URL(r.request().url()).pathname;
     if (fulfilPart(r, path, c.reviewJs)) return;
@@ -70,7 +74,8 @@ async function opened(c, context) {
     window.__heard = [];
     document.addEventListener('pencil:note', e => e.detail.call && window.__heard.push(e.detail));
   });
-  await tell('call:on', CALL);
+  const from = c.posts.length;
+  await tell('call:on', call);
   await page.evaluate(url => import('/shell/desk.js').then(m => m.openLink(url)), `${ARTIFACT}/basket`);
   await page.waitForFunction(() => document.querySelector('#viewer iframe')?.src.includes('/basket'));
   const frame = await (await page.$('#viewer iframe')).contentFrame();
@@ -82,18 +87,25 @@ async function opened(c, context) {
   return {
     page,
     frame,
+    call,
     scraps,
     errors,
     tell,
     draw: points => pen.stroke(points.map(([x, y]) => [box.x + x, box.y + y])),
     sheetShown: () =>
       frame.evaluate(() => !document.querySelector('review-mode').shadowRoot.querySelector('.sheet').hidden),
-    callNotes: () =>
-      c.posts.filter(p => p.path === '/api/book/note' && p.body.anchor?.url.startsWith(ARTIFACT)).map(p => p.body),
+    callNotes: () => notesSince(c, from),
   };
 }
+// The artifact's marks HQ put on a call's page since from (this play's: another engine's play of the story posted to the
+// same store)
+const notesSince = (c, from) =>
+  c.posts
+    .slice(from)
+    .filter(p => p.path === '/api/book/note' && p.body.anchor?.url.startsWith(ARTIFACT))
+    .map(p => p.body);
 // A mark on the artifact, said as it's drawn: the call's page has it, with the words; the notebook nothing
-async function heldForAgent(c, { page, frame, scraps, tell, draw, sheetShown, callNotes }) {
+async function heldForAgent(c, { page, frame, call, scraps, tell, draw, sheetShown, callNotes }) {
   const from = c.posts.length;
   await draw(loop(220, 140, 140, 60));
   await tell('call:heard', { text: 'this heading is too loud' });
@@ -105,7 +117,7 @@ async function heldForAgent(c, { page, frame, scraps, tell, draw, sheetShown, ca
   assert.equal(sent.said, 'spoken');
   assert.ok(sent.snip?.startsWith('data:image/'), 'and its snip of the artifact');
   const made = c.posts.slice(from).find(p => p.path === '/api/book/page/new')?.body;
-  assert.equal(made?.call, CALL.call, "...on this call's page");
+  assert.equal(made?.call, call.call, "...on this call's page");
   assert.deepEqual(scraps, [], 'nothing went into the notebook by itself');
   const held = await inked(frame, FIRST);
   assert.ok(held.n > 200, 'its ink stays drawn for the agent');
@@ -116,8 +128,9 @@ async function heldForAgent(c, { page, frame, scraps, tell, draw, sheetShown, ca
 async function hadAndHungUp(c, { page, frame, scraps, tell, draw, callNotes }) {
   await draw(loop(220, 400, 140, 60));
   await until(() => callNotes().length === 2, 'the second mark in');
-  const [one, two] = await page.evaluate(() => window.__heard.map(n => n.id));
-  assert.ok(two, 'both heard as call notes');
+  // (HQ tells the call of a note once the book has answered its post: marks.js)
+  const heard = () => page.evaluate(() => window.__heard.length === 2 && window.__heard.map(n => n.id)),
+    [one] = await until(heard, 'both heard as call notes');
   await tell('call:had', { note: one });
   await page.waitForTimeout(300);
   assert.equal((await inked(frame, FIRST)).n, 0, "the first scribble went with the agent's turn");

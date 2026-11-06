@@ -3,8 +3,8 @@
 
 // The Pencil and fingers on a page (frame: one of its frames, whose own page takes them in WebKit; points are the
 // page's either way). pen: down(at), move(at), up(at), stroke(points), tap(at); touch, any number of fingers at once:
-// down(ats), move(tos, steps), up(), stroke(froms, tos); trackpadPinch(at, deltaY): a trackpad's pinch, a wheel with
-// Ctrl and no Ctrl key down.
+// down(ats), move(tos, steps), up(), stroke(froms, tos), tap(at) with one; trackpadPinch(at, deltaY): a trackpad's
+// pinch, a wheel with Ctrl and no Ctrl key down.
 export async function hands(page, { frame } = {}) {
   if (page.context().browser().browserType().name() === 'chromium') {
     const cdp = await page.context().newCDPSession(page);
@@ -76,7 +76,8 @@ const touchOf = cdp =>
       touchPoints: at.map(([x, y], id) => ({ x, y, id, radiusX: 4, radiusY: 4, force: 1 })),
     }),
   );
-// Fingers by send(phase, points): down at points, moved to others in steps, lifted
+// Fingers by send(phase, points): down at points, moved to others in steps, lifted; or one finger tapped, as a kit's
+// helper taps a pen (kit.mjs openScrap).
 function fingers(send) {
   let last = [];
   const t = {
@@ -97,6 +98,10 @@ function fingers(send) {
     stroke: async (from, to) => {
       await t.down(from);
       await t.move(to);
+      await t.up();
+    },
+    tap: async at => {
+      await t.down([at]);
       await t.up();
     },
   };

@@ -1,4 +1,5 @@
-// Done jobs matched by agent, origin and title words, or scheduled entry. Carry checks match only carry checks.
+// Done jobs matched by agent, origin and title words, or scheduled entry. Carry checks match only carry checks, of
+// their own kind.
 import { db } from './db.ts';
 import { keptPool, type Notes, type RowAlias } from './keptpool.ts';
 // (the runs table, which the pool is read from and counted on)
@@ -7,6 +8,7 @@ import { keysCondition } from './chat.ts';
 import { workBranch } from './jobs.ts';
 import { mean, wholeSeconds } from './arithmetic.ts';
 import { REBUILT_RUN, INVALID_RUN, timingFlags, type TimingEvidence, type TimingFlag } from './timing.ts';
+import { ADJUSTED_COLUMNS, ADJUSTED_JOIN, adjustedOf, countedMs, type Adjusted, type AdjustedRow } from './adjusted.ts';
 
 // A work job's origin, how it was made: planned work (or a pull request's re-land), the author's fixes for a
 // review or the board's notes, a pull request only brought up to date with main, or a job HQ made on its own (the
@@ -20,6 +22,8 @@ export const ORIGIN = `case when j.carry is not null then 'carry' when j.stage =
     or exists(select 1 from proposals p where p.accepted = j.id and p.status = 'accepted')
     or (not j.is_check and exists(select 1 from book_sheets s where s.job = j.id and s.status = 'sent'
       and s.owner = j.agent)) then 'work' else 'hq' end`;
+// A carry check's kind, read as work to size (Work.carry_code)
+export const CARRY_CODE = '(select code from carry_commits where sha = j.carry) carry_code';
 export const ABOUT_KEYS = `(j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()}))`;
 export const PRIVATE = `(j.customers or ${ABOUT_KEYS})`;
 
@@ -46,8 +50,13 @@ export type PastJob = {
   removed: number | null;
   thread: string | null;
   timing_flags?: TimingFlag[];
+  // what its work would cost now, where a process change made agent_ms stale (adjusted.ts); agent_ms stays measured
+  adjusted?: Adjusted | null;
   customers?: number;
   about_keys?: number;
+  // a carry check's commit: 1 when it changes anything a push's checks run on, 0 when nothing, null unknown
+  // (db.ts carry_commits).
+  carry_code?: number | null;
 } & Run;
 
 // A scheduled job's run (schedule.ts schedule_runs): its entry, the entry's routine, and the slot run() puts at the end
@@ -78,7 +87,7 @@ const past = (only = false) => {
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
     p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}, r.outcomes, r.invalid_runs, r.unknown_seats, j.customers,
-    ${ABOUT_KEYS} about_keys,
+    ${ABOUT_KEYS} about_keys, ${ADJUSTED_COLUMNS}, cc.code carry_code,
     j.id in (select job from job_replacement_links) is_replacement
   from (select job, count(*) runs, sum(${REBUILT_RUN}) rebuilt, min(started) first, max(ended) last,
     sum((julianday(ended) - julianday(started)) * 86400000) agent_ms,
@@ -91,6 +100,8 @@ const past = (only = false) => {
   left join (select branch, max(number) number from prs group by branch) b on b.branch = ${workBranch('j')}
   left join prs p on p.number = b.number
   ${RUN_JOIN}
+  ${ADJUSTED_JOIN}
+  left join carry_commits cc on cc.sha = j.carry
   where j.kind = 'work' and j.status = 'done' and not exists (select 1 from runs o where o.job = j.id and o.ended is null)
   order by r.job`;
 };
@@ -123,6 +134,8 @@ const NOTES: Notes = {
   },
   book_sheets: { of: OF_DONE },
   job_replacements: { of: OF_JOB },
+  adjusted_times: { of: OF_DONE },
+  carry_commits: { of: row => `select id from jobs where carry = ${row}.sha and ${DONE('jobs')}` },
 };
 const keptPast = keptPool('past', past, readPast, NOTES);
 export const pastJobs = (only?: number[]): PastJob[] => (only ? readPast(only) : keptPast.pool());
@@ -137,11 +150,25 @@ export const pastJobsSoon = async () => (keptPast.whole() ? await readPastAhead(
 function readPast(only?: number[]) {
   const sql = past(only !== undefined),
     rows = (only ? db.prepare(sql).all({ only: JSON.stringify(only) }) : db.prepare(sql).all()) as unknown as (PastJob &
-      TimingEvidence)[];
-  return rows.map(({ outcomes, invalid_runs, unknown_seats, is_replacement, ...job }) => ({
-    ...job,
-    timing_flags: timingFlags({ outcomes, invalid_runs, unknown_seats, is_replacement, runs: job.runs }),
-  }));
+      TimingEvidence &
+      AdjustedRow)[];
+  return rows.map(
+    ({
+      outcomes,
+      invalid_runs,
+      unknown_seats,
+      is_replacement,
+      adjusted_ms,
+      adjusted_why,
+      adjusted_by,
+      adjusted_at,
+      ...job
+    }) => ({
+      ...job,
+      adjusted: adjustedOf({ adjusted_ms, adjusted_why, adjusted_by, adjusted_at }),
+      timing_flags: timingFlags({ outcomes, invalid_runs, unknown_seats, is_replacement, runs: job.runs }),
+    }),
+  );
 }
 
 export const cleanPastJobs = (pool: PastJob[] = pastJobs()) =>
@@ -156,12 +183,20 @@ export function timingAudit(pool: PastJob[] = pastJobs()) {
 
 // The piece of work to match: its title, its origin, its agent when known (any agent's work matches otherwise), and
 // for a scheduled job its run.
-export type Work = { title: string; origin: JobOrigin; agent?: string } & Partial<Run>;
+export type Work = { title: string; origin: JobOrigin; agent?: string; carry_code?: number | null } & Partial<Run>;
 // What the picks have in common with the work: its origin and its agent, unless too few of those were done, and the
 // title's words that found them (none: the latest of their origin). `kind` is the origin's name where the basis is
 // stored (predictions.ts) and shown (hq estimate). A scheduled job's: the runs of its entry (`entry`), or of its
 // routine's entries (`routine`), instead.
-export type Basis = { kind: JobOrigin | null; agent: string | null; words: string[]; entry?: string; routine?: string };
+// A carry check's: whether its picks' commits change code (`code`), where it was sized on its own kind.
+export type Basis = {
+  kind: JobOrigin | null;
+  agent: string | null;
+  words: string[];
+  entry?: string;
+  routine?: string;
+  code?: boolean;
+};
 
 // The jobs an estimate takes the mean of (a mean holds the few long jobs that dominate a sum of agent time): the PICKS
 // best matched by their title's words, else those and the latest, LATEST in all. Agent and origin narrow the pool first,
@@ -175,16 +210,21 @@ export function picksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis
 }
 // Historical baseline only. Candidate comparisons always use picksFor.
 export function rawPicksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis: Basis } {
-  if (work.origin === 'carry')
-    return {
-      picks: pool
-        .filter(job => job.origin === 'carry')
-        .sort((a, b) => b.id - a.id)
-        .slice(0, PICKS),
-      basis: { kind: 'carry', agent: null, words: [] },
-    };
+  if (work.origin === 'carry') return carriesLike(work, pool);
   const agents = agentPool(pool);
   return runsLike(work, agents) ?? matched(work, agents);
+}
+// A carry check stands on the latest PICKS of its own kind: a commit that changes code gets a push's whole gates and
+// tests, tens of minutes, one of company files alone seconds. With its kind unknown, or fewer than FEWEST of it, on
+// the latest carry checks of any kind.
+function carriesLike(work: Work, pool: PastJob[]) {
+  const carries = pool.filter(job => job.origin === 'carry').sort((a, b) => b.id - a.id);
+  const kind = work.carry_code == null ? [] : carries.filter(job => job.carry_code === work.carry_code);
+  const own = kind.length >= FEWEST;
+  return {
+    picks: (own ? kind : carries).slice(0, PICKS),
+    basis: { kind: 'carry' as const, agent: null, words: [], ...(own && { code: work.carry_code === 1 }) },
+  };
 }
 // A worker-only check never becomes evidence for model-agent work, even in a sparse pool.
 const agentPools = new WeakMap<PastJob[], PastJob[]>();
@@ -227,11 +267,12 @@ function runsLike(work: Work, pool: PastJob[]) {
   return { picks: [...own, ...others].slice(0, PICKS), basis: { ...basis, routine: work.routine! } };
 }
 
-// The work's time: the mean of its picks. None with fewer than FEWEST picks.
+// The work's time: the mean of its picks, each at its adjusted time where a process change made its measurement stale
+// (adjusted.ts). None with fewer than FEWEST picks.
 export function sizeOf(picks: PastJob[]) {
   if (picks.length < FEWEST) return null;
   return {
-    agent_ms: wholeSeconds(mean(picks.map(j => j.agent_ms))!),
+    agent_ms: wholeSeconds(mean(picks.map(countedMs))!),
   };
 }
 

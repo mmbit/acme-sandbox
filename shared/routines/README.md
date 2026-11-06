@@ -15,7 +15,9 @@ only one company's goes in its entry's `prompt`.
 | `foundation-sweep.md` | A weekly sweep of the foundation for the foundation keeper: company-specific code and one-of-each assumptions, a note and jobs for the fixes <!-- --> |
 | `strategy.md` | A weekly look at how the company stays profitable, at most three recommendations, in a meeting or alone |
 | `books.md` | The weekly books: reported costs and invoices booked against approvals, costs coming, the month's close to the board |
-| `docs-sweep.md` | A weekly sweep of the written memory: contradictions, drift and sprawl compressed or archived, the shared memory listed |
+| `docs-sweep.md` | A weekly sweep of the written memory: contradictions, drift and sprawl compressed or archived |
+| `memory.md` | Each agent's weekly pass over its own memory (working memory, the CEO's page, its replaced decisions): what's no longer true rewritten or removed |
+| `estimates.md` | The weekly estimate check: estimates against what work took, deadlines met or missed, past jobs a process change made stale given an adjusted time |
 | `security-audit.md` | A weekly security audit of what changed in the apps and sites: realistic paths only, small fixes, the rest queued |
 | `seat-spend.md` | A weekly read of where the AI seats' week went: cost per merged change, the share that bought no change, at most three fixes |
 | `process-review.md` | A weekly look at whether the way the company works costs more than it brings: at most three changes |

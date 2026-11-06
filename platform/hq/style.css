@@ -51,6 +51,9 @@ html, body { margin: 0; height: 100%; height: var(--app-h, 100dvh); overflow: hi
    queries and vw can't. It clips rather than hides: the fixed layers overflow it now, and a focus or a scrollIntoView
    must never scroll the page sideways. */
 body { width: calc(100% - var(--book-room, 0px)); contain: layout; container: page / inline-size; overflow: clip; }
+/* HQ's toasts lie on <html> beside the page (shell/ink/book.js), so they letter themselves in the look's ink and font, which
+   a look sets on them as on body (its skin.css). */
+#toasts { color: var(--ink); font: 16px/1.4 var(--font); font-variant-ligatures: none; }
 /* No double-tap zoom anywhere, so quick taps each count (Safari zooms on a second tap where touch-action is auto). The
    rule sits on every element because touch-action isn't inherited: an element's own value combines only with its
    ancestors' up to the nearest scroll container, so a rule on the page alone stops at the first box that scrolls.

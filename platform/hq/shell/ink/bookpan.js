@@ -172,8 +172,11 @@ function end(table) {
   delete table.desk.dataset.pan;
   if (table.space) table.desk.dataset.pan = 'ready';
 }
-// Every finger and pinch let go where it got to, the pan's capture with it
+// Every finger and pinch let go where it got to, the pan's capture with it, and a flick's glide stopped: the page turned,
+// the next page never glides on with it.
 function letGo(table) {
+  cancelAnimationFrame(table.glide);
+  table.glide = 0;
   table.touches.clear();
   if (table.pinch) pinchEnd(table);
   const drag = table.drag;

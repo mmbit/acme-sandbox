@@ -3,12 +3,13 @@
 // theme/), with the platform's plain lines without one. The frame gives every drawing the same few words to style by,
 // which the call's draw_picture tool names: accent, shade, arrow, thin and muted. Its ground is clear: on the page it's
 // lines on its post-it, not a card of its own in it (bookgroups.css .bk-photo[data-drawing]), unless the company's
-// stylesheet gives it one.
+// stylesheet gives it one. Its words are fitted to the shapes they're in before it's taken (drawingfit.ts).
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, posix } from 'node:path';
 import { launch, type Tab } from '../../../shared/chromium/chromium.ts';
 import { theme } from './company.ts';
 import { REPO_DIR } from './config.ts';
+import { FITTED } from './drawingfit.ts';
 import type { Refused } from './pagechecks.ts';
 
 // The drawing's box in CSS px: a notebook scrap shows a picture at most about 320 px each way (notebookstack.js STACK,
@@ -27,8 +28,12 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png',
 };
 
+// What a drawing came to: its picture, and the words fitted to their shapes and those that still cover each other
+// (drawingfit.ts)
+export type Drawn = { png: Buffer; width: number; height: number; fitted: string[]; overlap: string[] };
+
 // The picture of an SVG drawing ('<svg viewBox="…">…</svg>'), PNG, or why not
-export async function drawn(svg: string): Promise<{ png: Buffer; width: number; height: number } | Refused> {
+export async function drawn(svg: string): Promise<Drawn | Refused> {
   const markup = svg.trim();
   if (!/^<svg[\s>]/.test(markup) || !markup.endsWith('</svg>'))
     return [400, 'svg: one drawing, from <svg viewBox="0 0 640 480"> to its </svg>'] as Refused;
@@ -94,6 +99,7 @@ async function pictured(tab: Tab) {
   await tab.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
   const navigated = await tab.send('Page.navigate', { url: `${FRAME}/` });
   if (navigated.errorText) throw new Error(`The drawing's frame didn't open: ${navigated.errorText}`);
+  const { fitted, overlap } = await evaluate(tab, FITTED);
   const box = await evaluate(tab, MEASURED);
   if (!box) return [400, 'svg: nothing to see. Give it a viewBox and something drawn inside it'] as Refused;
   const scale = LONG_PX / Math.max(box.width, box.height);
@@ -106,6 +112,8 @@ async function pictured(tab: Tab) {
     png: Buffer.from(taken.data, 'base64'),
     width: Math.round(box.width * scale),
     height: Math.round(box.height * scale),
+    fitted,
+    overlap,
   };
 }
 const MEASURED = `new Promise(resolve => {

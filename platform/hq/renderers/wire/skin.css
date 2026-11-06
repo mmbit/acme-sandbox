@@ -15,10 +15,11 @@
   --k-side: #8f9f14;
   --k-on-accent: #1d1b17;
 }
-/* on body, under the brand's :root, and on the Notebook beside it (shell/ink/book.js: its controls are HQ's): the look's
-   surfaces, lines and lettering */
+/* on body, under the brand's :root, and on the Notebook and HQ's toasts beside it (shell/ink/book.js: its controls are
+   HQ's): the look's surfaces, lines and lettering. */
 body,
-#book {
+#book,
+#toasts {
   --font: var(--k-font, 'Bricolage Grotesque'), system-ui, -apple-system, 'Segoe UI', sans-serif;
   --display: var(--font);
   --bg: var(--k-ground);

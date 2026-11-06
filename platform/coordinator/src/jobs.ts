@@ -42,6 +42,7 @@ import {
   yamlFile,
   titleOf,
   voiceOf,
+  voicesOf,
   projects,
 } from './company.ts';
 import { deskName } from './wherework.ts';
@@ -1430,7 +1431,8 @@ function listedRows(rows: Listed[], t: number, runsHold: ReturnType<typeof held>
   }));
 }
 // Where each queued job of `rows` stands: start, when the plan starts it (the latest play's, forecast.ts), a time; rank,
-// its place among every queued job in the claim's order (ordering.claimOrder), which HQ lists the queue in.
+// its place among every queued job in the claim's order (ordering.claimOrder) on the latest plan (ordering.lastTimings),
+// which HQ lists the queue in.
 function queuePlaces(rows: { id: number; status: string }[], t: number) {
   const places = new Map<number, { start: number | null; rank: number | null }>();
   if (!rows.some(row => row.status === 'queued')) return places;
@@ -1440,7 +1442,7 @@ function queuePlaces(rows: { id: number; status: string }[], t: number) {
       `select j.id, j.kind, j.downtime, ${LANE('j')} board from jobs j where j.status = 'queued' and j.kind != 'chat'`,
     )
     .all() as Claimable[];
-  const rank = new Map(queued.sort(ordering.claimOrder(ordering.current(t).timings)).map((j, i) => [j.id, i]));
+  const rank = new Map(queued.sort(ordering.claimOrder(ordering.lastTimings(t))).map((j, i) => [j.id, i]));
   for (const row of rows)
     if (row.status === 'queued')
       places.set(row.id, { start: plan?.get(row.id)?.start ?? null, rank: rank.get(row.id) ?? null });
@@ -2045,6 +2047,7 @@ export function findAgent(id: string) {
           department: d.id,
           charter: d.charter,
           voice: voiceOf(own),
+          voices: voicesOf(own),
           model: a.model ?? m.model ?? null,
           effort: a.effort ?? m.effort ?? null,
           autocompact: a.autocompact ?? m.autocompact ?? null,

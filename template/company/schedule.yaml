@@ -1,6 +1,8 @@
 # Recurring work: each entry has a project in HQ, and the coordinator opens a thread in it when the entry is due.
 # project: the routine's project id, which defaults to the entry's id. Entries that take turns at one task share it.
 # at: "HH:MM" (every day), "Mon HH:MM" (weekly) or "every 4h", in org.yaml's company.timeZone.
+# each: agent, with at: weekly, runs the entry once a week for every agent on a department's desk in org.yaml, each
+# its own job, spread over the week by their place in org.yaml (Monday 00:00 the first). agent: still owns its project.
 # downtime: true for maintenance: it runs only on spare capacity and pauses when other work needs the room.
 # week: "k of n" runs an entry one week in n. model, effort: optional, only lighter than the agent's own.
 # routine: a recurring job every company runs, from shared/routines/ (its README lists them); prompt then holds only
@@ -25,6 +27,16 @@
   title: Foundation update
   code: UPDATE
   routine: foundation-update
+
+# Each agent's weekly memory pass: its own working memory (the CEO's page) reread against how things work now, what's
+# no longer true rewritten or removed. One short job per agent a week, spread over the week.
+- id: weekly-memory
+  agent: ceo
+  each: agent
+  at: weekly
+  title: Weekly memory pass
+  code: MEMORY
+  routine: memory
 
 # Suggested: the onboarding offers them (playbooks/intake.md), and the founding job takes the ones the board wants out
 # of the comments, each with the agent who runs it.
@@ -59,6 +71,15 @@
 #   code: DOCS
 #   downtime: true
 #   routine: docs-sweep
+# The weekly estimate check:
+# - id: weekly-estimates
+#   agent: <the estimates role (org.yaml's roles.estimates), or the CEO>
+#   at: "Fri 09:00"
+#   title: Weekly estimate check
+#   code: ESTIMATE
+#   routine: estimates
+#   prompt: |
+#     Where the company's estimates note is, which the week's numbers go in.
 # - id: weekly-process-review
 #   agent: ceo
 #   at: "Fri 15:00"
