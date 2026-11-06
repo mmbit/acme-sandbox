@@ -56,8 +56,6 @@ async function torn(browser, c, size) {
     const count = pagesOf(play).length;
     await carried(c, page, size);
     await turnTo(page, NEWEST);
-    // (the tool in use as the page goes: Shapes. Its key is named for its shape)
-    await page.locator('#book [data-mode=shapes]').click();
     const at = await where(page);
     await watch(page);
     await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit');
@@ -67,7 +65,11 @@ async function torn(browser, c, size) {
     assert.ok(late > 0 && late < STAMP_MS, `stamped within about two seconds (${size.name}): ${late} ms`);
     assert.ok(pageOf(play, NEWEST).sent, `sent at once (${size.name})`);
     await until(async () => !(await page.locator('#book .bk-fx-plane').count()), `the plane gone (${size.name})`);
-    assert.deepEqual([seen.planes, seen.turns], [1, []], `one plane, turned to nothing (${size.name})`);
+    assert.deepEqual(
+      [seen.planes, seen.turns.filter(id => id !== NEWEST)],
+      [1, []],
+      `one plane, turned to no other page (${size.name})`,
+    );
     assert.equal(await where(page), at, `the page stays shown (${size.name})`);
     assert.equal(pagesOf(play).length, count, `no page made (${size.name})`);
     await locked(c, page, size);
@@ -238,10 +240,8 @@ async function duplicated(browser, c, size) {
       () => `turned to the copy (${size.name})`,
     );
     const shown = await stampOf(page);
-    assert.ok(
-      !shown.toolsHidden && shown.history.length === 2 && !(await key.isVisible()),
-      `the tools back (${size.name})`,
-    );
+    // (open, its scraps' tools theirs once opened: nothing to draw with on the page itself.
+    assert.ok(!shown.locked && !shown.history.length && !(await key.isVisible()), `the copy open (${size.name})`);
     await until(async () => !(await page.locator('#book .bk-turn-picture').count()), `the leaf turned (${size.name})`);
     await drawnOn(page, play, copy, size);
     await until(
@@ -285,8 +285,9 @@ async function open(browser, c, { viewport, touch, folded, isMobile }, seed = st
   await turnTo(page, SECOND);
   return { page, play: context.notebook, errors, done: () => context.close() };
 }
-// What the book does from here: planes flying (hold: the plane held mid-flight, its animations kept in held), pages turned to (book:turn),
-// when the copy was let go and the stamp pressed (the page's own time)
+// What the book does from here: planes flying (hold: the plane held mid-flight, its animations kept in held), the pages
+// it rests on (book:turn, told each time its place is remembered, the same page's too), when the copy was let go and
+// the stamp pressed (the page's own time).
 const watch = (page, hold = false) =>
   page.evaluate(hold => {
     const seen = (window.__sent = { planes: 0, turns: [], dropped: 0, stamped: 0, held: null });
@@ -345,13 +346,14 @@ const stampOf = page =>
         return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());
       }),
       lock: !!document.querySelector('#book .bk-view-locked')?.checkVisibility(),
-      // (Undo and Redo a pill of their own beside the bar: the Ink README, The book's frame.)
-      history: [...document.querySelectorAll('#book .bk-undo-pill :is(.bk-undo, .bk-redo)')]
+      // (a guest's Undo on the bar, the page's own none: the Ink README, The book's frame.
+      history: [...document.querySelectorAll('#book .bk-bar :is(.bk-undo, .bk-redo)')]
         .filter(b => b.checkVisibility())
         .map(b => b.ariaLabel),
       toolsHidden: !document
         .querySelector("#book .bk-island[data-island='tools']")
         ?.checkVisibility({ visibilityProperty: true }),
+      locked: !!document.querySelector('#book .bk-strip[data-locked]'),
     };
   });
 const inside = (a, b) => a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom;

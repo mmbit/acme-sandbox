@@ -2,12 +2,13 @@
 // book-check.mjs's stories of a voice note at a spot (shell/ink/bookinput.js, bookvoice.js heldAt, booktape.js), at an
 // iPad mini on its side and upright and a phone, with the Pencil as Safari hands it over (pointer events on what's
 // under it, the same in Chromium and WebKit) and the microphone's stand-in (kit.mjs heard): on HQ's own page a pen
-// held still opens no note and listens to nothing; in the book a single press held is only ink, a double tap whose
-// second press moves draws, and a double tap held is the mic's voice note, its words writing themselves where it's
-// held and landing there as it lifts, no ink left from it. The cog's Hold to
-// talk fits on one line in every language.
+// held still opens no note and listens to nothing; on the book's empty grid a press held still listens to nothing
+// and, lifted where it came down, is a tap: a new scrap made and opened. On the opened scrap a single press held is
+// only ink, a double tap whose second press moves draws, and a double tap held is the mic's voice note, its words
+// writing themselves where it's held and landing there as it lifts, no ink left from it. The cog's Hold to talk fits
+// on one line in every language.
 import assert from 'node:assert/strict';
-import { freePage, paperBox, savedWhere } from './mouse.mjs';
+import { freePage, inScrap, savedWhere } from './mouse.mjs';
 import { press } from './bar.mjs';
 import { stillFor, stored } from './strip.mjs';
 import { MINI, PREFERENCES, QUIET_MS, UPRIGHT, heard, middleOf, ui, wordsHeard } from './kit.mjs';
@@ -42,7 +43,15 @@ async function story(browser, c, viewport) {
     await page.waitForSelector('review-mode .fab', { state: 'attached' });
     await onHq(page, c, size);
     await opened(page, c, viewport);
-    const paper = await paperBox(page);
+    // (the grid's press held still, lifted: a new scrap opened, its sheet the paper drawn on)
+    const paper = await inScrap(page, c, free, at =>
+      stillFor(
+        page,
+        at,
+        p => pen(page, 'pointerdown', p),
+        p => pen(page, 'pointerup', p),
+      ),
+    );
     await inBook(page, c, free, paper, viewport);
     await holdToTalk(page, c, viewport.width);
     // (a made-up pointer can't be captured, as a real one can: webkit.mjs leaves it out too)
@@ -90,9 +99,9 @@ async function opened(page, c, viewport) {
   await c.settled(page, 'spread');
 }
 
-// On the page: a single press held is a dot; a double tap whose second press moves draws its line; a double tap held
-// records, the mic red and the words writing themselves where it's held as they're heard, and lifted, they land there,
-// no ink left from it
+// On the opened scrap: a single press held is a dot; a double tap whose second press moves draws its line; a double
+// tap held records, the mic red and the words writing themselves where it's held as they're heard, and lifted, they
+// land there, no ink left from it
 async function inBook(page, c, free, paper, viewport) {
   const size = `${viewport.width} × ${viewport.height}`,
     mid = middleOf(paper),
@@ -122,7 +131,7 @@ async function inBook(page, c, free, paper, viewport) {
   const kept = await savedWhere(c, free.id, p => p.texts.length === 1);
   assert.equal(kept.texts[0].text, SAID, `at ${size}, the words heard`);
   assert.equal(kept.ink.length, drawn, `at ${size}, no ink from the double tap held`);
-  const box = await page.locator('#book .bk-typed').boundingBox();
+  const box = await page.locator('#book .bk-page[data-focus] .bk-typed').boundingBox();
   assert.ok(
     at[0] >= box.x - 24 && at[0] <= box.x + box.width && at[1] >= box.y - 8 && at[1] <= box.y + box.height,
     `at ${size}, the words land where the double tap was held: ${JSON.stringify({ at, box })}`,

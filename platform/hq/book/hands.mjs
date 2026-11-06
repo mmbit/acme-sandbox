@@ -197,6 +197,9 @@ function trackpadWheel({ at: [x, y], deltaY }) {
   );
 }
 
+// A mouse's click as a story's tap(at), where the kit's helpers (kit.mjs openScrap, closeScrap) take a pen or a finger.
+export const mouseOf = page => ({ tap: ([x, y]) => page.mouse.click(x, y) });
+
 // A pen or a finger's line and hold, and a two fingers' pan, for a story in either engine, played by hands(): hold(type,
 // from) a held pointer's moves and lift, stroke(type, points) one pressed along points, pan(points): fingers at points
 // moved up 70 px together.

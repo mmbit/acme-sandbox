@@ -12,6 +12,7 @@ import { DIR } from '../pagescraps.ts';
 import { deletePage, type Page } from './book.ts';
 import type { Refused } from '../pagechecks.ts';
 import { PREVIEW } from '../config.ts';
+import { guestOf } from './sketchpeople.ts';
 
 const agentOf = (call: number | null) =>
   (db.prepare('select agent from calls where id = ?').get(call) as { agent: string } | undefined)?.agent;
@@ -51,21 +52,24 @@ export function throwAway(page: number) {
 }
 
 // GET /api/voice/note?id=&call=: a note the board drew on a live call, for the call's agent: its number on the call's
-// page, its words, the HQ page it's on and its snip (the page around the mark, the ink on it), or null without one
+// page, its words, the HQ page it's on and its snip (the page around the mark, the ink on it), or null without one. One
+// of a guest's on the call (their pen on a prototype: callprototypes.ts markOnCall) says who drew it, by their name.
 export function forVoice(id: number, call: number) {
   const n = db
     .prepare(
-      `select n.n, n.words, n.anchor, n.snip from book_notes n join book_pages p on p.id = n.page
-        join calls c on c.id = p.call where n.id = ? and p.call = ? and p.kind = 'call' and n.by = p.who and c.status = 'live'`,
+      `select n.n, n.words, n.anchor, n.snip, n.by, p.who from book_notes n join book_pages p on p.id = n.page
+        join calls c on c.id = p.call where n.id = ? and p.call = ? and p.kind = 'call' and c.status = 'live'`,
     )
-    .get(id, call) as { n: number; words: string; anchor: string; snip: string | null } | undefined;
-  if (!n) return 404;
+    .get(id, call) as
+    { n: number; words: string; anchor: string; snip: string | null; by: string; who: string } | undefined;
+  const guest = n && n.by !== n.who ? guestOf(n.by) : null;
+  if (!n || (n.by !== n.who && !guest)) return 404;
   const file = n.snip && `${DIR}/${n.snip}`;
   const picture =
     file && existsSync(file)
       ? { type: file.endsWith('.png') ? 'image/png' : 'image/jpeg', data: readFileSync(file).toString('base64') }
       : null;
-  return { n: n.n, words: n.words, url: pathOf(JSON.parse(n.anchor).url), picture };
+  return { n: n.n, words: n.words, url: pathOf(JSON.parse(n.anchor).url), picture, ...(guest && { by: guest.name }) };
 }
 // (an anchor's address as HQ's own pages name it: its path and query; a preview's in HQ's viewer, its whole address, so
 // the agent knows it's not HQ's.)

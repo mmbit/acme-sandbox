@@ -13,6 +13,7 @@ import { FEED_MS, inSight, notebookOn, opened, shownByItsNote, underItsNote } fr
 import { press } from './bar.mjs';
 import { OVERVIEW, until } from './kit.mjs';
 import { viewNow } from './canvas.mjs';
+import { hands } from './hands.mjs';
 import { watchedPage } from './start.mjs';
 
 export const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
@@ -103,11 +104,11 @@ async function answered(browser, c, viewport, size, options = {}, { at = 0, note
   });
 }
 // The zoom the board opened the page at, back at its next touch wherever the slides to the answer took it
-// (bookgroupshow.js giveBack): a wheel's turn, or on a phone (no wheel) a finger's tap, which draws a dot there
+// (bookgroupshow.js giveBack): a wheel's turn, or on a phone (no wheel) a finger's short scroll (its tap opens a scrap.
 async function givenBack(page, boardScale, phone) {
   const desk = await page.locator('#book .bk-desk').boundingBox(),
     [x, y] = [desk.x + desk.width / 2, desk.y + desk.height / 2];
-  if (phone) await page.touchscreen.tap(x, y);
+  if (phone) await (await hands(page)).touch.stroke([[x, y]], [[x, y - 40]]);
   else {
     await page.mouse.move(x, y);
     await page.mouse.wheel(0, 4);

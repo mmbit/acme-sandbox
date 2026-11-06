@@ -356,7 +356,7 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
   timeout 60 $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module -e "
     import { DatabaseSync } from 'node:sqlite'; import { coming, section } from '/app/platform/coordinator/src/coming.ts';
     console.log(section(await coming('/repo', new DatabaseSync('/data/hq.db', { timeout: 5000, readOnly: true }))));"
-  echo; echo "== off-site backup (infra/backup.py, nightly around 02:30 UTC; see the note \"Off-site backups\")"
+  echo; echo "== off-site backup (infra/backup.py, nightly around 02:30 UTC; its docstring says what goes and how)"
   python3 - /var/lib/$SERVER_NAME/backup/status.json <<'PY'
 import json, sys
 try: s = json.load(open(sys.argv[1]))

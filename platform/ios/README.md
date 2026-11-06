@@ -10,7 +10,8 @@ What it adds:
   screen locks. During a call the session is a voice chat, the proximity sensor blanks an iPhone's screen at the ear,
   and the call is heard on AirPods or another headset while one is connected. Without one, it plays from the speaker
   while the phone is held out, and from the earpiece at the ear or with the screen locked.
-- **The Pencil drawn by PencilKit** (`HQ/Pen.swift`). While the notebook is open with the pen or the highlighter, a
+- **The Pencil drawn by PencilKit** (`HQ/Pen.swift`). While a scrap is opened in the notebook with the pen or the
+  highlighter (the grid takes no ink: there the Pencil is the page's), a
   transparent PencilKit canvas lies over its paper and the Apple Pencil draws there: Apple's own ink, as quick as
   Notes'. Fingers never meet it and go to the page as ever (moving the page, taps, the tools), and so does the Pencil
   off the paper. Each finished stroke goes to the page (`platform/hq/shell/ink/booknative.js`), which plays it as the

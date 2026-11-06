@@ -1,13 +1,11 @@
 // book-check.mjs's film stories that no build thread's story walks, on HQ's
 // mock book, held like an iPad mini:
 // A morning: the book open on its newest page beside HQ's page; from its pages' list, the page sent yesterday, stamped
-// with its time, Moss's answer under its scrap with Moss's name, a box to tick it and room to reply in; and on to the
-// newest page again.
-// HQ's page never under the book, at any width it keeps a page at: half an iPad mini's split screen, a split laptop
-// window, an iPad Air upright, a 10-inch iPad, a 13-inch, a big desktop. Open there, or folded and pulled open, the
-// book sits beside the page and none of HQ's buttons is cut by its edge, in Brownstone and in Wire (Wire's narrow
-// status row). (A phone's book is a page of its own, over HQ: book-check's
-// phone story.)
+// with its time, Moss's answer under its scrap with Moss's name and a box to tick it; and on to the newest page again.
+// HQ's page never under the book, at any width it keeps a page at on a screen on its side: a split laptop window at
+// its narrowest, a 10-inch iPad, a 13-inch, a big desktop, a phone on its side. Open there, or folded and pulled open,
+// the book sits beside the page and none of HQ's buttons is cut by its edge, in Brownstone and in Wire (Wire's narrow
+// status row). (A phone's book is a page of its own, over HQ: book-check's phone story.)
 import assert from 'node:assert/strict';
 
 // c: book-check's { hq, inBook, shot, noErrorsIn, viewport, settle }
@@ -38,8 +36,6 @@ export async function morningStory(browser, c) {
     assert.ok(await c.inBook(page, answer), "the answer under its scrap, on the book's paper");
     assert.equal(await slip.getByText('Moss', { exact: true }).isVisible(), true, 'under its name');
     assert.equal(await slip.getByRole('button', { name: 'Tick it: done' }).isVisible(), true, 'a box to tick');
-    // (no field under it: room to answer in, pulled out by its handle, Ink's README.
-    assert.equal(await slip.getByRole('button', { name: 'Room to answer Moss' }).isVisible(), true, 'room to reply');
     await c.shot('book-morning', page);
     await list.click();
     await page.locator('#book').getByRole('menuitem').last().click();
@@ -52,11 +48,12 @@ export async function morningStory(browser, c) {
 }
 
 // The screens HQ is opened on besides book-check's own (an iPad mini either way round, a 1440 desktop, a phone)
+// (Upright, the book opens as the spread over HQ until the board drags its edge to a width: book-check's portrait
+// stories.)
 const SCREENS = [
-  // (the narrowest that keeps a page: a phone-wide HQ beside the narrowest book.)
-  { width: 660, height: 744 },
-  { width: 700, height: 1000 }, // (a 342 px page, where Wire's three pills on one row would run under the book)
-  { width: 820, height: 1180 },
+  // (the narrowest that keeps a page: a phone-wide HQ, 328 px, beside the narrowest book.)
+  { width: 740, height: 560 },
+  { width: 754, height: 600 }, // (a 342 px page, where Wire's three pills on one row would run under the book)
   { width: 1024, height: 768 },
   { width: 1366, height: 1024 },
   { width: 1920, height: 1080 },

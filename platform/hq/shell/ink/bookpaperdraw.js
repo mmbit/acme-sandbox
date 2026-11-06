@@ -10,6 +10,7 @@ import { TEXT } from './booktexts.js';
 import { wrapLines } from './bookpapermath.js';
 import { inkBox } from './bookanswerart.js';
 import { VOICE_SLIP, shadowColor } from './bookvoiceslip.js';
+import { onCard } from './bookunits.js';
 
 // The paper as the store's picture has it (bookrender.ts PAPER), and that picture's longest side at most (PICTURE_PX)
 const PAPER = '#fffdf8',
@@ -53,10 +54,14 @@ export async function inkPicture(strokes) {
 }
 
 // Things on a page view (v: bookpages.js's) as a canvas over where they show on the screen, sharp at its pixel ratio.
-// extent: their box in the page's px, scale: the book's zoom. Returns [rect (on the screen), canvas]: crumple()'s.
-export function thingsPicture(v, things, extent, scale) {
+// extent: their box in the page's px, scale: the book's zoom, card: the card fitted to the grid they're on ({ fit, o }:
+// bookunits.js fitted, its origin), drawn as small as it shows them. Returns [rect (on the screen), canvas]: crumple()'s.
+export function thingsPicture(v, things, extent, scale, card = null) {
+  const at0 = card && onCard(card.fit, card.o, extent.x0 - card.o.x, extent.y0 - card.o.y),
+    at1 = card && onCard(card.fit, card.o, extent.x1 - card.o.x, extent.y1 - card.o.y),
+    shown = card ? { x0: at0.x, y0: at0.y, x1: at1.x, y1: at1.y } : extent;
   const room = ROOM_PX / scale,
-    box = { x0: extent.x0 - room, y0: extent.y0 - room, x1: extent.x1 + room, y1: extent.y1 + room },
+    box = { x0: shown.x0 - room, y0: shown.y0 - room, x1: shown.x1 + room, y1: shown.y1 + room },
     at = v.el.getBoundingClientRect(),
     k = scale * (devicePixelRatio || 1);
   const rect = new DOMRect(
@@ -68,6 +73,10 @@ export function thingsPicture(v, things, extent, scale) {
   const canvas = canvasOf((box.x1 - box.x0) * k, (box.y1 - box.y0) * k),
     g = canvas.getContext('2d');
   g.setTransform(k, 0, 0, k, -box.x0 * k, -box.y0 * k);
+  if (card) {
+    const o = onCard(card.fit, card.o, -card.o.x, -card.o.y);
+    g.transform(card.fit.k, 0, 0, card.fit.k, o.x, o.y);
+  }
   paint(g, { ink: things.ink ?? [], scraps: withPictures(things.scraps ?? []), texts: things.texts ?? [] });
   return [rect, canvas];
 }

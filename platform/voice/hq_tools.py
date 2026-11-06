@@ -286,12 +286,12 @@ TOOLS += [
      "board sees it on the agent's card in HQ, oldest first, each line with its time (UTC) and who: its statuses, each "
      'step (its kind and the file or host it names: a command\'s own words and what it says between steps are the '
      "board's alone), the messages it sent. By a job's number (its lead and team members) or an agent's id (its jobs' "
-     'lines and also the messages sent to it); since: only what came after (30m, 2h or an ISO time). Activity up to '
-     "5 November 2026, before HQ kept each line's job, is the board's alone. Use it when the board asks what someone "
-     'is doing, or before you say a job is stuck or done: eta shows the plan, this the work.',
+     'lines and also the messages sent to it); since: only what came after (30m, 2h or an ISO time). Older activity, '
+     "from before HQ kept each line's job, is the board's alone. Use it when the board asks what someone is doing, "
+     'or before you say a job is stuck or done: eta shows the plan, this the work.',
      'inputSchema': {'type': 'object', 'required': ['of'], 'additionalProperties': False, 'properties': {
          'of': {'type': 'string', 'minLength': 1, 'maxLength': 40,
-                'description': "a job's number (24845) or an agent's id (juno)"},
+                'description': "a job's number (1234) or an agent's id (ada)"},
          'since': {'type': 'string', 'maxLength': 40, 'description': '30m, 2h or an ISO time like 2026-11-05T08:00Z'}}}},
     {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and whole task agent times split into work, shared reviews and fixes. Size.time covers the work split only. The raw whole.cost token split and feature_cost feedback totals accompany the times. The forecast adds review and fix rounds once per deliverable. Queue and other waits are excluded. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
@@ -442,7 +442,10 @@ SCREEN_TOOL = {
                    'description': 'a part of the screen to zoom into, in fractions of its width and height (0 to 1) '
                    'from its top left: {x: 0.5, y: 0, width: 0.5, height: 0.5} is the top right quarter'},
         'since': {'type': 'string', 'pattern': MOMENT.pattern, 'description': 'instead of a picture, the list of what '
-                  "they did since then: '-2m', '17:03' or '#12'"}}}}
+                  "they did since then: '-2m', '17:03' or '#12'"},
+        'who': {'type': 'string', 'minLength': 1, 'maxLength': 60, 'description': "on the board's call, another "
+                "screen as its lines name it: 'screen 2' for the board's second, a guest's by their name ('Esmee'). "
+                "Left out: the board's screen the call is on"}}}}
 TOOLS += [SCREEN_TOOL]
 # The board's Notebook (once the Sketchbook): a sketch it means on the call, through the line too (it counts the picture in the call's).
 TOOLS += [
@@ -657,7 +660,7 @@ TOOLS += [
 # A throwaway prototype, kept with the call (callnotes.py; the coordinator's callprototypes.ts).
 TOOLS += [
     {'name': 'prototype', 'description': 'Make a prototype to show an idea on the call: a throwaway page the board '
-     "and its guest play with. It lands as a card on both iPads and a clip on the call's page: they open it full "
+     "and its guest play with. It lands as a card on their screens and a clip on the call's page: they open it full "
      "screen and tap through it, and their pen marks on it reach you as marks on the call's page do. Never ask before "
      'you make one. Saving again under the same name makes its next version (v2) beside the earlier ones. '
      # (a brief: built in the background, design.py.)
@@ -670,12 +673,12 @@ TOOLS += [
      '(they move on, or ask for it), brief all of it at once. Write the page yourself (html) only '
      'for something you can show in a few lines, like a single slider; then it shows within seconds. Write one whole '
      'HTML page with everything inline (CSS, script, SVG, data URLs): nothing from outside the page loads. Make it '
-     "fit an iPad in either orientation, with big touch targets. Never a customer's details or anything of HQ's. A "
-     "page you write comes back as its picture (its script runs on the iPads, not in the picture), with the call's "
-     'number. Several concepts at once, or a whole product: hand each to a colleague with job (now: true), a quick '
-     'job whose brief says what to build, to save it with hq prototype --call <this call\'s number, which your '
-     'briefing gives> "<name>" <its folder>, and to change nothing in the repo (a job that commits nothing opens no '
-     'pull request and no review). Theirs appears the same way, beside yours.',
+     "fit a tablet or phone in either orientation, or a laptop, with big touch targets. Never a customer's details "
+     "or anything of HQ's. A page you write comes back as its picture (its script runs on their screens, not in the "
+     "picture), with the call's number. Several concepts at once, or a whole product: hand each to a colleague with "
+     'job (now: true), a quick job whose brief says what to build, to save it with hq prototype --call <this call\'s '
+     'number, which your briefing gives> "<name>" <its folder>, and to change nothing in the repo (a job that commits '
+     'nothing opens no pull request and no review). Theirs appears the same way, beside yours.',
      'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False, 'properties': {
          'name': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_NAME,
                   'description': "its name, a few words ('Colour slider'): the same name again is its next version"},
@@ -714,11 +717,14 @@ TOOLS += [
          'name': {'type': 'string', 'minLength': 1, 'maxLength': NAME_LENGTH, 'description': 'the name it was saved under'}}}},
 ]
 # A design session at the board's table, and the agent's raised hand (the voice line's design.py).
+# (unasked too, when the call is one in all but name.)
 TOOLS += [
-    {'name': 'design_session', 'description': 'Make this call a design session, when someone asks for one (a '
-     "brainstorm, sketching ideas together): the board's screen opens a free sketch page for it in the Notebook, and "
-     'the answer tells you how to take part. off: true makes it an ordinary call again, when they ask for that (the '
-     "page stays as it is). HQ has one call key: this is the board's only way in and out of a session.",
+    {'name': 'design_session', 'description': 'Make this call a design session, when someone asks for one or the '
+     'call is one in all but name (a brainstorm, sketching ideas or prototypes together, people at the table talking '
+     "with each other, an earlier call's session carried on): the board's screen opens a free sketch page for it in "
+     'the Notebook, and the answer tells you how to take part. off: true makes it an ordinary call again, when they '
+     "ask for that (the page stays as it is). HQ has one call key: this is the board's only way in and out of a "
+     'session.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'off': {'type': 'boolean', 'description': 'true: end the design session, the call goes on as an ordinary one'}}}},
     {'name': 'raise_hand', 'description': 'In a design session: raise your hand when you have something worth adding '
@@ -880,7 +886,7 @@ def look(waits, name, a):
     if name == 'activity':
         of, since = a.get('of'), a.get('since', '')
         if not isinstance(of, str) or not re.fullmatch(r'#?[0-9]{1,9}|[a-z][a-z0-9-]{0,31}', of):
-            return False, "of is a job's number, like 24845, or an agent's id, like juno"
+            return False, "of is a job's number, like 1234, or an agent's id, like ada"
         if not isinstance(since, str) or (since and not re.fullmatch(r'[0-9]{1,4}[mh]|[0-9][0-9:TZ.+ -]{3,29}', since)):
             return False, 'since is 30m, 2h or an ISO time like 2026-11-05T08:00Z'
         return looked(waits, name, ['hq', 'activity', of.lstrip('#'), *(['--since', since] if since else [])])
@@ -1288,7 +1294,10 @@ def screen(a):
         return False, [{'type': 'text', 'text': 'region takes x, y, width and height, each a fraction from 0 to 1'}]
     if 'since' in a and ('at' in a or 'region' in a):
         return False, [{'type': 'text', 'text': 'since gives the moment list: ask for a picture (at, region) apart'}]
-    got = line_asked({k: a[k] for k in ('at', 'region', 'since') if k in a})
+    if 'who' in a and not (isinstance(a['who'], str) and 0 < len(a['who'].strip()) <= 60):
+        return False, [{'type': 'text', 'text': "who is a guest's name, as their screen's lines name it"}]
+    # (who)
+    got = line_asked({k: a[k] for k in ('at', 'region', 'since', 'who') if k in a})
     if 'error' in got or 'picture' in got:
         return shown(got)
     return True, [{'type': 'text', 'text': '\n'.join(got.get('lines') or []) or 'Nothing since then.'}]

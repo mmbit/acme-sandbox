@@ -1,10 +1,13 @@
 // book-check.mjs's story of the book's two islands as frosted glass (the Ink README, "The book's frame": the glass
 // bars; shell/ink/bookstrip.css and each look's skin.css), in every HQ look: Slate by day and by night, Brownstone and
 // Holo, on an iPhone, an iPad both ways and a desktop. A call's page of notes inked over, scrolled so a note runs under the bar.
-// At each: the tools' island and the bar let the page through (their panel part see-through, blurred), and their
-// keys still read on it. Recorded with --shots.
+// At each: the bar on the page and the tools' island on a note opened let what's under them through (their panel part
+// see-through, blurred), and their keys still read on it. Recorded with --shots.
+// (the tools an opened scrap's)
 import assert from 'node:assert/strict';
-import { LOOK_SCHEMES, toChapter, until } from './kit.mjs';
+import { LOOK_SCHEMES, openScrap, toChapter, until } from './kit.mjs';
+import { mouseOf } from './hands.mjs';
+import { cardInSight } from './mouse.mjs';
 import { blurred } from './islands.mjs';
 import { restsOpen } from './start.mjs';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
@@ -105,7 +108,10 @@ async function glassAt(browser, c, name, { renderer, colorScheme }, size) {
     await p.evaluate(by => (document.querySelector('#book .bk-desk').scrollTop += by), size.under);
     await p.waitForTimeout(600);
     await c.shot(`glass-${name}`, p);
-    for (const bar of await p.evaluate(glassOf)) {
+    const bars = await p.evaluate(glassOf, ['bar', '#book .bk-bar']);
+    await openScrap(p, mouseOf(p), undefined, await cardInSight(p));
+    await c.shot(`glass-${name}-scrap`, p);
+    for (const bar of [...bars, ...(await p.evaluate(glassOf, ['tools', '#book .bk-strip']))]) {
       // (frosted and see-through at all, not by how much: the look's own numbers are the look's.)
       assert.match(bar.filter, /blur\(/, `the ${bar.which} isn't frosted: ${bar.filter}`);
       assert.ok(
@@ -119,25 +125,22 @@ async function glassAt(browser, c, name, { renderer, colorScheme }, size) {
   }
 }
 
-// Each island's frost (its backdrop filter), how opaque its panel is (its background colour's alpha) and how many keys
+// An island's frost (its backdrop filter), how opaque its panel is (its background colour's alpha) and how many keys
 // show on it
-function glassOf() {
+function glassOf([which, selector]) {
   const alphaOf = colour => {
     const m = colour.match(/rgba?\(([^)]+)\)|color\(srgb ([^)]+)\)/);
     const parts = (m?.[1] ?? m?.[2] ?? '').split(/[ ,/]+/).filter(Boolean);
     return parts.length > 3 ? Number(parts[3]) : 1;
   };
+  const el = document.querySelector(selector),
+    style = getComputedStyle(el);
   return [
-    ['tools', '#book .bk-strip'],
-    ['bar', '#book .bk-bar'],
-  ].map(([which, selector]) => {
-    const el = document.querySelector(selector),
-      style = getComputedStyle(el);
-    return {
+    {
       which,
       filter: style.backdropFilter || style.webkitBackdropFilter,
       alpha: alphaOf(style.backgroundColor),
       keys: [...el.querySelectorAll('.bk-btn')].filter(b => b.offsetWidth && !b.hidden).length,
-    };
-  });
+    },
+  ];
 }

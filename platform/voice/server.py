@@ -155,6 +155,9 @@ SCREENS = {}  # each live session's screen key, to its Call
 SCREEN_WORDS = {  # (circled)
     'lines': 'Their screen since your last turn:',
     'picture': 'The last picture is their screen as they finished speaking, their last tap circled.',
+    # (every screen on the call, a guest's too.)
+    'pictures': ('The last pictures are those screens as they finished speaking, in the order the lines above name them, '
+                 'each one\'s last tap circled.'),
     'paused': ("They've paused showing their screen: you see nothing of it, and the screen tool shows nothing, until "
                'they show it again.'),
     'full': ('No room for another picture of their screen in this session just now: its older pictures are compacted '
@@ -457,15 +460,19 @@ def fetch_picture(hq, picture_id, call):
 
 
 def fetch_note(hq, note_id, call):
-    """A note the board drew on this live call (the coordinator's note route): an entry for the call's pictures, its
-    number on the call's page, words and page under 'note', and its picture (the page around it) if it has one. None if
+    """A note the board drew on this live call, or its guest on a prototype (the coordinator's note route): an entry for
+    the call's pictures, its number on the call's page, words, page and a guest's name (by) under 'note', and its picture
+    (the page around it) if it has one. None if
     the note or its picture is unreadable. Raises if the coordinator (hq) refuses it."""
     got = hq('GET', f'note?id={note_id}&call={call}')
     picture = got.get('picture') if isinstance(got, dict) else None
     if not isinstance(got, dict) or type(got.get('n')) is not int or got['n'] < 1 or picture is not None and not takes(picture):
         return None
-    return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url'))},
-            'type': picture and picture['type'], 'data': picture and picture['data']}
+    note = {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url'))}
+    # (a guest's, by their name: their pen on a prototype.)
+    if isinstance(got.get('by'), str) and one_line(got['by']):
+        note['by'] = one_line(got['by'])
+    return {'id': f"note {got['n']}", 'note': note, 'type': picture and picture['type'], 'data': picture and picture['data']}
 
 
 def fetch_mark(hq, mark_id, call):
@@ -498,6 +505,33 @@ def picture_as(picture, kind):
     """A picture from the coordinator (a screen's from the watch-along routes, image/jpeg; a sketch's, image/png), as
     the agent can take it (of that type, whose data decodes as one), or None."""
     return {'type': kind, 'data': picture['data']} if takes(picture, kind) else None
+
+
+def screen_pictures(got):
+    """The pictures of the screens a screen-turn brings (one: picture; every screen on the call: pictures, in the order
+    its lines name them), as the agent can take them. (pictures)"""
+    given = got.get('pictures') if isinstance(got.get('pictures'), list) else [got.get('picture')]
+    return [picture for picture in (picture_as(p, 'image/jpeg') for p in given if isinstance(p, dict)) if picture]
+
+
+def screen_said(lines, pictures, told):
+    """A screen-turn's words for the agent (framed) and for the transcript (noted): its lines, its pictures (several:
+    every screen on the call, a guest's too, each that changed, in the order its lines name them), and what it was told
+    (paused, full). (several)"""
+    seen = SCREEN_WORDS['pictures' if len(pictures) > 1 else 'picture'] if pictures else None
+    framed = [*([SCREEN_WORDS['lines'], *lines] if lines else []), *([seen] if seen else []),
+              *(SCREEN_WORDS[word] for word in ('paused', 'full') if word in told)]
+    noted = [*lines, *([f"{len(pictures)} pictures of the screens went with it" if len(pictures) > 1
+                        else 'a picture of the screen went with it'] if pictures else [])]
+    return framed, noted
+
+
+def cursor(value):
+    """Whether a screen-turn's last or version is one the line hands back with the next: a number (one screen), or a
+    number by each screen (every screen on the call)."""
+    if type(value) is int:
+        return True
+    return isinstance(value, dict) and all(isinstance(k, str) and type(n) is int for k, n in value.items())
 
 
 def screen_lines(got):
@@ -2351,25 +2385,23 @@ class Call:
         if not on:
             return look
         if paused and 'paused' in heard:  # (told already: nothing more until it's on again)
-            lines, picture, told = [], None, set()
+            lines, pictures, told = [], [], set()
         else:
             lines = screen_lines(got)
-            picture = None if paused else picture_as(got.get('picture'), 'image/jpeg')
+            pictures = [] if paused else screen_pictures(got)
             told = {'paused'} if paused else set()
-        if picture and beside is not None and beside + len(picture['data']) > self.limits.session_bytes:
-            picture = None
+        if pictures and beside is not None and beside + sum(len(p['data']) for p in pictures) > self.limits.session_bytes:
+            pictures = []
             told.add('full')
         told -= heard
         brief = str(got.get('brief') or '').strip() if 'brief' not in heard else ''
-        framed = [*([SCREEN_WORDS['lines'], *lines] if lines else []), *([SCREEN_WORDS['picture']] if picture else []),
-                  *(SCREEN_WORDS[word] for word in ('paused', 'full') if word in told)]
-        noted = [*lines, *(['a picture of the screen went with it'] if picture else [])]
+        framed, noted = screen_said(lines, pictures, told)
         look.update(text='\n\n'.join(filter(None, (brief, '(' + '\n'.join(framed) + ')' if framed else ''))),
-                    pictures=[{'id': 'screen', **picture}] if picture else [],
+                    pictures=[{'id': 'screen', **picture} for picture in pictures],
                     line=f"{self.them}: (on screen: {'; '.join(noted)})" if noted else '',
                     heard=told | ({'brief'} if brief else set()),
-                    after=got['last'] if type(got.get('last')) is int else self.screen['after'],
-                    version=got['version'] if picture and type(got.get('version')) is int else seen)
+                    after=got['last'] if cursor(got.get('last')) else self.screen['after'],
+                    version=got['version'] if pictures and cursor(got.get('version')) else seen)
         return look
 
     def screen_shown(self, state):
@@ -2389,9 +2421,10 @@ class Call:
         self.screen['heard'] |= look['heard']
         if look['pictures'] and not look.get('counted'):
             look['counted'] = True
-            self.screen['pictures'] += 1
-            self.screen['bytes'] += len(look['pictures'][0]['data'])
-            self.picture_bytes += len(look['pictures'][0]['data'])
+            sent = sum(len(picture['data']) for picture in look['pictures'])
+            self.screen['pictures'] += len(look['pictures'])
+            self.screen['bytes'] += sent
+            self.picture_bytes += sent
 
     async def screen_tool(self, asked):
         """The agent's screen tool (hq_tools.py, through the line's socket): the coordinator's screen route for this
@@ -2404,6 +2437,8 @@ class Call:
             return {'error': SCREEN_WORDS['paused']}
         since = asked.get('since')
         wanted = {'since': since} if isinstance(since, str) else {k: asked[k] for k in ('at', 'region') if k in asked}
+        if isinstance(asked.get('who'), str):  # (a guest's screen, by their name.)
+            wanted['who'] = asked['who']
         if 'since' not in wanted and self.screen['pictures'] >= self.limits.screen_pictures:
             return {'error': SCREEN_WORDS['full']}
         try:
@@ -2507,8 +2542,8 @@ class Call:
                 self.write(f"{note['note']['who']}: (drew on #{note['note']['pointer']['on']} on the call's notes page)")
             elif note['note'].get('who'):  # (a mark on the call's notes page.)
                 self.write(f"{note['note']['who']}: (drew #{note['note']['n']} on the call's notes page)")
-            else:
-                self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
+            else:  # (a guest's pen on a prototype, by their name.)
+                self.write(f"{note['note'].get('by') or 'Board'}: (drew note {note['note']['n']} on {note['note']['url']})")
         turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
         spoke, asked, worded_at = self.spoke, self.wiring.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)

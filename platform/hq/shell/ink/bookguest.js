@@ -9,6 +9,7 @@ import { showBook, showShelf } from './bookguestshelf.js';
 import { showPrototype, showWork } from './bookguestwork.js';
 import { prototypeCard } from './bookprototype.js';
 import { callBar } from './bookguestcall.js';
+import { guestScreen } from './bookguestscreen.js';
 import { prototypeLink } from '../previews.js';
 import { local } from '../data.js';
 import { button, island } from './bookui.js';
@@ -104,6 +105,10 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
   // (the call's bar: once the board has left the call to its guests, this device can carry it.)
   const bar = notebook.kind === 'call' ? callBar(document.documentElement.lang) : null;
   bar?.(notebook);
+  // (and the room's screen, for the call's agent while the call is on: started again after a drop as the room reads the
+  // call, with its eye and Pause on the bar.)
+  const screen = notebook.kind === 'call' ? guestScreen(api, text.screen) : null;
+  screen?.(notebook);
   const newPrototypes = book => {
     for (const p of [...(book.prototypes ?? [])].reverse()) {
       if (shownPrototypes.has(p.id)) continue;
@@ -132,6 +137,7 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
       const page = book.pages[0];
       newPrototypes(book);
       bar?.(book);
+      screen?.(book);
       undo.hidden = !page?.canUndo;
       marked.hidden = !(page?.canUndo || page?.sent || page?.sending);
       status.textContent = book.kind === 'round' ? text.round[book.state] : '';

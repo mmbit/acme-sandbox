@@ -1,9 +1,9 @@
 // book-check.mjs's stories of Ink 1.1's answers that ask for nothing but a tick (shell/ink/bookassignlist.js seenHtml,
 // shared/review/slip.js; the coordinator's ink/groupanswers.ts seenTick and ink/bookfix.ts), each on a Notebook of
 // its own played by HQ's one stand-in (answersplay.mjs), on an iPad mini by finger and a desktop by mouse:
-//   - Seen: a note that needs nothing back wears its agent's face with a small tick on it right beside what was read,
-//     its words or its ink, gone once an answer comes; a picture's answer says where its numbers came from in one small
-//     line under it. (beside what was read)
+//   - Seen: a note that needs nothing back wears its agent's face with a small tick on it right beside the card of what
+//     was read, its words or its ink, gone once an answer comes; a picture's answer says where its numbers came from in
+//     one small line under it. (beside what was read)
 //   - A fix: a box to tick by its line, or round its drawing; ticked, it's built once the page is sent (from the
 //     dots' Tear off and send, Submit), and its slip then says who's building it, its box ticked for good.
 import assert from 'node:assert/strict';
@@ -61,20 +61,16 @@ const inView = (page, el, what) => {
   return until(seen, () => `${what} in view: ${why}`);
 };
 
-// A seen tick right beside what was read (its box in its unit's own px, from the unit's place on the screen): within a
-// few px of it and covering none of it, wherever it is in its unit (a circle drawn high in a tall one has its tick by
-// the circle, not at the unit's foot a post-it's height below).
+// A seen tick right beside the card of what was read (a scrap is one unit: its words and ink read with it, wherever they
+// are on it): within a few px of the card and covering none of it
 async function besideRead(page, g, tick, what) {
-  const unit = await boxOf(page.locator(`#book .bk-unit[data-unit="${g.id}"]`)),
-    s = unit.width / UNIT_W,
-    b = g.box,
-    [left, top] = [unit.left + b.x * s, unit.top + b.y * s],
+  const card = await boxOf(page.locator(`#book .bk-unit[data-unit="${g.id}"]`)),
+    s = card.width / UNIT_W,
     face = await boxOf(tick.locator('.bk-answer-face')),
-    apart = Math.max(left - face.right, face.left - left - b.w * s, top - face.bottom, face.top - top - b.h * s),
-    at = JSON.stringify({ read: { left, top, ...b }, face });
-  // (typed words' height an estimate here and on the page: a px or two either way)
-  assert.ok(apart > -3, `${what}: covering none of it: ${at}`);
-  assert.ok(apart < 16 * s, `${what}: right beside it: ${at}`);
+    apart = Math.max(card.left - face.right, face.left - card.right, card.top - face.bottom, face.top - card.bottom),
+    at = JSON.stringify({ card, face });
+  assert.ok(apart > -1, `${what}: covering none of its card: ${at}`);
+  assert.ok(apart < 16 * s, `${what}: right beside its card: ${at}`);
 }
 
 async function seen(browser, c, viewport, size, options = {}) {
@@ -196,10 +192,20 @@ async function drawnTicked({ page, size, tap, drawn, of }) {
   const [ink, box] = [await boxOf(art.locator('.bk-slip-ink')), await boxOf(art.locator('.slip-tick'))];
   const apart = ink.right <= box.left || ink.bottom <= box.top;
   assert.ok(apart, `the box covers none of the drawing: ${JSON.stringify([ink, box])}`);
-  const a = await boxOf(art),
-    wash = () => art.evaluate(el => getComputedStyle(el).backgroundColor),
+  const wash = () => art.evaluate(el => getComputedStyle(el).backgroundColor),
     unticked = await wash();
-  await tap(a.x + a.width / 3, a.y + a.height / 2);
+  // (a point of the drawing the hand reaches: the book's islands over the paper's foot can lie over part of it)
+  const at = await art.evaluate(el => {
+    const r = el.getBoundingClientRect();
+    for (const fy of [1 / 2, 1 / 4, 3 / 4])
+      for (const fx of [1 / 3, 1 / 6, 1 / 2, 2 / 3, 5 / 6]) {
+        const [x, y] = [r.left + r.width * fx, r.top + r.height * fy];
+        if (el.contains(document.elementFromPoint(x, y))) return [x, y];
+      }
+    return null;
+  });
+  assert.ok(at, `the drawing in reach, not all under the book's islands (${size})`);
+  await tap(...at);
   await until(() => of(4731).ticked, `the drawn fix ticked on its drawing (${size})`);
   assert.equal(await drawn.getAttribute('data-ticked'), '');
   await until(async () => (await wash()) !== unticked, 'washed in the chosen colour');

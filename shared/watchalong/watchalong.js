@@ -33,6 +33,7 @@ const PRIVATE_PICTURES = ['img', 'picture', 'video', 'canvas', 'svg', 'iframe']
 const FULL_SNAPSHOT = 2,
   INCREMENTAL = 3,
   META = 4,
+  CUSTOM = 5,
   MUTATION = 0;
 
 // Starts recording this page and posting its events to `url` (the store's session route, its key in the query).
@@ -40,8 +41,9 @@ const FULL_SNAPSHOT = 2,
 // and how much (guests, customers). canvasFps: canvas frames a second, 0 for none. onEnd(why) runs once it stops for
 // good: 'stopped', 'over', 'full', 'too big' (one event past what a post holds) or 'unreachable'. onSeen(seen) runs
 // with each batch the server says whether the agent watching along sees the page (true or false; a session watched for
-// no agent, or not known yet, says nothing).
-export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {}, onSeen = () => {} }) {
+// no agent, or not known yet, says nothing). paused: it starts paused (a Pause kept through a reload), nothing of the
+// page recorded until resume(), while the server is still asked how the session is.
+export function watch({ url, typed = 'hidden', canvasFps = 0, paused = false, onEnd = () => {}, onSeen = () => {} }) {
   let stopPage = null,
     stopping = false,
     ended = false;
@@ -55,7 +57,8 @@ export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {}, 
   };
   const outbox = sender(url, finish, onSeen);
   const start = () => (stopPage = recordPage(typed, canvasFps, outbox.push));
-  start();
+  if (paused) outbox.push({ type: CUSTOM, timestamp: Date.now(), data: { tag: 'paused', payload: {} } });
+  else start();
   return {
     // A moment of the page's own, kept with its events (the pen's strokes it hears by itself: inks)
     mark: (tag, payload) => stopPage && record.addCustomEvent(tag, payload),

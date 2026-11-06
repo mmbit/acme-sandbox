@@ -116,12 +116,14 @@ const room = routes({
   [`POST ${API}/replies/delete`]: onPage(byGroup, (b, on) => sending.deleteReply(b, on.who), ANSWERS),
   [`POST ${API}/answers/form`]: onPage(bySlip('id'), (b, on) => answers.answerForm(b, on.who), ANSWERS),
   [`POST ${API}/answers/tick`]: onPage(bySlip('id'), (b, on) => answers.tickAnswer(b, on.who), ANSWERS),
-  // (a call's guest's pen on one of its prototypes, {url, anchor, snip}: a scrap of theirs on the call's page, as the
-  // board's from HQ's viewer.)
+  // (a call's guest's pen on one of its prototypes, {url, anchor, snip}: a note of theirs for the call's agent that
+  // points, as the board's from HQ's viewer.)
   [`POST ${API}/prototype-mark`]: write(
     (b, name) => prototypes.markOnCall(b, page => callguests.onCallPage(page, name)?.by),
     NOTE_MAX,
   ),
+  // (a call's guest's room, recording itself for the call's agent, or paused: callguests.ts screenOf.
+  [`POST ${API}/screen`]: write((b, name) => callguests.screenOf(name, b)),
   ...files.fileRoutes(ROOM),
 });
 

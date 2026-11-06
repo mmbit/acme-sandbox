@@ -14,7 +14,8 @@ import { nothingDrawn } from './ink.mjs';
 import { groupsOf, newestPage, shownScrap } from './played.mjs';
 import { talked, voiceServed } from './voice.mjs';
 import { talkedInViewer, askLeftBehind, pagesWatched } from './talk.mjs';
-import { DESKTOP, MINI, pinOn, pressAlong, ui, until } from './kit.mjs';
+import { DESKTOP, MINI, closeScrap, openScrap, pinOn, pressAlong, ui, until } from './kit.mjs';
+import { hands, mouseOf } from './hands.mjs';
 import { PREVIEW, previewServed } from './preview.mjs';
 import { watchedPage } from './start.mjs';
 
@@ -65,11 +66,18 @@ async function pinFlow(c, screen) {
     await page.waitForSelector('review-mode .fab', { state: 'attached' });
     await c.settled(page, screen.starts);
     const s = { ...c, page, screen, play: context.notebook, named: what => `scrap-${screen.name}-${what}` };
+    s.hands = await hands(page);
+    s.hand = handOf(page, screen.hand, s.hands);
     // on HQ: the book as the device starts it (open on an iPad and a desktop, shut on a phone)
     const first = await savedOnHq(s, { spoken: screen.hand === 'pen' });
+    // (opened from its card: the grid takes no typing or ink)
+    const { gid } = await openScrap(page, s.hand, first.id);
+    assert.equal(gid, first.id, 'the scrap tapped is the one opened');
     await edited(s, first);
-    // (a mouse's press on a picture moves it, booktools.js: a pen or a stylus draws on the photo)
-    if (screen.hand !== 'mouse') await drawnOn(s, first);
+    // (the Pencil draws on the photo: a finger on an opened scrap moves it, bookwrite.js, and a mouse's press on a
+    // picture moves the picture, booktools.js)
+    if (screen.hand === 'pen') await drawnOn(s, first);
+    await closeScrap(page, s.hand);
     // the iPad with its book put away: the Pencil's next note leaves it shut till the pull tab's tap
     if (screen.hand === 'pen') {
       await page.locator('#book .bk-lip').click();
@@ -97,7 +105,7 @@ async function savedOnHq(s, { spoken, what = '' }) {
   s.hush(!spoken);
   await landedHeard(page);
   await markOnHq(s);
-  const sheet = await postIt(s, page, s.screen.viewport);
+  const sheet = await postIt(s, page);
   if (spoken) await talked(page);
   else await sheet.locator('textarea').fill(`Tighten this line${what && `, ${what}`}`);
   await s.shot(s.named(`postit${what && `-${what}`}`), page);
@@ -122,8 +130,10 @@ async function savedOnHq(s, { spoken, what = '' }) {
 // A mark on HQ's page as the device makes it: the Pencil anywhere; a mouse or a finger with the pin, turned on as
 // Settings' Pin on HQ does
 async function markOnHq(s) {
+  // (clear of the whole post-it at the foot of an iPad on its side: a mark under it folds it to its head and words,
+  // its photo put away, postitplace.js)
   const { page, screen } = s,
-    at = { x: Math.min(250, screen.viewport.width / 2), y: 300, rx: 80, ry: 45 };
+    at = { x: Math.min(250, screen.viewport.width / 2), y: 200, rx: 80, ry: 45 };
   if (screen.hand === 'pen') return pressAlong(page, s.ring(at.x, at.y, at.rx, at.ry));
   if (!(await page.locator(ui('.fab')).isVisible())) await pinOn(page);
   await page.locator(ui('.fab')).dispatchEvent('click'); // (it bobs: never still for Playwright's click)
@@ -143,15 +153,19 @@ async function drawn(on, points, hand, offset = { x: 0, y: 0 }) {
   await pressAlong(on, points, { type: hand === 'pen' ? 'pen' : 'touch' });
 }
 // The post-it as the board sees it: at the foot of the screen, inside its width, its photo developed, its button Save.
-// on: the page or the preview's frame; screen: its size
-async function postIt(s, on, screen) {
+// on: the page or the preview's frame, whose own screen it's on (the viewer's frame as it's laid out by then: a loaded
+// WebKit lays the viewer out late)
+async function postIt(s, on) {
   const sheet = on.locator(ui('.sheet'));
   await sheet.waitFor({ state: 'visible' });
   await on.waitForSelector(ui('.polaroid:not(.busy) .img :is(img, canvas)'));
   await sheet.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished))); // (its pop: in a frame it can start late)
-  const box = await sheet.evaluate(el => {
+  const { box, screen } = await sheet.evaluate(el => {
     const r = el.getBoundingClientRect();
-    return { left: r.left, right: r.right, bottom: r.bottom, top: r.top };
+    return {
+      box: { left: r.left, right: r.right, bottom: r.bottom, top: r.top },
+      screen: { width: innerWidth, height: innerHeight },
+    };
   });
   assert.ok(
     box.left >= 0 && box.right <= screen.width && screen.height - box.bottom < 60 && box.top > screen.height / 3,
@@ -193,12 +207,12 @@ async function inBook(s, scrap, shut, what = '') {
   );
   await s.shot(s.named(`book${what && `-${what}`}`), page);
 }
-// Its words typed again in the book: saved, over the scrap as it was read, said as they first were
+// Its words typed again on its opened sheet: saved, over the scrap as it was read, said as they first were
 async function edited(s, scrap) {
   const { page } = s,
     from = s.posts.length,
     // (a scrap's words in its body: .bk-words.)
-    words = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+    words = page.locator(`#book .bk-page[data-focus] .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
   // (a finger's tap first on a touch screen: till one its words are the pen's to draw over, bookgroups.js)
   if (s.screen.hand !== 'mouse') await words.tap();
   await words.fill('Shorter, and in the house font');
@@ -210,19 +224,19 @@ async function edited(s, scrap) {
   const kept = groupsOf(s.play).find(g => g.id === scrap.id);
   assert.equal(kept.words, 'Shorter, and in the house font', 'the store keeps them');
 }
-// A line drawn from inside its photo: the scrap's own ink, the same group (no new one)
+// A line drawn from inside its photo on its opened sheet: the scrap's own ink, the same group (no new one)
 async function drawnOn(s, scrap) {
   const { page } = s,
+    { pen } = s.hands,
     from = s.posts.length,
     count = groupsOf(s.play).length,
-    inked = scrap.ink.length,
-    { photo } = await shownScrap(page, scrap);
+    inked = groupsOf(s.play).find(g => g.id === scrap.id).ink.length;
+  const { photo } = await until(() => shownScrap(page, scrap), 'its photo on its opened sheet');
   const line = Array.from({ length: 14 }, (_, i) => [
     photo.x + photo.w / 4 + i * 5,
     photo.y + photo.h / 2 + 6 * Math.sin(i),
   ]);
-  // (a finger in the book moves its page and never inks, bookwrite.js: a phone draws there with a stylus)
-  await pressAlong(page, line);
+  await pen.stroke(line);
   const edit = await posted(s, from, '/api/notebooks/groups/edit', 'a line over the photo joins the scrap');
   assert.equal(edit.id, scrap.id, 'the same group');
   assert.equal(edit.ink?.length, inked + 1, 'its ink with the line');
@@ -239,7 +253,7 @@ async function cancelled(s) {
     await turned(s, page, 'folded');
   }
   await markOnHq(s);
-  const sheet = await postIt(s, page, s.screen.viewport);
+  const sheet = await postIt(s, page);
   await sheet.locator('[data-cancel]').dispatchEvent('click');
   await nothingDrawn(page, `${s.screen.name}: cancelled`, 0);
   await page.waitForTimeout(2000); // (past what a mark's settle was)
@@ -266,17 +280,22 @@ async function fromArtifact(s, { spoken }) {
   s.hush(!spoken); // (HQ records the frame's words over the voice line too: framemic.js)
   await page.evaluate(url => import('/shell/desk.js').then(desk => desk.openLink(url)), `${PREVIEW}/basket`);
   await page.waitForSelector('#viewer .bar .pin:not([hidden])'); // (review mode said hello)
-  const frame = page.frame({ url: /scrap\.preview\.test/ }),
-    box = await page.locator('#viewer iframe').boundingBox(),
-    loop = s.ring(110, 48, 100, 30); // (round the heading)
+  const frame = page.frame({ url: /scrap\.preview\.test/ });
   await askLeftBehind(page, frame);
   await landedHeard(page);
   // (an artifact's own pin first, the Pencil too: it draws without one on HQ's page alone)
   await page.locator('#viewer .bar .pin').dispatchEvent('click');
   await frame.waitForSelector(ui('.veil:not([hidden])'));
+  // round the heading, or where review mode's bar (its hint and strip) lies over it, as on a phone, under the bar: a
+  // line started on the bar is the bar's
+  const box = await page.locator('#viewer iframe').boundingBox(),
+    bar = await frame.locator(ui('.bar')).boundingBox(),
+    [x, y, rx, ry] = [110, 48, 100, 30],
+    [left, top] = [bar.x - box.x, bar.y - box.y],
+    under = left < x + rx && left + bar.width > x - rx && top < y + ry && top + bar.height > y - ry,
+    loop = s.ring(x, under ? top + bar.height + ry + 10 : y, rx, ry);
   await drawn(frame, loop, screen.hand, box);
-  const size = { width: Math.round(box.width), height: Math.round(box.height) },
-    sheet = await postIt(s, frame, size);
+  const sheet = await postIt(s, frame);
   if (spoken) await talkedInViewer(s, frame, sheet);
   else await sheet.locator('textarea').fill('Say when it ships');
   await s.shot(s.named('artifact-postit'), page);
@@ -301,6 +320,18 @@ async function fromArtifact(s, { spoken }) {
   await inBook(s, scrap, shut, 'artifact');
 }
 // ---- helpers
+// The screen's hand's tap (the Pencil's, a finger's or the mouse's click), as kit.mjs's openScrap and closeScrap take it
+// (hands.mjs's pen and touch)
+function handOf(page, hand, { pen, touch }) {
+  if (hand === 'mouse') return mouseOf(page);
+  if (hand === 'pen') return pen;
+  return {
+    tap: async at => {
+      await touch.down([at]);
+      await touch.up();
+    },
+  };
+}
 const bookMode = page => page.evaluate(() => document.documentElement.dataset.book);
 // The book swung or slid to a mode after a tap, then laid out (a loaded worker's WebKit can take far past book-check's
 // settle for the swing alone, and a story would read a book still swinging shut as open).

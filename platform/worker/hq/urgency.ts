@@ -8,7 +8,8 @@ export const urgent = {
                                                      Urgent work bypasses seat pacing, and expedited work counts as
                                                      urgent. A deadline only orders work within the pace. A milestone
                                                      passes urgency to its jobs and tasks, and a job to its tasks.
-                                                     Reviews and fixes carry their work's urgency.
+                                                     Reviews and fixes carry their work's urgency, and a board
+                                                     call's follow-up is urgent by itself.
                                                      Milestone: project key. Job: project/slug. Task: task number.`,
   async run([level, id, state = 'on', ...rest]: string[]) {
     if (!['milestone', 'job', 'task'].includes(level) || !id || !['on', 'off'].includes(state) || rest.length)

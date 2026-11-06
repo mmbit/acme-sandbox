@@ -18,7 +18,7 @@ import { keyOf, landing } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
 import { toward } from './bookedit.js';
 import { fixed, footOf, onCard, pointUnit } from './bookunits.js';
-import { UNIT_W, WORDS_IN } from './scrapunit.js';
+import { CARD, UNIT_W, WORDS_IN } from './scrapunit.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
 export const TEXT = { size: 18, line: 1.4 };
@@ -371,11 +371,14 @@ function put(tx, { view, x, y }, words, { centre, there, voice }) {
 export function spotFor(page, { x, y }, centre = false) {
   const { g, left, edge } = inUnit(page, x, y),
     line = TEXT.size * TEXT.line,
-    at = Math.max(left, Math.min(centre ? x - (edge - left) / 2 : x, edge - NARROW));
+    at = Math.max(left, Math.min(centre ? x - (edge - left) / 2 : x, edge - NARROW)),
+    floor = floorOf(page, g) + (page.texts.some(t => t.g === g) ? line / 2 : 0);
   return {
     g,
     x: round(at - 2),
-    y: round(Math.max(y - line / 2, floorOf(page, g) + (page.texts.some(t => t.g === g) ? line / 2 : 0))),
+    // (words starting a new scrap on the grid: at its top, inside its card's pad, as the card is laid at its column's
+    // end wherever the point was and fits what's on it.)
+    y: round(!page.focus && !page.groups?.has(g) ? floor + CARD.pad : Math.max(y - line / 2, floor)),
     w: Math.max(NARROW, Math.min(READ, edge - at)),
   };
 }

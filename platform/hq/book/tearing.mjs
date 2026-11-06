@@ -2,8 +2,9 @@
 // Pencil, and open its targets from the bar's dots; and the story of the presses at the spine that aren't a tear.
 // (the blur)
 import assert from 'node:assert/strict';
-import { inputs } from './hands.mjs';
-import { QUIET_MS, UPRIGHT } from './kit.mjs';
+import { inputs, mouseOf } from './hands.mjs';
+import { QUIET_MS, UPRIGHT, closeScrap, middleOf, openScrap } from './kit.mjs';
+import { paperBox } from './mouse.mjs';
 import { blurred } from './islands.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
 import { en } from '../shell/ink/notebookwordsen.js';
@@ -41,12 +42,16 @@ export async function notATearStory(browser, c) {
       [x, SAT_PX / 2],
       [x - 160, SAT_PX / 2 + 10],
     ]);
+    // (on a scrap opened, where the tools are)
+    const mouse = mouseOf(page);
+    await openScrap(page, mouse, undefined, middleOf(await paperBox(page)));
     const key = await page.evaluate(() => {
       const tools = [...document.querySelectorAll('#book .bk-strip .bk-island button')],
         r = tools.find(b => b.offsetParent).getBoundingClientRect();
       return [r.right - 4, r.top + r.height / 2];
     });
     await hand.stroke('touch', [key, [key[0] - 160, key[1] + 10]]);
+    await closeScrap(page, mouse);
     // (the board's: from the top right corner, below the blur, where iPadOS resizes the window)
     await hand.stroke('touch', [
       [x, SAT_PX + 30],

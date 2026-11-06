@@ -16,17 +16,21 @@
 //     is open to them, and nothing of HQ.
 //   - HQ's call screen hears of each join (the event 'book' 'guest'), and tells the line their name.
 //   - Each mark on the call's page, theirs or the board's from any screen, reaches the call's agent as it rests, with who
-//     drew it (markForVoice, through HQ's calldraw.js and the voice line).
+//     drew it (ink/callmarks.ts markForVoice, through HQ's calldraw.js and the voice line).
 //   - The call ended, their session and the page close to them: the page goes in with the call, as every call's does.
 //   - The board can leave the call to them (HQ's Leave, the voice line's 'leave'): the line holds it, and their room shows
 //     a call bar (bookguestcall.js) that says again that the agent is an AI and the call is written down, and carries
 //     the call on their own device, its microphone and speaker, with a one-time ticket for their session (voiceTicket,
 //     the line's /voice/guest). While the board is away (callaway.ts), the call's own token reaches no HQ route: a guest
 //     is never the board. The board calling the agent again comes back into the call, and its hang-up ends it.
+//   - The call's agent sees each of their screens live, as it sees the board's (their room records itself while the
+//     call is on: screenOf, watchalong.ts), with their name, and their pen on a prototype points as the board's does
+//     (callprototypes.ts markOnCall). The join page says so.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { db } from './db.ts';
+import { db, lacks } from './db.ts';
 import * as guests from './guests.ts';
+import { MAX_NAME, apart, nameOf } from './callguestnames.ts';
 import { clientOf } from './auth.ts';
 import { ORIGIN } from './config.ts';
 import { publish } from './events.ts';
@@ -39,16 +43,10 @@ import { brand } from './company.ts';
 import { BOARD } from './ink/book.ts';
 import { liveCall, pageFor } from './ink/callnotes.ts';
 import { pageOf, pageRow, shut } from './notebook.ts';
-import { partsOf, row } from './notebookgroups.ts';
-import { heightFor, UNIT_W } from '../../hq/shell/ink/scrapunit.js';
-import { boxOf } from '../../hq/shell/ink/notebookstack.js';
-import { render } from './ink/bookrender.ts';
-import { DIR } from './pagescraps.ts';
-import { pointerOf } from './ink/callpointers.ts';
-import { replySnip, versionSlip } from './ink/bookpick.ts';
 import type { Refused } from './pagechecks.ts';
 import * as prototypes from './callprototypes.ts';
 import { boardAway, ticketFor } from './callaway.ts';
+import * as watchalong from './watchalong.ts';
 
 type CallGuest = { id: number; call: number; guest: string; link: string; added: string };
 
@@ -58,28 +56,35 @@ const WORDS = {
   en: {
     title: (agent: string) => `Call with ${agent}`,
     text: (agent: string) =>
-      `${agent} is an AI assistant. We keep a written transcript of this call, never its sound. What you draw on the call’s page, ${agent} sees too, and it stays with the call’s notes. Your device stays muted: the call runs through the other device.`,
+      `${agent} is an AI assistant. We keep a written transcript of this call, never its sound. If you show your screen, ${agent} sees this call’s page and the prototypes you open on it live, never another tab or app or what you type. The transcript notes what you open, where you scroll and tap, and that you type, never what. Nothing else of it is kept. Pause stops it at any time. What you draw on the call’s page, ${agent} sees too, and it stays with the call’s notes. Your device stays muted: the call runs through the other device.`,
+    privacy: 'How we handle it',
     name: 'Your name',
     badName: 'Type your name to join: a few letters.',
-    button: 'Join the call’s page',
+    // (two of equal weight: showing their screen is theirs to choose, and saying no costs nothing.
+    show: 'Join and show my screen',
+    without: 'Join without showing it',
     shut: 'This call has ended.',
   },
   nl: {
     title: (agent: string) => `Gesprek met ${agent}`,
     text: (agent: string) =>
-      `${agent} is een AI-assistent. We houden een geschreven verslag van dit gesprek bij, nooit het geluid. Wat je op de pagina van het gesprek tekent, ziet ${agent} ook, en het blijft bij de aantekeningen van het gesprek. Je apparaat blijft stil: het gesprek loopt via het andere apparaat.`,
+      `${agent} is een AI-assistent. We houden een geschreven verslag van dit gesprek bij, nooit het geluid. Als je je scherm laat zien, kijkt ${agent} live mee op de pagina van dit gesprek en de prototypes die je erop opent, nooit naar een ander tabblad of andere app of naar wat je typt. Het verslag noemt wat je opent, waar je scrolt en tikt, en dat je typt, maar nooit wat. Verder wordt er niets van bewaard. Met Pauze stopt het meteen. Wat je op de pagina van het gesprek tekent, ziet ${agent} ook, en het blijft bij de aantekeningen van het gesprek. Je apparaat blijft stil: het gesprek loopt via het andere apparaat.`,
+    privacy: 'Hoe we daarmee omgaan',
     name: 'Je naam',
     badName: 'Typ je naam om mee te doen: een paar letters.',
-    button: 'Naar de pagina van het gesprek',
+    show: 'Deelnemen en mijn scherm laten zien',
+    without: 'Deelnemen zonder het te laten zien',
     shut: 'Dit gesprek is afgelopen.',
   },
   de: {
     title: (agent: string) => `Gespräch mit ${agent}`,
     text: (agent: string) =>
-      `${agent} ist eine KI. Wir führen ein schriftliches Protokoll dieses Gesprächs, nie eine Tonaufnahme. Was du auf die Seite des Gesprächs zeichnest, sieht ${agent} auch, und es bleibt bei den Notizen des Gesprächs. Dein Gerät bleibt stumm: das Gespräch läuft über das andere Gerät.`,
+      `${agent} ist eine KI. Wir führen ein schriftliches Protokoll dieses Gesprächs, nie eine Tonaufnahme. Wenn du deinen Bildschirm zeigst, sieht ${agent} die Seite dieses Gesprächs und die Prototypen, die du darauf öffnest, live, nie einen anderen Tab oder eine andere App oder was du tippst. Das Protokoll nennt, was du öffnest, wo du scrollst und tippst, und dass du etwas eingibst, aber nie was. Sonst wird nichts davon gespeichert. Mit Pause stoppt es sofort. Was du auf die Seite des Gesprächs zeichnest, sieht ${agent} auch, und es bleibt bei den Notizen des Gesprächs. Dein Gerät bleibt stumm: das Gespräch läuft über das andere Gerät.`,
+    privacy: 'So gehen wir damit um',
     name: 'Dein Name',
     badName: 'Schreib deinen Namen, um mitzumachen: ein paar Buchstaben.',
-    button: 'Zur Seite des Gesprächs',
+    show: 'Beitreten und meinen Bildschirm zeigen',
+    without: 'Beitreten, ohne ihn zu zeigen',
     shut: 'Dieses Gespräch ist beendet.',
   },
 } satisfies Record<guests.Lang, unknown>;
@@ -91,10 +96,14 @@ const agentName = (call: number) => {
 
 // Each scan's identity: its call (and when that call began: a call that recorded nothing is forgotten and its number
 // comes back, ledger.ts forgetCall), the name as the page shows it, the call's language, its pen (sketch_guests), and
-// its session's sha256.
+// its session's sha256, and whether they chose to show their screen (screen)
+// and have paused it since (paused).
 db.exec(`create table if not exists call_scans (id integer primary key autoincrement, call integer not null,
   call_ts text not null, name text not null collate nocase, lang text not null, pen integer not null,
-  session text not null unique, added text not null)`);
+  session text not null unique, added text not null, screen integer not null default 0,
+  paused integer not null default 0)`);
+if (lacks('call_scans', 'screen')) db.exec('alter table call_scans add column screen integer not null default 0');
+if (lacks('call_scans', 'paused')) db.exec('alter table call_scans add column paused integer not null default 0');
 type Scan = {
   id: number;
   call: number;
@@ -103,11 +112,12 @@ type Scan = {
   lang: guests.Lang;
   pen: number;
   session: string;
+  screen: number;
+  paused: number;
 };
 
 const KEY = serverKey('callscan'),
-  COOKIE = 'cs',
-  MAX_NAME = 40;
+  COOKIE = 'cs';
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 // (a call's code: the call, when it began and its language, under a key only the server holds)
 const tokenOf = (c: { id: number; ts: string }, lang: guests.Lang) =>
@@ -191,12 +201,13 @@ export async function joinPage(req: IncomingMessage, res: ServerResponse) {
   const ask = (status: number, error?: string) => askName(res, status, lang, agent, error);
   if (req.method === 'GET') return ask(200);
   if (!guests.allowed('join', await clientOf(req))) return ask(429, guests.COPY[lang].tooMany);
-  const name = nameOf(await formName(req));
+  const form = await formOf(req),
+    name = nameOf(form.get('name') ?? '');
   if (!name) return ask(400, w.badName);
   // the call as it is now, past the awaits
   if (liveCall(c.id)?.ts !== c.ts)
     return guests.html(res, 404, lang, `<div class="card"><h1>${guests.esc(w.shut)}</h1></div>`);
-  const t = newScan(c, name, lang, agent);
+  const t = newScan(c, name, lang, agent, form.get('screen') === 'show');
   // SameSite=Lax as the guest desk's: a scan opens the page from the camera, a navigation from elsewhere. Its Max-Age is
   // a day at most; the call's end closes it before that (scanOf).
   const secure = ORIGIN.startsWith('https') ? '; Secure' : '';
@@ -204,23 +215,30 @@ export async function joinPage(req: IncomingMessage, res: ServerResponse) {
     'set-cookie': `${COOKIE}=${t}; Path=/guest/; HttpOnly; SameSite=Lax; Max-Age=86400${secure}`,
   });
 }
-// The join page's question: the notice, then their name (with why it was asked again: error)
+// The join page's question: the notice, then their name (with why it was asked again: error) and the two buttons. A
+// disabled button ahead of them is the form's default, so Enter in the name field chooses neither (joinpage.ts alike).
 function askName(res: ServerResponse, status: number, lang: guests.Lang, agent: string, error?: string) {
   const w = WORDS[lang],
     alert = error ? `<p class="alert" role="alert">${guests.esc(error)}</p>` : '';
+  // (the privacy page, as the partner join page and the room's call bar link it: the rest of what a guest is told before
+  // their screen is seen.)
+  const privacy = brand().callsOut?.privacy?.[lang];
+  const link = privacy
+    ? ` <a href="${guests.esc(privacy)}" target="_blank" rel="noopener noreferrer">${guests.esc(w.privacy)}</a>`
+    : '';
   guests.html(
     res,
     status,
     lang,
     `<div class="card"><h1>${guests.esc(w.title(agent))}</h1>${alert}
-<div class="intro">${guests.esc(w.text(agent))}</div>
+<div class="intro">${guests.esc(w.text(agent))}${link}</div>
 <form method="post" class="join" data-call-join><label>${guests.esc(w.name)}<input name="name" required maxlength="${MAX_NAME}" autocomplete="given-name" autocapitalize="words" spellcheck="false"></label>
-<p class="acts"><button type="submit">${guests.esc(w.button)}</button></p></form></div><script src="/guest/scan/join.js" defer></script>`,
+<p class="acts"><button type="submit" hidden disabled aria-hidden="true"></button><button type="submit" name="screen" value="show">${guests.esc(w.show)}</button><button type="submit" name="screen" value="no">${guests.esc(w.without)}</button></p></form></div><script src="/guest/scan/join.js" defer></script>`,
   );
 }
 // Someone new on the call: their scan, its pen, its place among the call's guests, and HQ told (its call screen tells
 // the line their name: callguest.js). → their session's token.
-function newScan(c: { id: number; ts: string }, name: string, lang: guests.Lang, agent: string) {
+function newScan(c: { id: number; ts: string }, name: string, lang: guests.Lang, agent: string, screen: boolean) {
   const t = randomBytes(32).toString('base64url');
   let shown: string;
   db.exec('begin');
@@ -228,8 +246,10 @@ function newScan(c: { id: number; ts: string }, name: string, lang: guests.Lang,
     shown = apart(c.id, name, agent);
     const id = Number(
       db
-        .prepare('insert into call_scans (call, call_ts, name, lang, pen, session, added) values (?, ?, ?, ?, 0, ?, ?)')
-        .run(c.id, c.ts, shown, lang, sha256(t), new Date().toISOString()).lastInsertRowid,
+        .prepare(
+          'insert into call_scans (call, call_ts, name, lang, pen, session, added, screen) values (?, ?, ?, ?, 0, ?, ?, ?)',
+        )
+        .run(c.id, c.ts, shown, lang, sha256(t), new Date().toISOString(), screen ? 1 : 0).lastInsertRowid,
     );
     const pen = people.giveAt(shown, `scan:${id}`);
     db.prepare('update call_scans set pen = ? where id = ?').run(pen.id, id);
@@ -250,28 +270,10 @@ function found(res: ServerResponse, to: string, headers: Record<string, string> 
   res.writeHead(303, { location: to, 'cache-control': 'no-store', ...headers });
   res.end();
 }
-async function formName(req: IncomingMessage) {
+async function formOf(req: IncomingMessage) {
   let raw = '';
-  for await (const chunk of req) if ((raw += chunk).length > 4000) return '';
-  return new URLSearchParams(raw).get('name') ?? '';
-}
-// A name as typed, its spaces tidied: some letters, no control characters, up to MAX_NAME long; null otherwise
-function nameOf(typed: string) {
-  const n = typed.normalize('NFC').replace(/\s+/g, ' ').trim();
-  return n.length <= MAX_NAME && /\p{L}/u.test(n) && !/[\p{C}<>]/u.test(n) ? n : null;
-}
-// The name the page and the agent know them by: as typed, or with a number when someone on the call already has it,
-// or it's the board's or the agent's own (the agent hears 'Board' for the board's marks)
-function apart(call: number, name: string, agent: string) {
-  const taken = new Set(
-    (db.prepare('select name from call_scans where call = ?').all(call) as { name: string }[]).map(r =>
-      r.name.toLowerCase(),
-    ),
-  );
-  taken.add('board').add(agent.toLowerCase());
-  let shown = name;
-  for (let n = 2; taken.has(shown.toLowerCase()); n++) shown = `${name} ${n}`;
-  return shown;
+  for await (const chunk of req) if ((raw += chunk).length > 4000) return new URLSearchParams();
+  return new URLSearchParams(raw);
 }
 // The join page's script: the name remembered on the device, typed in for them (one tap to join again), and kept as
 // they join
@@ -312,6 +314,37 @@ export const onACall = (name: string) => callsOf(name).length > 0;
 // ...and on this one (its prototypes' host lets them look: callprototypes.ts guestOn.)
 prototypes.guestsBy((call, name) => callsOf(name).some(c => c.g.call === call));
 
+// POST /guest/notebooks/api/screen { paused? }: the guest's room on the live call they're on records itself for its
+// agent (their screen, the call's prototypes' host among what it frames), and where it posts, if they chose to show it
+// as they joined. 404: on no live call; 409: they joined without.
+// paused true, their Pause: what was recorded ends at once, and the agent sees nothing of it, as the board's paused
+// screen. It stays paused for the call, through a reload or a scan again (a start answers { paused: true } and starts
+// nothing), until paused false, their Show again, starts it anew. Withdrawing is as easy as giving.
+export function screenOf(name: string, b: { paused?: unknown }) {
+  const on = callsOf(name)[0];
+  if (!on) return [404, 'not on a live call'] as Refused;
+  const scan = scanByName(name);
+  if (!scan?.screen) return [409, 'they joined without showing their screen'] as Refused;
+  const told = typeof b?.paused === 'boolean';
+  if (told) db.prepare('update call_scans set paused = ? where id = ?').run(b.paused ? 1 : 0, scan.id);
+  if (told ? b.paused : scan.paused) {
+    watchalong.endGuest(on.g.call, name);
+    return { paused: true };
+  }
+  const host = prototypes.hostOf(on.g.call);
+  return { ...watchalong.startOnGuest(on.g.call, name, host ? [`https://${host}`] : []), paused: false };
+}
+// The guests whose screens a call's agent may see: each scan of the call that chose to show it, by the name the call
+// knows them by
+watchalong.guestsBy(call =>
+  (
+    db.prepare('select id, name from call_scans where call = ? and screen = 1').all(call) as Pick<Scan, 'id' | 'name'>[]
+  ).map(s => ({
+    guest: scanName(s),
+    name: s.name,
+  })),
+);
+
 // The guest's way onto a page of the board's: the call's notes page, while they're its guest. who: the page's owner
 // (the board), by: the guest as they write there. undefined: not theirs.
 export function onCallPage(page: number, name: string) {
@@ -341,44 +374,5 @@ export function notebookFor(name: string, notebook: number) {
     // (the call's agent, whether the board has left it to its guests, and the privacy page the partner join page links
     // (brand.yaml callsOut.privacy): the room's call bar, bookguestcall.js.)
     call: { agent, away: boardAway(on.g.call), privacy: brand().callsOut?.privacy?.[lang] ?? null },
-  };
-}
-
-// GET /api/voice/drawn?id=&call=: a mark on the live call's notes page, for its agent as it rests: who drew it (the
-// board, or its guest by name), its words, and its picture (the mark's unit, as the page has it). A pointer on the
-// agent's own (ink/callpointers.ts: ink on its scrap, a reply on its version) says so (pointer: the unit it's on, and
-// the version), its picture that scrap or version with the ink over it. 404: not a mark of the board's or its guest's on
-// that call's page. (pointer)
-export async function markForVoice(id: number, call: number) {
-  const c = liveCall(call),
-    p = c && pageFor(call),
-    g = row(id),
-    pointer = g && pointerOf(g.id);
-  if (!c || !p || !g || g.page !== p.id || g.deleted !== null) return 404;
-  if (!pointer && (g.parent !== null || g.by === c.agent)) return 404;
-  const by = pointer?.by ?? g.by,
-    guest = by === BOARD ? null : people.guestOf(by);
-  if (by !== BOARD && !guest) return 404;
-  const parts = partsOf(g),
-    box = boxOf(parts),
-    typed = (parts.texts as { text: string }[]).map(t => t.text).join(' ');
-  const version = versionSlip(g.answers);
-  const snip = version && (await replySnip(version.id, g.frame && JSON.parse(g.frame), parts.ink as never));
-  const drawn = {
-    w: box ? Math.max(UNIT_W, box.x + box.w) : UNIT_W,
-    h: heightFor(parts, g.h ?? 0),
-    ink: parts.ink,
-    scraps: parts.pictures,
-    texts: parts.texts,
-  };
-  const png = snip ? snip.clean : await render(drawn as Parameters<typeof render>[0], DIR);
-  return {
-    n: g.id,
-    who: guest ? guest.name : 'Board',
-    // (on the agent's own scrap, its words are the agent's: the board's mark has none)
-    words: pointer && !pointer.whole ? '' : g.words || typed,
-    updated: g.updated,
-    ...(pointer && { pointer: { on: g.parent ?? g.id, version: version?.version ?? null } }),
-    picture: { type: 'image/png', data: png.toString('base64') },
   };
 }

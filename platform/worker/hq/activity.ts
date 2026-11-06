@@ -24,8 +24,8 @@ export const activity = {
                                                      between steps are the board's alone), the messages it sent (an
                                                      agent's also those sent to it) and posts. The newest 30, or
                                                      everything after --since (30m, 2h or an ISO time, up to 300);
-                                                     --limit <n> for more or fewer. Activity up to 5 November 2026,
-                                                     before HQ kept each line's job, is the board's alone`,
+                                                     --limit <n> for more or fewer. Older activity, from before HQ
+                                                     kept each line's job, is the board's alone`,
 
   async run(given: string[]) {
     const { values, args } = takeValues(given, ['--since', '--limit'], 'Nothing read');

@@ -3,11 +3,14 @@
 // (the tools upright at its right, the bar along its foot) with the book's own tooltips; the cover's edge let go where
 // it was dragged, never sliding back first; the book opening straight onto its page, no cover, in well under a second
 // (a crossfade with reduced motion); on a laptop-height window, every control whole, the tools never scrolling. Each asserts what the
-// board sees: boxes, pixels, words. (the two islands)
+// board sees: boxes, pixels, words. (the two islands; the tools, Undo and Redo only on an opened scrap, where the bar
+// goes)
 // (the soft shadow read in Wire)
 import assert from 'node:assert/strict';
 import { shutBook } from './chrome.mjs';
-import { DESKTOP, MINI, shotPixels } from './kit.mjs';
+import { DESKTOP, MINI, middleOf, openScrap, shotPixels } from './kit.mjs';
+import { mouseOf } from './hands.mjs';
+import { paperBox } from './mouse.mjs';
 
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
 // with its developer tools docked below
@@ -25,7 +28,7 @@ export function frameStories(c) {
     "the cover's edge let go stays where it was let go: no slide back to where it began": browser => letGo(browser, c),
     'opening the book: straight onto its page, no cover, in well under a second; reduced motion, a crossfade':
       browser => opening(browser, c),
-    "a laptop-height window: every control in the book's two islands whole, none scrolling, Undo and Redo at the bar's left":
+    "a laptop-height window: every control in the book's islands whole, none scrolling, Undo and Redo with an opened scrap's tools":
       browser => shortWindow(browser, c),
     "a hardcover: the black board on the outer edge beside HQ's page, the pages the screen's height; upright, the page fills the screen":
       browser => hardcover(browser, c),
@@ -41,14 +44,16 @@ async function oneObject(browser, c) {
       spine = await box(page, '#book [role=separator]'),
       hqWidth = await page.evaluate(() => document.body.getBoundingClientRect().width);
     assert.ok(Math.abs(hqWidth - spine.x) <= 1, `HQ's page ends at the cover's edge (${hqWidth} vs ${spine.x})`);
-    // the controls: two islands over the paper, the tools upright at its right, short, and the bar along its foot
-    const [tools, bar] = await islandsOf(page);
-    for (const r of [tools, bar])
-      assert.ok(r.left >= paper.x && r.right <= paper.x + paper.width, `an island off the paper: ${JSON.stringify(r)}`);
-    assert.ok(tools.height > tools.width && tools.height < DESKTOP.height * 0.6, `the tools ${JSON.stringify(tools)}`);
+    // the controls: two islands over the paper, the bar along its foot on the page, and on an opened scrap the tools
+    // upright at its right, short (below)
+    const bar = await islandOf(page, 'bk-bar');
     assert.ok(
-      bar.width > bar.height && bar.bottom > DESKTOP.height - 40 && tools.left > bar.left,
-      `the bar along the foot ${JSON.stringify(bar)}, the tools at the right ${JSON.stringify(tools)}`,
+      bar.left >= paper.x && bar.right <= paper.x + paper.width,
+      `an island off the paper: ${JSON.stringify(bar)}`,
+    );
+    assert.ok(
+      bar.width > bar.height && bar.bottom > DESKTOP.height - 40,
+      `the bar along the foot ${JSON.stringify(bar)}`,
     );
     // the shadow (the book's frame, One soft shadow): HQ's page darker just beside the book than a little further
     // off, on the same rows, below the bookmarks and the pull tab over HQ's side there. The soft shadow (book.css,
@@ -59,6 +64,14 @@ async function oneObject(browser, c) {
       near = await meanLight(page, { x: spine.x - 8, y, width: 6, height: 250 }),
       far = await meanLight(page, { x: spine.x - 70, y, width: 6, height: 250 });
     assert.ok(near < far * 0.9, `the book's shadow on HQ: ${near} beside the book, ${far} further off`);
+    await scrapOpened(page);
+    const tools = await islandOf(page, 'bk-strip');
+    assert.ok(
+      tools.left >= paper.x && tools.right <= paper.x + paper.width,
+      `an island off the paper: ${JSON.stringify(tools)}`,
+    );
+    assert.ok(tools.height > tools.width && tools.height < DESKTOP.height * 0.6, `the tools ${JSON.stringify(tools)}`);
+    assert.ok(tools.left > bar.left, `the tools at the right ${JSON.stringify(tools)}, the bar ${JSON.stringify(bar)}`);
     // the book's own tooltip on a control, never the browser's title
     const undo = page.locator('#book').getByRole('button', { name: 'Undo' });
     await undo.hover();
@@ -141,41 +154,30 @@ async function opening(browser, c) {
   }
 }
 
-// A laptop-height window: every control in the two islands whole in the window and on the paper, the tools' island
-// scrolling none of them away, the islands clear of each other, Undo and Redo the bar's first keys
+// A laptop-height window: every control in the islands whole in the window and on the paper, the bar's on the page,
+// the tools' on an opened scrap, its island scrolling none of them away, Undo and Redo in it
 async function shortWindow(browser, c) {
   for (const viewport of SHORT) {
     const { page, errors, done } = await onDesk(browser, c, { viewport });
     const at = `${viewport.width} × ${viewport.height}`;
     try {
       const paper = await box(page, '#book section > div'),
-        islands = await islandsOf(page),
-        controls = await page.$$eval('#book nav [role=toolbar] button', all =>
-          all
-            .filter(b => b.getClientRects().length)
-            .map(b => ({ name: b.getAttribute('aria-label'), ...b.getBoundingClientRect().toJSON() })),
-        ),
-        scrolls = await page.$eval('#book .bk-strip', el => el.scrollHeight > el.clientHeight + 1);
+        inside = r =>
+          r.left >= paper.x - 1 &&
+          r.right <= paper.x + paper.width + 1 &&
+          r.top >= paper.y - 1 &&
+          r.bottom <= Math.min(paper.y + paper.height, viewport.height) + 1,
+        whole = async island => {
+          for (const r of [await islandOf(page, island), ...(await controlsOf(page, island))])
+            assert.ok(inside(r), `${at}: ${r.name ?? 'an island'} off the paper or the window: ${JSON.stringify(r)}`);
+        };
+      await whole('bk-bar');
+      await scrapOpened(page);
+      await whole('bk-strip');
+      const scrolls = await page.$eval('#book .bk-strip', el => el.scrollHeight > el.clientHeight + 1);
       assert.equal(scrolls, false, `${at}: the tools scroll`);
-      const inside = r =>
-        r.left >= paper.x - 1 &&
-        r.right <= paper.x + paper.width + 1 &&
-        r.top >= paper.y - 1 &&
-        r.bottom <= Math.min(paper.y + paper.height, viewport.height) + 1;
-      for (const r of [...islands, ...controls])
-        assert.ok(inside(r), `${at}: ${r.name ?? 'an island'} off the paper or the window: ${JSON.stringify(r)}`);
-      const over = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-      islands.forEach((a, i) =>
-        islands
-          .slice(i + 1)
-          .forEach(b => assert.ok(!over(a, b), `${at}: an island over another: ${JSON.stringify([a, b])}`)),
-      );
-      const bar = controls.filter(r => islands[1].left <= r.left && r.top >= islands[1].top);
-      assert.deepEqual(
-        bar.slice(0, 2).map(r => r.name),
-        ['Undo', 'Redo'],
-        `${at}: Undo and Redo at the bar's left`,
-      );
+      const names = (await controlsOf(page, 'bk-strip')).map(r => r.name);
+      assert.ok(names.includes('Undo') && names.includes('Redo'), `${at}: Undo and Redo with the tools: ${names}`);
       if (viewport === SHORT[0]) await c.shot('book-frame-short', page);
       assert.deepEqual(errors, []);
     } finally {
@@ -226,9 +228,17 @@ async function onDesk(browser, c, { viewport = DESKTOP, look = '', ...options } 
 // (HQ in Wire: book-check.mjs hq()'s look)
 const WIRE = '&renderer=wire';
 const box = (page, selector) => page.locator(selector).first().boundingBox();
-// The two islands' boxes: the tools', and the bar's
-const islandsOf = page =>
-  page.$$eval('#book .bk-strip, #book .bk-bar', all => all.map(el => el.getBoundingClientRect().toJSON()));
+// An island's box: the tools' (bk-strip) or the bar's (bk-bar)
+const islandOf = (page, island) => page.$eval(`#book .${island}`, el => el.getBoundingClientRect().toJSON());
+// An island's keys shown, each its name and box
+const controlsOf = (page, island) =>
+  page.$$eval(`#book .${island} button`, all =>
+    all
+      .filter(b => b.getClientRects().length)
+      .map(b => ({ name: b.getAttribute('aria-label'), ...b.getBoundingClientRect().toJSON() })),
+  );
+// A scrap opened by the mouse in the paper's middle, its tools shown
+const scrapOpened = async page => openScrap(page, mouseOf(page), undefined, middleOf(await paperBox(page)));
 const spineLeft = page =>
   page.evaluate(() => Math.round(document.querySelector('#book [role=separator]').getBoundingClientRect().left));
 // The mean lightness (0-255) of a box on the screen, read from a screenshot of it

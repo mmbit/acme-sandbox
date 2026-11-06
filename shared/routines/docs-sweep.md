@@ -25,26 +25,8 @@ replacing: put it on the desk phone now (`hq ask credential`, naming the key, ne
 keys). Then go on with the rest of the sweep. The security lead decides what else the incident needs; the cleanup
 below comes on top of that, never instead. A repo file holding one is also a job for its owner, with the same pointer.
 
-**The shared memory.** It isn't in git, and what you change in your home's memory folder goes live when your job ends,
-before anyone has read it. So leave that folder exactly as it is, and stage the changes instead: one file in the PR,
-`company/upkeep/memory-<date>.md`, one entry per memory file you'd change or delete: its name, the sha256 of its text
-now, the change (delete, or the new text) and why. Show the old text only once it's screened clean. A memory file that
-holds any of the above is staged for deletion by its sha256 and the reason alone, never its text, nor its name if that
-gives anything away; its safe lessons can be a new entry of their own. Never stage `MEMORY.md` (the index) for
-deletion, only new text for it: the shared memory takes nothing back from a copy left empty
-(`platform/worker/src/copyback.ts`), so the index stays even when every other file goes.
-
-Before staging, check the plans already in `company/upkeep/` whose application job has ended (`hq jobs <your id>`):
-your home's memory folder is the shared memory as your job began, so each entry has taken if its file is gone (a
-delete) or has its new text's sha256 (a change). Take the entries that took out of their plan, in this PR. One that
-didn't (another job changed the file since, say) is staged again this week with its sha256 now, if it's still wanted,
-and leaves the old plan; one about an incident goes to the security lead and the CEO again. A plan with no entries left
-is deleted. Leave a plan whose application hasn't run yet alone, and stage nothing for a file it covers.
-
-Then queue the application for after your PR merges:
-`hq job --after $HQ_JOB <your id> "Apply the memory sweep of <date>" <brief> --downtime`. The brief says: apply only
-what the staged file says as it stands on main (`git show origin/main:company/upkeep/memory-<date>.md`; not on main
-because the PR was closed: apply nothing); before each entry, check the file in your home's memory folder (the shared
-memory as the job began) still has the staged sha256, and skip and list any that changed since; change that folder and
-nothing else, and leave the staged file as it is: what took only shows in the shared memory once this job has ended,
-so the next sweep checks it and retires the plan. No memory changes this week: no staged file, no application job.
+**The shared memory.** No job changes it: a job works on its own copy, and nothing in that copy goes back
+(`platform/worker/src/copyback.ts`, on purpose: a job's notes may hold what it read at a private source). So an edit,
+merge or deletion made in your home's memory folder is lost when your job ends. Don't make one, and don't queue a
+job to apply one: list in the PR's summary what you'd merge or archive and why, by file name (a file that holds any
+of the above by its sha256 alone, as an incident). What should last goes in the repo (the Knowledge playbook).

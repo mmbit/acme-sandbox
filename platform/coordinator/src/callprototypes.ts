@@ -1,6 +1,6 @@
 // A call's prototypes: throwaway pages its agent or a job it queued makes to show an idea, saved here with a picture,
-// a clip on the call's page and a card on both iPads, and served on the call's own preview host to the board and its
-// guest while the call is on (knowledge/notes/platform/call-prototypes.md)
+// a clip on the call's page and a card on their screens, and served on the call's own preview host to the board and
+// its guest while the call is on (knowledge/notes/platform/call-prototypes.md)
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import sharp from 'sharp';
@@ -21,11 +21,10 @@ import { BOARD } from './ink/book.ts';
 import { addSlip } from './ink/bookslips.ts';
 import { callPage } from './ink/callpage.ts';
 import { liveCall } from './ink/callnotes.ts';
-import { pointedWhole } from './ink/callpointers.ts';
+import { addNote } from './ink/booknotes.ts';
 import { insertGroup, row } from './notebookgroups.ts';
-import { createPageScrap } from './notebookscraps.ts';
 import { emptyGroup } from '../../hq/shell/ink/notebookparts.js';
-import { pageRow, type NotebookPage } from './notebook.ts';
+import type { NotebookPage } from './notebook.ts';
 import { isRefused, type Refused } from './pagechecks.ts';
 
 export const DIR = `${DATA_DIR}/prototypes`;
@@ -94,7 +93,7 @@ export async function fromVoice(b: any) {
   return save(Number(b.call), at.agent, b, new Map([['index.html', Buffer.from(b.html)]]), true);
 }
 // POST /api/agent/prototype {call, name, about?, files: {path: base64}}: a colleague's job's (hq prototype), a folder
-// whose index.html is the page. Only a job the call queued: no other puts an unreviewed page on both iPads
+// whose index.html is the page. Only a job the call queued: no other puts an unreviewed page on their screens
 export async function fromJob(b: any, me: { id: number; agent: string }) {
   if (!liveCall(Number(b?.call)))
     return [404, `no live call #${b?.call}: a call's prototype is made while it's on`] as Refused;
@@ -148,7 +147,7 @@ async function save(call: number, by: string, b: any, files: Map<string, Buffer>
   for (const [path, bytes] of files) keepFile(`${DIR}/${id}/${path}`, bytes);
   const p = byId(id)!;
   const clip = clipOn(at, p, picture);
-  const ok = `${p.name} v${p.version} is up on both iPads: a card slides in, and it's a clip in the call's notes (#${clip.grp}) \
+  const ok = `${p.name} v${p.version} is up on their screens: a card slides in, and it's a clip in the call's notes (#${clip.grp}) \
 beside its other versions. Its address: ${linkOf(p) ?? '(none: no domain)'}`;
   if (!seen) return { ok, id, version: p.version, link: linkOf(p) };
   const small = await sharp(picture)
@@ -299,7 +298,7 @@ const refuse = (res: ServerResponse, status: number, words: string) =>
   void res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }).end(words);
 
 // Review mode on a prototype's page (feedback.ts): the board's preview key on a call's host, or its guest while the call
-// is live (their pen goes to the call's page through the guest room: markOnCall.)
+// is live (their pen goes to the call's agent through the guest room: markOnCall.)
 feedback.addReviewHost(req => {
   const host = String(req.headers.host ?? '')
     .toLowerCase()
@@ -310,10 +309,12 @@ feedback.addReviewHost(req => {
 
 // ---------------------------------------------------------------- a pen on it
 // POST /api/calls/prototype-mark {url, anchor, snip}: the board's mark on a prototype in HQ's viewer, on a screen that
-// isn't the call's (its iPad): a scrap on the call's page, the board's, with its snip, which the call's own screen
-// hands the agent as any mark there (calldraw.js relayMarks). The call's own screen files its marks itself (callnotes.js).
+// isn't the call's (its iPad). It points, as a mark the call's own screen makes (callnotes.js): a note of the call's,
+// never a scrap on its page, which the call's own screen hands the line as its own ('callnote', HQ's events.js and
+// calldraw.js), so the agent has it with its snip, and whose ink goes from the screen it was drawn on once it's in. The
+// call's own screen files its marks itself (callnotes.js).
 // by: who it's by on the call's page (its id), or undefined where they aren't on it: the guest room's for its guest
-// (notebookguestroom.ts, as the guest's own marks there.)
+// (notebookguestroom.ts), whose name the agent hears it by (ink/bookcalls.ts forVoice).
 export function markOnCall(b: any, by: (page: number) => string | undefined = () => BOARD) {
   let host = '';
   try {
@@ -323,18 +324,14 @@ export function markOnCall(b: any, by: (page: number) => string | undefined = ()
   }
   const call = callAt(host);
   const at = call === null ? undefined : callPage({ call });
-  if (!at || isRefused(at)) return [404, 'The call had ended.'] as Refused;
+  if (call === null || !at || isRefused(at)) return [404, 'The call had ended.'] as Refused;
   const who = by(at.page.id);
   if (!who) return [404, 'The call had ended.'] as Refused;
-  const made = createPageScrap(
-    { anchor: b.anchor, snip: b.snip, words: '', said: null },
-    pageRow(at.page.id, BOARD)!,
-    who,
-  );
-  // (on the call's artifact it points: gone once the agent's turn on it is done, ink/callpointers.ts.)
-  const g = !isRefused(made) && row(made.id);
-  if (g) pointedWhole(g);
-  return made;
+  const made = addNote({ page: at.page.id, anchor: b.anchor, snip: b.snip, words: '' }, BOARD, false, null, who);
+  if (typeof made === 'number' || isRefused(made)) return made;
+  const { id, n } = made.note as { id: number; n: number };
+  publish({ type: 'book', text: 'callnote', note: { id, n, page: at.page.id, call } });
+  return { id };
 }
 
 // ---------------------------------------------------------------- for the guest's room

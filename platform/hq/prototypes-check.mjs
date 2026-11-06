@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // A call's prototypes on both iPads, on the real coordinator (the coordinator's callprototypes.ts): the call's agent
 // saves one, its card slides in on the board's iPad (HQ) and its guest's (the guest room), each opens it full screen and
-// taps through it, each one's pen on it lands on the call's page as their mark, and v2 sits beside v1 in the
-// call's page's clip. Screenshots of each step on an iPad in landscape and in portrait, and a desktop.
+// taps through it, each one's pen on it points: a note of the call's for its agent by their name, never a scrap on the
+// call's page, the guest's screen reaching the agent with her circle on it, her Pauze (on the call's page, or on the
+// open prototype's bar) holding it back until she shows it again, the board's iPad reaching the agent as the board's
+// screen 2 with its own bubble's eye and Pause, and v2 sits beside v1 in the call's page's clip. Screenshots of each step
+// on an iPad in landscape and in portrait, and a desktop.
 //   node platform/hq/prototypes-check.mjs [--shots dir]
 // The coordinator takes its pictures in its own Chromium: CHROMIUM_PATH names one where `chromium` isn't on PATH.
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { launched } from '../../shared/browser/browser.mjs';
 import { coordinator } from './book/guestserver.mjs';
 import { fulfilResponse } from './book/originroute.mjs';
@@ -53,16 +56,20 @@ async function penLoop(page, frame, x, y) {
   for (let i = 1; i <= 24; i++) await pen('mouseMoved', x + 160 * Math.cos(i / 4), y + 90 * Math.sin(i / 4));
   await pen('mouseReleased', x + 160, y);
 }
-// A scrap with its snip on the call's page by who (board, or a guest:<id>), once it's there
-async function scrapBy(page, by) {
-  const find = async () =>
-    (said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups ?? []).find(
-      gr => by(gr.by) && gr.pictures?.length,
-    );
-  let scrap;
-  for (let i = 0; i < 40 && !(scrap = await find()); i++) await new Promise(r => setTimeout(r, 250));
-  return scrap;
+// The pointer note a pen on a call's prototype made from another screen ('callnote', callprototypes.ts markOnCall),
+// once it's in, with what the agent hears of it
+async function pointed(fed, from) {
+  for (let i = 0; i < 40 && !fed.slice(from).some(e => e.text === 'callnote'); i++)
+    await new Promise(r => setTimeout(r, 250));
+  return fed.slice(from).find(e => e.text === 'callnote')?.note;
 }
+// Nothing of anyone's but the agent's on the call's page: a pen on a prototype leaves no scrap there
+const noScraps = async (page, agent) =>
+  assert.deepEqual(
+    (said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups ?? []).filter(g => g.by !== agent),
+    [],
+    "a pen on the prototype left a scrap on the call's page",
+  );
 
 // A device: HQ's origin and the preview hosts answered by the coordinator, nothing else reached
 async function device(viewport, cookie) {
@@ -109,7 +116,11 @@ try {
   const callPage = said(await h.board('/api/notebooks/call', { call })).page;
   // (the guest's iPad scans the call's QR code and gives a name)
   const { link } = said(await h.board('/api/calls/guest', { call, lang: 'nl' }));
-  const joined = await h.send(new URL(link).pathname, { origin }, new URLSearchParams({ name: 'Ilse' }));
+  const joined = await h.send(
+    new URL(link).pathname,
+    { origin },
+    new URLSearchParams({ name: 'Ilse', screen: 'show' }),
+  );
   assert.equal(joined.status, 303, joined.text);
   const g = joined.headers['set-cookie'][0].split(';')[0];
   const fed = [];
@@ -117,6 +128,16 @@ try {
   onPublish(e => e.type === 'book' && fed.push(e));
   const feed = (page, from = 0) =>
     page.evaluate(evs => import('/shell/events.js').then(m => evs.forEach(ev => m.onEvent(ev))), fed.slice(from));
+  // (what the agent has of every screen on the call, all of it, and whether the guest's is among it)
+  const screenNow = async () =>
+    said(await h.voice('screen-turn', { purpose: 'call', ref: String(call), after: 0, seen: 0, briefed: true }));
+  const ilse = turn => turn.lines?.some(l => /^Ilse's screen/.test(l));
+  const until = async (ok, tries = 40) => {
+    for (let i = 0; i < tries; i++)
+      if (await ok()) return true;
+      else await new Promise(r => setTimeout(r, 500));
+    return false;
+  };
 
   // The board's iPad (HQ, landscape, the book open at the call's page) and its guest's (portrait, the call's page)
   const board = await device(LANDSCAPE, h.boardCookie);
@@ -150,27 +171,125 @@ try {
   await guestFrame.locator('button', { hasText: 'Flip me' }).click({ timeout: 20_000 });
   await guestFrame.locator('button', { hasText: 'Flipped!' }).waitFor();
   await shot('2-guest-ipad-open', guest);
-  // Her pen on it: a scrap of hers on the call's page with its snip, which the agent hears as hers
+  // Her pen on it points: a note of the call's by her name, which the agent hears with its snip, nothing on the page
+  const before = fed.length;
   await penLoop(guest, '.bk-guest-proto iframe', 200, 300);
-  const hers = await scrapBy(callPage.id, by => /^guest:\d+$/.test(by));
-  assert.ok(hers, "the guest's pen on the prototype made no mark on the call's page");
-  assert.equal(said(await h.voice(`drawn?id=${hers.id}&call=${call}`)).who, 'Ilse');
+  const hers = await pointed(fed, before);
+  assert.ok(hers, "the guest's pen on the prototype reached nobody");
+  const heard = said(await h.voice(`note?id=${hers.id}&call=${call}`));
+  assert.equal(heard.by, 'Ilse');
+  assert.ok(heard.picture?.data, 'her note has no snip');
+  await noScraps(callPage.id, 'juno');
+  // ...and her screen reaches the agent too, under her name, her circle on it (the room's watch-along)
+  let seen;
+  for (let i = 0; i < 40; i++) {
+    const turn = said(
+      await h.voice('screen-turn', {
+        purpose: 'call',
+        ref: String(call),
+        after: 0,
+        seen: 0,
+        briefed: true,
+        picture: true,
+      }),
+    );
+    if (
+      turn.on &&
+      turn.lines.some(l => /^Ilse's screen/.test(l)) &&
+      turn.lines.some(l => / (circled|drew) /.test(l)) &&
+      turn.pictures?.length
+    ) {
+      seen = turn;
+      break;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  assert.ok(seen, "the guest's screen didn't reach the agent with her circle on it");
+  if (shots)
+    writeFileSync(`${shots}/2-guest-screen-as-the-agent-sees-it.jpg`, Buffer.from(seen.pictures[0].data, 'base64'));
   await shot('2-guest-ipad-marked', guest);
+  // While it's open, the eye and Pauze are on its bar: Pauze there holds her screen back, Weer laten zien there shows
+  // it again
+  const protoPause = guest.locator('.bk-guest-proto .bk-guest-pause');
+  await protoPause.locator('span', { hasText: 'Pauze' }).waitFor();
+  assert.ok(await guest.locator('.bk-guest-proto .bk-guest-eye').isVisible(), 'no eye on the open prototype');
+  await protoPause.click();
+  await protoPause.locator('span', { hasText: 'Weer laten zien' }).waitFor();
+  assert.ok(
+    await until(async () => !ilse(await screenNow())),
+    'the agent still sees her screen paused from the prototype',
+  );
+  await shot('2-guest-ipad-paused-on-prototype', guest);
+  await protoPause.click();
+  await protoPause.locator('span', { hasText: 'Pauze' }).waitFor();
+  assert.ok(await until(async () => ilse(await screenNow())), "her screen didn't come back from the prototype's bar");
   await guest.locator('.bk-guest-back').click();
   assert.equal(await guest.locator('.bk-guest-proto').count(), 0);
 
-  // The board taps its card: HQ's viewer, live; its pen there a mark on the call's page, the board's
+  // While it's shown, her room's bar has the eye and Pauze, as the board's minimised call; Pauze stops it, the agent
+  // sees nothing more of hers, a reload keeps it paused, and Weer laten zien shows it again
+  const pause = guest.locator('#book .bk-guest-pause');
+  await pause.locator('span', { hasText: 'Pauze' }).waitFor();
+  assert.ok(await guest.locator('#book .bk-guest-eye').isVisible(), 'no eye while her screen is shown');
+  assert.equal(await guest.locator('#book .bk-guest-eye').getAttribute('aria-label'), 'Juno ziet je scherm');
+  await shot('3-guest-ipad-shown', guest);
+  await pause.click();
+  await pause.locator('span', { hasText: 'Weer laten zien' }).waitFor();
+  assert.ok(await guest.locator('#book .bk-guest-eye').isHidden(), 'the eye stays while paused');
+  assert.ok(await until(async () => !ilse(await screenNow())), 'the agent still sees her screen while it is paused');
+  await shot('3-guest-ipad-paused', guest);
+  await guest.reload();
+  await pause.locator('span', { hasText: 'Weer laten zien' }).waitFor({ timeout: 30_000 });
+  assert.ok(!ilse(await screenNow()), 'a reload showed her paused screen again');
+  await pause.click();
+  await pause.locator('span', { hasText: 'Pauze' }).waitFor();
+  await guest.locator('#book .bk-guest-eye').waitFor();
+  assert.ok(
+    await until(async () => ilse(await screenNow())),
+    "her screen didn't reach the agent again after Weer laten zien",
+  );
+
+  // The board taps its card: HQ's viewer, live; its pen there points too, the board's, nothing on the page
   await board.locator('.bk-proto-card').click();
   const boardFrame = board.frameLocator('#viewer iframe');
   await boardFrame.locator('button', { hasText: 'Flip me' }).click({ timeout: 20_000 });
   await boardFrame.locator('button', { hasText: 'Flipped!' }).waitFor();
   await whole(board);
   await shot('2-board-ipad-open', board);
+  const boardBefore = fed.length;
   await penLoop(board, '#viewer iframe', 200, 200);
-  const scrap = await scrapBy(callPage.id, by => by === 'board');
-  assert.ok(scrap, "the board's pen on the prototype made no mark on the call's page");
-  assert.equal(said(await h.voice(`drawn?id=${scrap.id}&call=${call}`)).who, 'Board');
+  const its = await pointed(fed, boardBefore);
+  assert.ok(its, "the board's pen on the prototype reached nobody");
+  assert.equal(said(await h.voice(`note?id=${its.id}&call=${call}`)).by, undefined);
+  await noScraps(callPage.id, 'juno');
   await shot('3-board-ipad-marked', board);
+
+  // The board's iPad, not the call's screen, reaches the agent too, as the board's screen 2 (boardscreen.js): what it
+  // has open, under its own bubble's eye and Pause; Pause holds it back through a reload, and Show again shows it again
+  const screen2 = () => h.voice('screen', { purpose: 'call', ref: String(call), who: 'screen 2' });
+  assert.ok(
+    await until(async () => (await screenNow()).lines?.some(l => /^The board's screen 2/.test(l))),
+    "the board's iPad didn't reach the agent",
+  );
+  const its2 = said(await screen2());
+  if (shots) writeFileSync(`${shots}/3-board-ipad-as-the-agent-sees-it.jpg`, Buffer.from(its2.picture.data, 'base64'));
+  const bubble = board.locator('.callbubble');
+  assert.ok(await bubble.locator('.cb-eye').isVisible(), "no eye on the board's iPad while the agent sees it");
+  assert.equal(await bubble.locator('.cb-hangup').count(), 0, 'the call is hung up on its own screen');
+  await bubble.locator('.cb-pause').click();
+  await board.locator('.callbubble .cb-pause[aria-pressed="true"]').waitFor();
+  assert.ok(await until(async () => (await screen2()).status === 409), "the agent still sees the board's paused iPad");
+  await shot('3-board-ipad-paused', board);
+  await openHq(board);
+  await board.locator('.callbubble .cb-pause[aria-pressed="true"]').waitFor({ timeout: 30_000 });
+  // (paused from its start: its first batch says so)
+  assert.ok(await until(async () => (await screen2()).status === 409), "a reload showed the board's paused iPad again");
+  await board.locator('.callbubble .cb-pause').click();
+  await board.locator('.callbubble .cb-eye').waitFor();
+  assert.ok(
+    await until(async () => (await screen2()).status === 200),
+    "the board's iPad didn't come back on Show again",
+  );
 
   // v2 beside v1 in the call's page's clip, on both
   const second = fed.length;
@@ -219,7 +338,9 @@ try {
   await shot('6-guest-ipad-landscape', guest);
 
   for (const o of opened) assert.deepEqual(o.errors, []);
-  console.log(`PASS call prototypes: v1 ${v1.link}, cards, both opened and tapped through, each one's mark heard`);
+  console.log(
+    `PASS call prototypes: v1 ${v1.link}, cards, both opened and tapped through, each pen a pointer heard, her screen and the board's iPad seen, paused and shown again`,
+  );
 } finally {
   for (const o of opened) await o.context.close();
   await browser.close();

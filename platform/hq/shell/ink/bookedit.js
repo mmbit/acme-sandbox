@@ -242,8 +242,8 @@ export function changeOf(step) {
     [ink, pictures, texts] = LISTS.map(k => [...new Set(before[k]).symmetricDifference(new Set(after[k]))]);
   return boxOf({ ink, pictures, texts });
 }
-// The view ({ pan, scale }) that shows a box whole in the paper's content (below the blur, left of the tools:
-// bookview.js contentOf) with room round it, centred and zoomed out as far as it must be, never in; null when the view
+// The view ({ pan, scale }) that shows a box whole on an opened scrap's paper (below the blur, left of the tools' island
+// there: book.size) with room round it, centred and zoomed out as far as it must be, never in; null when the view
 // shows it already
 export function sightOf(box, { pan, scale, size }) {
   const w = size.w - size.right,

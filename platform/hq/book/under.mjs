@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { scriptForHq, fulfilPart } from '../../../shared/review/parts.mjs';
 import { seen, tabAt } from './open.mjs';
-import { pixelsIn } from './kit.mjs';
+import { pixelsIn, until } from './kit.mjs';
+import { shapeOf } from '../shell/ink/booklayout.js';
 
 const MINI = { width: 1133, height: 744 };
 
@@ -23,9 +24,19 @@ export function underStories(c) {
 async function liftedOff(browser, c) {
   const { page, errors, done } = await c.hq(browser, MINI);
   try {
-    const hq = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    // (HQ's ground: its page's, or <html>'s where the page has none.)
+    const hq = await page.evaluate(() =>
+      [document.body, document.documentElement]
+        .map(box => getComputedStyle(box).backgroundColor)
+        .find(c => c !== 'rgba(0, 0, 0, 0)'),
+    );
     await stripUnder(page, c, hq, 'swing-lifted-hq');
     await artifactServed(page);
+    // (the book beside the viewer's frames, the board's pick under More options: over them, it uncovers the frame)
+    await page.evaluate(
+      key => import('/util.js').then(({ store }) => store.set(key, { book: 'beside' })),
+      `viewer.${shapeOf(MINI.width, MINI.height)}`,
+    );
     await page.evaluate(url => import('/shell/desk.js').then(desk => desk.openLink(url)), `${ARTIFACT}/`);
     // (review mode's hello tells HQ the page's colour, Linux WebKit's frame often later than the book's lift; where none
     // comes in time, HQ's dark backdrop, the viewer's own: only Chromium must hear it)
@@ -67,9 +78,10 @@ async function stripUnder(page, c, colour, name) {
     'HQ fades into it',
   );
   assert.equal(held.shadow, 1, "the book's own shadow while it's lifted");
-  // (lowered again before it's let go, so it lands open)
+  // (lowered again before it's let go, so it lands open: the board down under the hand, however slowly the engine
+  // draws its frames.)
   await page.mouse.move(tab.x, tab.y, { steps: 6 });
-  await page.waitForTimeout(500);
+  await until(async () => (await seen(page)).angle < 0.05, 'the board lowered under the hand');
   await page.mouse.up();
   await c.settled(page, 'open');
 }

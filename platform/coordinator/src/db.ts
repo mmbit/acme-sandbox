@@ -371,7 +371,8 @@ db.exec(`
   create table if not exists calls (id integer primary key, ts text not null, agent text not null, request integer,
     lines text not null, job integer, status text not null default 'ended', processed_at text,
     attempts integer not null default 0, lines_at text, resumes text, reply text,
-    customers integer not null default 0, line_times text, walk integer not null default 0);
+    customers integer not null default 0, line_times text, walk integer not null default 0,
+    phone integer not null default 0);
   create table if not exists chat (id integer primary key, ts text not null, who text not null, text text not null,
     sent integer not null default 0, call integer, shown text, about_customer integer not null default 0,
     about_keys integer not null default 0, card text);
@@ -1122,6 +1123,9 @@ once('2026-11-05-events-job', () => lacks('events', 'job') && db.exec('alter tab
 once('2026-11-06-events-job-from', () =>
   db.exec(`insert or replace into settings (key, value) values ('events_job_from',
     coalesce((select min(id) from events where job is not null), (select coalesce(max(id), 0) + 1 from events)))`));
+// A call on the phone line, which has no screen: the board's other HQ screens never show themselves on it (call.ts
+// liveNow).
+once('2026-11-06-calls-phone', () => lacks('calls', 'phone') && db.exec('alter table calls add column phone integer not null default 0'));
 db.exec(`create index if not exists events_job on events (job, id) where job is not null;
   create index if not exists events_agent on events (agent, id);
   create index if not exists events_to on events ("to", id) where "to" is not null`);

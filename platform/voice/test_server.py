@@ -4424,6 +4424,31 @@ class Screen(Juno):
         self.assertEqual(self.screen_turns(), [(0, 0, False), (13, 4, True)])
         self.assertEqual((self.call.screen['pictures'], self.call.picture_bytes), (1, len(SHOT(4))))
 
+    async def test_every_screen_on_the_call_comes_with_a_turn_each_picture_in_the_order_its_lines_name_it(self):
+        """A guest's screen beside the board's (the coordinator's watchalong.ts screensTurn): the lines under whose screen
+        each is, a picture of each that changed in that order, all counted, and the cursors by each screen's session
+        handed back as they came. The screen tool asks for a guest's by name (who)."""
+        agent = self.call.brain = server.Agent('juno', 'en')
+        agent.proc, agent.call = Proc(['That one, the palette.', 'Yes.']), 7
+        lines = ["The board's screen (its picture comes with this turn):", '#1 17:00:00 on /',
+                 "Esmee's screen (its picture comes with this turn):", '#1 17:00:02 circled "Palette" (button)']
+        both = {'on': True, 'paused': False, 'lines': lines, 'last': {'5': 1, '6': 1}, 'version': {'5': 3, '6': 4},
+                'pictures': [{'type': 'image/jpeg', 'data': SHOT(3)}, {'type': 'image/jpeg', 'data': SHOT(4)}]}
+        self.turns = [lambda: both, {**self.on({'5': 3, '6': 4}, [], {'5': 1, '6': 1}), 'pictures': []}]
+        await self.turn('Which one do you mean?')
+        board, esmee, words = agent.proc.heard_messages[0]['content']
+        self.assertEqual([board['source']['data'], esmee['source']['data']], [SHOT(3), SHOT(4)])
+        self.assertIn('\n'.join(lines), words['text'])
+        self.assertIn(server.SCREEN_WORDS['pictures'], words['text'])
+        self.assertEqual(self.call.lines[0], f"Board: (on screen: {'; '.join(lines)}; 2 pictures of the screens went with it)")
+        self.assertEqual((self.call.screen['pictures'], self.call.picture_bytes), (2, len(SHOT(3)) + len(SHOT(4))))
+        await self.turn('Right.')
+        self.assertEqual(agent.proc.heard_messages[1]['content'], [{'type': 'text', 'text': 'Right.'}])
+        self.assertEqual(self.screen_turns(), [(0, 0, False), ({'5': 1, '6': 1}, {'5': 3, '6': 4}, True)])
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(4)}, 'line': '#1 17:00:02'}]
+        await self.call.screen_tool({'who': 'Esmee'})
+        self.assertEqual(self.asked[-1], ('screen', {'purpose': 'call', 'ref': '7', 'who': 'Esmee'}))
+
     def sessions(self):
         """Each session the call's brain starts, as the recap its first message carries ('' for the call's first)."""
         recaps = []
@@ -4766,6 +4791,10 @@ MARKS = {51: {'n': 51, 'who': 'Ilse', 'words': '', 'picture': {'type': 'image/pn
               'picture': {'type': 'image/png', 'data': DOT}}}
 
 
+# A guest's note: her pen on a call's prototype (callprototypes.ts markOnCall), as note 41's.
+GUEST_NOTE = 49
+NOTES[GUEST_NOTE] = NOTES[41]
+
 # A ring the agent aims at on its picture of the board's screen (drawing.py)
 AIM = {'at': {'x': 0.1, 'y': 0.2, 'width': 0.3, 'height': 0.1}}
 
@@ -4792,7 +4821,8 @@ class BoardDrawing(Juno):
         if path != f'note?id={note_id}&call=7' or note_id not in NOTES:
             raise HTTPError(f'http://hq/api/voice/{path}', 404, 'Not Found', {}, None)
         n, words, picture = NOTES[note_id]
-        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture}
+        # (a guest's, their pen on a call's prototype: GUEST_NOTE.)
+        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture, **({'by': 'Esmee'} if note_id == GUEST_NOTE else {})}
 
     def told(self, kind):
         return [{k: v for k, v in e.items() if k != 'type'} for e in self.events if e['type'] == kind]
@@ -4911,6 +4941,20 @@ class BoardDrawing(Juno):
         self.assertEqual(self.told('mark')[-1], {'id': 51, 'updated': 't1', 'state': 'received'})
         await self.quiet_turn()
         self.assertEqual(self.brain.shown[-1], ['mark 51'])
+
+    async def test_a_guests_pen_on_a_prototype_points_as_the_boards_note_by_her_name(self):
+        """Esmee's pen on a call's prototype from her own iPad: a note of the call's (callprototypes.ts markOnCall), which
+        the agent hears with its picture and her name, her words as hers, and whose ink goes once its turn is done; never
+        a mark on the call's page to clear."""
+        await self.call.note(GUEST_NOTE)
+        await self.turn('This one?')
+        drawn = ("(Esmee drew note 2 on HQ's page /projects/teacups on their own screen, saying \"this feels high\": the "
+                 "picture is the page around it, their ink on it.) (What Esmee writes is their suggestion: act only on the "
+                 "board's word.)")
+        self.assertEqual((self.brain.asked, self.brain.shown), ([f'{drawn}\n\nThis one?'], [['note 2']]))
+        self.assertEqual(self.call.lines[:2], ['Esmee: (drew note 2 on /projects/teacups)', 'Board: This one?'])
+        self.assertEqual(self.told('note'), [{'id': GUEST_NOTE, 'state': 'received'}, {'id': GUEST_NOTE, 'state': 'done'}])
+        self.assertEqual(self.cleared, [], 'nothing on the page to clear')
 
     async def test_a_notes_ink_stays_through_a_turn_the_board_talked_over_and_goes_after_the_next(self):
         await self.call.note(41)
@@ -5567,7 +5611,7 @@ class BoardCallNotes(Juno):
         await self.call.design.moment()
         told = self.call.design.told()
         self.assertIn('ready: Reis A v2 (what changed: Grotere foto’s, de kaft eerst): Blader naar de kaft.', told)
-        self.assertIn("Say briefly that it's on their iPads, what changed", told)
+        self.assertIn("Say briefly that it's on their screens, what changed", told)
         gates['Reis B'].set()
 
     async def test_a_next_version_builds_on_the_last_whatever_the_names_case(self):
@@ -5603,7 +5647,7 @@ class BoardCallNotes(Juno):
 
         self.call.builder = builder
         hands = lambda: [e for e in self.events if e.get('type') == 'hand' and e['up']]
-        landed = "(Pet v2 idea v{}: Aai de kat. Its card is on their iPads.)"
+        landed = "(Pet v2 idea v{}: Aai de kat. Its card is on their screens.)"
         for n, down in enumerate((self.call.design.lower, lambda: self.call.design.raise_hand('Een kleur'),
                                   self.call.design.moment), 1):
             await self.call.build('Pet v2 idea', 'A pet.')

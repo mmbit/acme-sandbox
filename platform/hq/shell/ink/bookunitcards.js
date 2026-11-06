@@ -56,11 +56,9 @@ export function drawCards(view) {
     if (seen) Object.assign(seen.style, seenAt(page, p, seen));
   }
 }
-// Where the seen mark goes (its left and top, page px): beside what its agent read, the group's own ink, words and
-// pictures wherever they are on the page, never its unit's corner (a drawing's unit is its slot in the masonry, its ink
-// kept where it was drawn, maybe a note or two away: a tick at the slot would read as another note's). Right of it at
-// its foot, else under it, left of it or over it: the first that stays on the page and covers no other unit's paper or
-// ink, nor what hangs under one; else in its own box's corner.
+// Where the seen mark goes (its left and top, page px): beside the card its agent read, everything on it read with it
+// (a scrap is one unit). Right of it at its foot, else under it, left of it or over it: the first that stays on the page
+// and covers no other unit's paper or ink, nor what hangs under one; else in its own box's corner.
 function seenAt(page, p, mark) {
   const r = { x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h },
     [w, h] = [mark.offsetWidth, mark.offsetHeight],

@@ -1,7 +1,7 @@
 // node --test src/callprototypes.test.ts (the harness: the real server, the board's session and preview key, a guest's
 // door, the voice line and a job). The call's prototypes: saved by its agent or a colleague's job, a clip on the call's
 // page with each version, served on the call's own preview host to the board and its guest alone, and the board's pen
-// on one a mark on the call's page, and its guest's (callprototypes.ts).
+// on one a note of the call's that points, never a scrap on its page, and its guest's by their name (callprototypes.ts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
@@ -16,6 +16,7 @@ const lettermint = await fakeLettermint();
 const h = await harness('callprototypes', { env: { CADDY_HOST: '127.0.0.1', PUBLIC_HOST: 'hq.company.test' } });
 lettermint.on();
 const { ORIGIN } = await import('./config.ts');
+const { onPublish } = await import('./events.ts');
 const said = (r: { status: number; body?: any; json?: any; text?: string }) => {
   assert.equal(r.status, 200, JSON.stringify(r.body ?? r.text));
   return r.body ?? r.json;
@@ -97,10 +98,21 @@ test("the call's agent saves a prototype: a clip on the call's page, v2 beside v
   const note = await h.send('/__review/notes', { host, cookie: board, origin: `https://${host}` }, { note: 'x' });
   assert.equal(note.status, 403);
 
-  // The board's mark on it from its iPad: a scrap on the call's page, the board's, which the agent hears
+  // The board's mark on it from its iPad: a note of the call's that points, the board's, which the call's own screen
+  // hands the line (its event) and the agent hears with its snip; nothing of it on the call's page
   const anchor = { v: 1, url: v1.link, el: null, view: { w: 1180, h: 820, x: 0, y: 0, dpr: 2 }, ink: [], kind: 'pin' };
+  const told: any[] = [];
+  const deaf = onPublish(e => void (e.type === 'book' && e.text === 'callnote' && told.push(e.note)));
+  const unitsBefore = said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups.length;
   const mark = said(await h.board('/api/calls/prototype-mark', { url: v1.link, anchor, snip: SNIP }));
-  assert.equal(said(await h.voice(`drawn?id=${mark.id}&call=${call}`)).who, 'Board');
+  deaf();
+  assert.deepEqual(told, [{ id: mark.id, n: 1, page, call }]);
+  const heard = said(await h.voice(`note?id=${mark.id}&call=${call}`));
+  assert.equal(heard.n, 1);
+  assert.equal(heard.by, undefined);
+  assert.equal(heard.url, `https://${host}/${v1.id}/`);
+  assert.equal(heard.picture.type, 'image/png');
+  assert.equal(said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups.length, unitsBefore);
 
   // A colleague's quick job saves one too, from a folder: only one the call queued
   const job = await h.start({ agent: 'lark' });
@@ -137,7 +149,7 @@ test("the call's agent saves a prototype: a clip on the call's page, v2 beside v
 
 test("the call's guest is handed on to its prototypes while the call is live, sees each new one listed, and draws on it as themselves", async () => {
   const { call } = await h.liveCall('juno');
-  said(await h.board('/api/notebooks/call', { call }));
+  const pageId = said(await h.board('/api/notebooks/call', { call })).page.id as number;
   const host = `call-${call}.preview.company.test`;
   // (their iPad scans the call's QR code and gives a name)
   const { link } = said(await h.board('/api/calls/guest', { call, lang: 'nl' }));
@@ -173,8 +185,8 @@ test("the call's guest is handed on to its prototypes while the call is live, se
     n: number;
   };
   assert.equal(shared.n, 1);
-  // Review mode there for them too, no note of its own: their pen's mark goes through their room to the call's page, as
-  // theirs, and the agent hears it as theirs
+  // Review mode there for them too, no note of its own: their pen's mark goes through their room to the call's agent,
+  // a note of the call's that points, by their name, and never onto the call's page
   assert.doesNotMatch((await h.send('/__review/review.js', { host, cookie: ps })).text, /review mode: off/);
   assert.equal((await h.send('/__review/tool.js', { host, cookie: ps })).status, 200);
   const note = await h.send('/__review/notes', { host, cookie: ps, origin: `https://${host}` }, { note: 'x' });
@@ -187,9 +199,11 @@ test("the call's guest is handed on to its prototypes while the call is live, se
       { url: v1.link, anchor, snip: SNIP },
     ),
   );
-  assert.match(mark.by, /^guest:\d+$/);
-  assert.equal(mark.pictures.length, 1);
-  assert.equal(said(await h.voice(`drawn?id=${mark.id}&call=${call}`)).who, 'Ilse');
+  const heard = said(await h.voice(`note?id=${mark.id}&call=${call}`));
+  assert.equal(heard.by, 'Ilse');
+  assert.equal(heard.picture.type, 'image/png');
+  const units = said(await h.board(`/api/notebooks/pages/groups?page=${pageId}`)).groups as any[];
+  assert.ok(!units.some(u => u.by !== 'juno'), 'nothing of hers on the call’s page');
   // (only on a call of theirs: another call's prototype is no page of theirs)
   const other = (await h.liveCall('juno')).call;
   said(await h.board('/api/notebooks/call', { call: other }));

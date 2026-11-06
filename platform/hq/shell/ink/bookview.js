@@ -22,8 +22,10 @@ const FOOT_SHOWN = 120;
 // The page shown
 export const viewOf = book => book.views[book.cur] ?? null;
 
-// The paper's part the page's content is laid in and set down to: below the blur, left of the tools ({ w, h }, CSS px)
-export const contentOf = book => ({ w: book.size.w - book.size.right, h: book.size.h - book.size.top });
+// The paper's part the page's content is laid in and set down to: below the blur, the whole width ({ w, h }, CSS px).
+// The tools' island is an opened scrap's (bookstrip.css), whose view keeps clear of it itself (book.size.right:
+// bookscrapopen.js, bookedit.js).
+export const contentOf = book => ({ w: book.size.w, h: book.size.h - book.size.top });
 // A place on a page (remembered, a find's, a box shown): the page's point at its content's top-left, below the blur,
 // whatever the zoom; and the pan that shows a place there at a zoom of scale
 export const placeOf = book => ({ x: book.pan.x, y: book.pan.y + book.size.top / book.scale });

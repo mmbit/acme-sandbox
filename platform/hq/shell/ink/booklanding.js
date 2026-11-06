@@ -9,7 +9,8 @@ import { foley } from '../audio.js';
 import { pageOf, showGroup } from './bookgroupshow.js';
 import { scrapSize } from './notebookstack.js';
 import { photoOf } from './bookscrapdraw.js';
-import { TITLE_H, nextPlace } from './bookunits.js';
+import { photoShown } from './bookpage.js';
+import { TITLE_H, cardOfPicture, nextPlace, onCard } from './bookunits.js';
 
 // Into the handle the ink shrinks to this wide at most (px)
 const IN_HANDLE = 34;
@@ -70,23 +71,27 @@ function underGroups(desk, pages, page, from) {
     // (the snip's picture is cut at the screenshot's pixels per px.)
     px = snapScale(innerWidth, innerHeight),
     { w, h } = scrapSize(snip.w * px, snip.h * px);
+  // (the card that picture alone shows as, fitted to its column as the page fits it, its photo inset by its margin.
+  const card = cardOfPicture(w, h),
+    photo = photoOf({ x: 0, y: 0, w, h });
   const laid = pageOf(page),
-    spot = (laid && nextPlace(laid, h)) ?? { x: 0, y: TITLE_H },
+    spot = (laid && nextPlace(laid, card.h)) ?? { x: 0, y: TITLE_H },
     origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
     k = onPage ? scaleOf(onPage) : 1,
-    // (the photo inset in its scrap's box by its margin, as the page draws it.)
-    p = photoOf({ ...spot, w, h });
+    p = { ...onCard(card, spot, photo.x, photo.y), w: photo.w * card.k, h: photo.h * card.k };
   return within(inkIn({ x: origin.left + p.x * k, y: origin.top + p.y * k, w: p.w * k, h: p.h * k }, from), d);
 }
 // Where the ink is on a scrap's photo once its page shows with the scrap read (the photo's one of the page's pictures,
 // in its group: bookpage.js draws it)
 function onPhoto(desk, pages, { id, page, from }) {
-  const photo = pages.page()?.id === page ? pageOf(page)?.scraps.find(s => s.g === id) : null,
+  const laid = pages.page()?.id === page ? pageOf(page) : null,
+    photo = laid?.scraps.find(s => s.g === id),
     onPage = desk.querySelector('.bk-world .bk-page:not([hidden])');
   if (!photo || !onPage?.offsetWidth) return null;
   const o = onPage.getBoundingClientRect(),
     k = scaleOf(onPage),
-    p = photoOf(photo), // (inset by its margin, as the page draws it.)
+    // (inset by its margin, on its card as the page draws it.)
+    p = photoShown(laid, photo),
     rect = { x: o.left + p.x * k, y: o.top + p.y * k, w: p.w * k, h: p.h * k },
     turn = photo.tilt ?? 0;
   return { ...within(turned(inkIn(rect, from), rect, turn), desk.getBoundingClientRect()), turn };

@@ -2,12 +2,12 @@
 // agent's, another screen's) and a picture pasted here each set down once, on the iPad mini upright (touch) and on a
 // desktop. Each landing is held at its last frame and let go: the page then draws it where the copy ended, its edges
 // within a px or two (each engine smooths a turned picture its own way, so their pixels never match exactly), and only
-// the copy showed it while it played. The board's own line, saved and read back, lands not at all, and nothing lands
-// again.
+// the copy showed it while it played. The board's own line on the scrap opened, saved and read back, lands not at all,
+// and nothing lands again.
 import assert from 'node:assert/strict';
 import { open } from './notebook.mjs';
-import { pen } from './notebookscreen.mjs';
-import { DESKTOP, UPRIGHT, until } from './kit.mjs';
+import { DESKTOP, UPRIGHT, closeScrap, openScrap, until } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { press } from './bar.mjs';
 
 // a picture of the seed's store (mock/notebook.json)
@@ -19,6 +19,8 @@ const OFF_PX = 2,
   HELD = 0.2,
   ROUGH = 40,
   FINE = 4;
+// where the store's scrap has its picture (its own px)
+const SPOT = { x: 0, y: 0, w: 240, h: 103 };
 
 // c: book-check.mjs's hqIn, base, settled, settle, shot, noErrorsIn
 export function arrivalStories(c) {
@@ -44,9 +46,9 @@ async function arrivals(browser, c, viewport, more) {
   try {
     await watch(page);
     // (each on a new page: over the seed's ink, the page draws its ink over the picture once it's down)
-    const fresh = await newPage(page, play, c),
-      spot = await paperSpot(page);
-    play.route('/api/notebooks/groups/create', {}, { page: fresh, pictures: [{ file: SNIP, ...spot, tilt: 2 }] });
+    // (a scrap's picture in its own px, at its top-left as the store makes one: the grid places the scrap)
+    const fresh = await newPage(page, play, c);
+    play.route('/api/notebooks/groups/create', {}, { page: fresh, pictures: [{ file: SNIP, ...SPOT, tilt: 2 }] });
     await landsOnce(page, c, 1, `a scrap from the store (${size})`);
     await ownLine(page, play, fresh);
     assert.equal(await landed(page), 1, `the board's own line never lands, and nothing lands again (${size})`);
@@ -122,17 +124,6 @@ async function newPage(page, play, c) {
   await page.waitForTimeout(c.settle);
   return play.route('/api/notebooks/pages', { notebook: 1 }).pages.at(-1).id;
 }
-// A spot on the page the paper shows, clear of the strip and the bar (page px)
-const paperSpot = page =>
-  page.evaluate(() => {
-    const desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
-      el = document.querySelector('#book .bk-world .bk-page:not([hidden])'),
-      on = el.getBoundingClientRect(),
-      k = on.width / el.offsetWidth,
-      x = (desk.left + desk.width * 0.3 - on.left) / k,
-      y = (desk.top + desk.height * 0.45 - on.top) / k;
-    return { x: Math.round(x), y: Math.round(y), w: 240, h: 103 };
-  });
 
 // Cmd/Ctrl+V of a picture made here
 const pastePicture = page =>
@@ -149,22 +140,24 @@ const pastePicture = page =>
     );
   });
 
-// A line the board draws with the Pencil low on the paper, saved to the store (which tells the page, and it's read
-// again)
+// A line the board draws with the Pencil low on the scrap that arrived, opened, saved to the store (which tells the
+// page, and it's read again), and the scrap put back
 async function ownLine(page, play, on) {
-  const lines = () =>
-      play.route('/api/notebooks/pages/groups', { page: on }).groups.reduce((n, g) => n + g.ink.length, 0),
+  const { groups } = play.route('/api/notebooks/pages/groups', { page: on }),
+    lines = () => play.route('/api/notebooks/pages/groups', { page: on }).groups.reduce((n, g) => n + g.ink.length, 0),
     before = lines(),
-    desk = await page.locator('#book .bk-desk').boundingBox(),
-    x = Math.round(desk.x + desk.width * 0.3),
-    y = Math.round(desk.y + desk.height * 0.75);
+    { pen } = await hands(page);
   await page.evaluate(() => document.activeElement?.blur());
-  await pen(page, [
+  const { sheet } = await openScrap(page, pen, groups.at(-1).id),
+    x = Math.round(sheet.x + sheet.width * 0.3),
+    y = Math.round(sheet.y + sheet.height * 0.75);
+  await pen.stroke([
     [x, y],
     [x + 60, y + 20],
     [x + 120, y],
   ]);
   await until(() => lines() > before, "the board's line saved");
+  await closeScrap(page, pen);
   await page.waitForTimeout(1500);
 }
 

@@ -188,7 +188,7 @@ export async function deskAt(browser, c, size, seed = SEED) {
   await bookWide(context, viewport, book);
   return context;
 }
-// Scrolled to its foot: the last unit up on the page, and every unit clear of the tools
+// Scrolled to its foot: the last unit up on the page, and every unit on the paper
 async function atFoot(page, c, name) {
   // (over the notebook's paper: beside HQ, the screen's middle is HQ's)
   const desk = await page.locator('#book .bk-desk').boundingBox();
@@ -196,20 +196,17 @@ async function atFoot(page, c, name) {
   for (let k = 0; k < 12; k++) await page.mouse.wheel(0, 600);
   await page.waitForTimeout(500);
   await c.shot(`units-${name}-3-foot`, page);
-  // (what's written ends left of the tools' island, the paper running on under it with nothing laid there, and the last
-  // unit scrolls up into the paper's view.)
+  // (the units laid across the paper's whole width, the tools an opened scrap's, and the last unit scrolls up into the
+  // paper's view.)
   const foot = await page.evaluate(() => {
-    const tools = document.querySelector('#book .bk-strip').getBoundingClientRect(),
-      el = document.querySelector('#book .bk-desk'),
-      desk = el.getBoundingClientRect(),
+    const desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
       all = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => u.getBoundingClientRect());
     return {
       last: Math.max(...all.map(u => u.bottom)),
       right: Math.max(...all.map(u => u.right)),
-      desk: { bottom: desk.bottom, right: desk.right - parseFloat(getComputedStyle(el).paddingRight) },
-      tools: tools.left,
+      desk: { bottom: desk.bottom, right: desk.right },
     };
   });
-  const clear = foot.desk.right <= foot.tools + 1 && foot.right <= foot.tools + 1 && foot.last <= foot.desk.bottom + 1;
-  assert.ok(clear, `${name}: the last unit clear of the tools (${JSON.stringify(foot)})`);
+  const clear = foot.right <= foot.desk.right + 1 && foot.last <= foot.desk.bottom + 1;
+  assert.ok(clear, `${name}: the last unit on the paper (${JSON.stringify(foot)})`);
 }

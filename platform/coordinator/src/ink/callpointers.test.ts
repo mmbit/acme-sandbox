@@ -150,7 +150,14 @@ test('a circle on the agent’s version on a call’s page goes to the agent alo
     [],
   );
   said(await h.voice('call-end', { agent: 'juno', lines: ['Board: Zo.'], token }));
-  // (the call over, a reply there goes to its agent as ever)
-  said(await h.board('/api/notebooks/groups/reply', { answer: slips[1].id, ink: [stroke(10)] }));
+  // The call over, ink alone on a version there stays on the page, no wordless note to anyone; a reply with words goes
+  // to its agent as ever
+  const left = said(await h.board('/api/notebooks/groups/reply', { answer: slips[1].id, ink: [stroke(10)] }));
+  assert.equal(sheets(), had, 'no note for ink alone');
+  assert.deepEqual(
+    (await unit(at, g.id)).children.filter((c: any) => c.kind === 'reply').map((c: any) => c.id),
+    [left.id],
+  );
+  said(await h.board('/api/notebooks/groups/reply', { answer: slips[1].id, words: 'Deze knop groter' }));
   assert.equal(sheets(), had + 1);
 });

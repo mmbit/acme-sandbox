@@ -431,7 +431,7 @@ class HqTools(unittest.TestCase):
         call without the line's socket (the phone) says so."""
         import hq_tools
         picture = {'type': 'image/jpeg', 'data': '/9j/4AAQ'}
-        line = "Mug colour slider v2 is on the call's page and both iPads. (This call is #7: ...)"
+        line = "Mug colour slider v2 is on the call's page and their screens. (This call is #7: ...)"
         path, asked = line_socket(self, [{'line': line, 'picture': picture}, {'error': "There's no live call #7."}])
         page = '<!doctype html><title>Mug</title><input type="range">'
         with tempfile.TemporaryDirectory() as d:

@@ -26,6 +26,9 @@ export function drawable(book, e, table) {
     book.waited = null;
     return true;
   }
+  // (a scrap picked up or put down: while it flies, the view is the scrap's but the board's eyes are on the flight, so a
+  // press then, a finger's second tap, inks neither it nor the grid.)
+  if (book.scrap?.busy()) return false;
   // (a note's words kept from Scribble for the pen take its strokes as ink; a read refused, over the page, is tapped to try again)
   // (a scrap's words not being typed in are the page's to draw on by touch: README, Our scraps; a mouse's press there
   // is the field's)

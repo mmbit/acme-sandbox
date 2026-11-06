@@ -2,11 +2,12 @@
 // gestures.js; shell/ink/calldraw.js; Ink's folder), held like an iPad mini in
 // landscape, on book-check's played store and voice line.
 // A ring round something on HQ's page off a call opens its post-it, and Save puts it in the Notebook as a scrap on its
-// newest page with its photo (the pin flow). On a call (Moss's), the pen rested,
-// it goes into the book as a note with its snip, no post-it and no Send, on the call's page, with the words the call
-// heard (the book shows a call's notes once they have a notebook of their own). Nothing of it is left on
-// HQ's page (rule zero: ink.mjs), so the board rings the next thing at once, and a line drawn beside where one was
-// is a note of its own. On a call, the pen held still while talking makes no note: nothing waits on a held pen.
+// newest page with its photo (the pin flow), and nothing of it is left on HQ's page (rule zero: ink.mjs), so the board
+// rings the next thing at once, and a line drawn beside where one was is a note of its own. On a call (Moss's), the pen
+// rested, it goes to the call's page as a note for the agent with its snip, no post-it and no Send, with the words the
+// call heard; its ink stays drawn on HQ for the agent until the line says its turn on it is done, then goes, so the
+// board rings the next thing on a clean screen (shared/review/callnotes.js). On a call, the pen held still while
+// talking makes no note: nothing waits on a held pen.
 // A mouse's ring with the pin opens its post-it the same way. A finger carries a ring still open onto the open book,
 // its cut-out taped there.
 // A quick tap with the pen, wobbling a few px as a hand's does, clicks what's under it (focused, clicked once), on HQ's
@@ -32,8 +33,8 @@ export function circleStories(c) {
     'a ring off a call saved from its post-it leaves nothing on HQ, a line beside it is a note of its own, a finger carries an open one onto the book':
       browser => offCallStory({ ...c, browser }),
     // (in Wire too: its call bubble sits elsewhere.)
-    "a ring on a call rests into the call's page in the book, nothing left on HQ; held still, no note": browser =>
-      c.inLooks(browser, (look, shot) => onCallStory({ ...c, browser, look, shot })),
+    "a ring on a call goes to the call's page for its agent, its ink drawn on HQ till the agent's turn on it is done; held still, no note":
+      browser => c.inLooks(browser, (look, shot) => onCallStory({ ...c, browser, look, shot })),
     "a mouse's ring with the pin on HQ opens its post-it too, saved into the Notebook": browser =>
       mouseStory({ ...c, browser }),
     'a quick pen tap clicks what is under it, on HQ and on a dialog, and leaves no ink': browser =>
@@ -178,8 +179,10 @@ async function onCallStory(c) {
       assert.equal(note.words, `Ring ${i + 1} here`, `ring ${i + 1}: the words said with it`);
       assert.match(note.snip ?? '', /^data:image\/jpeg;base64,/, `ring ${i + 1}: its snip`);
       assert.equal(c.pages.find(p => p.id === note.page)?.kind, 'call', `ring ${i + 1}: on the call's page`);
-      await heardNotes(page, line, i + 1);
-      await cleared(page, `ring ${i + 1}`);
+      const sent = await heardNotes(page, line, i + 1);
+      assert.ok(await inkOnHq(page), `ring ${i + 1}: its ink stays drawn on HQ for the agent`);
+      line.send({ type: 'note', id: sent.id, state: 'done' }); // (the agent's turn on it done)
+      await nothingDrawn(page, `ring ${i + 1}, the agent's turn on it done`);
     }
     await heldStill(c, page, line);
     await c.shot('circle-on-call', page);
@@ -205,12 +208,22 @@ async function heldStill(c, page, line) {
   assert.equal(noted(c).length, from, 'the pen held still makes no note');
   await heardNotes(page, line, RINGS.length);
 }
-// The call's line has heard n notes
+// The call's line has heard n notes: the last
 async function heardNotes(page, line, n) {
-  const count = () => line.said.filter(e => e.type === 'note').length;
-  for (let k = 0; k < 40 && count() < n; k++) await page.waitForTimeout(100);
-  assert.equal(count(), n, `the call heard ${n} notes`);
+  const notes = () => line.said.filter(e => e.type === 'note');
+  for (let k = 0; k < 40 && notes().length < n; k++) await page.waitForTimeout(100);
+  assert.equal(notes().length, n, `the call heard ${n} notes`);
+  return notes().at(-1);
 }
+// Whether review mode's ink is drawn over HQ's page
+const inkOnHq = page =>
+  page.evaluate(() =>
+    [...(document.querySelector('review-mode')?.shadowRoot?.querySelectorAll('.ui > canvas') ?? [])].some(c => {
+      const { data } = c.width && c.height ? c.getContext('2d').getImageData(0, 0, c.width, c.height) : { data: [] };
+      for (let i = 3; i < data.length; i += 4) if (data[i]) return true;
+      return false;
+    }),
+  );
 
 // The board's notes the book was sent
 const noted = c => c.posts.filter(p => p.path === '/api/book/note' && !p.body.by);

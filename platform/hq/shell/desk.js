@@ -178,8 +178,7 @@ export const PREVIEW = previews.page;   // (exported for calldrive.js)
 // and hears from, and no other page the frame may have gone on to.
 export const viewerOrigin = () => viewing?.review ?? null;
 export const viewerUrl = () => viewing?.url ?? null;   // (the page the viewer opened: calldrive.js.)
-// The board's mark on a call's prototype, as a scrap on the call's page (the coordinator's callprototypes.ts): its id,
-// or why not.
+// The board's mark on a call's prototype, as a note of the call's that points (the coordinator's callprototypes.ts.): its id, or why not.
 async function markOnCall(url, { anchor, snip }) {
   const r = await fetch('/api/calls/prototype-mark', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, anchor, snip }) });
   const answer = await r.json().catch(() => ({}));
@@ -480,8 +479,8 @@ function fromViewer(e) {
     else if (d.callMark && Number.isInteger(d.callMark.id) && me.review === e.origin) {
       const to = e.source, from = e.origin, id = d.callMark.id;
       const answer = a => to.postMessage({ hq: 'hq', callMark: { id, ...a } }, from);
-      // (a call's prototype on a screen that isn't the call's, the board's iPad: on the call's page all the same, its ink
-      // gone once it's there.)
+      // (a call's prototype on a screen that isn't the call's, the board's iPad: to the call's agent all the same, its
+      // ink gone once it's in.)
       if (!calling && previews.prototype.test(from)) markOnCall(me.url, d.callMark).then(note => { answer({ note }); to.postMessage({ hq: 'hq', had: note }, from); }, err => answer({ failed: err.message }));
       else if (!calling) answer({ failed: 'The call had ended.' });
       else document.dispatchEvent(new CustomEvent('call:mark', { detail: { anchor: d.callMark.anchor, snip: typeof d.callMark.snip === 'string' ? d.callMark.snip : null, ago: Number(d.callMark.ago) || 0, answer } }));

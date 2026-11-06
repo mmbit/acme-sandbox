@@ -10,6 +10,13 @@
 //     (screenTurn) and for its agent's screen tool (screen), by the session's purpose and the thing it belongs to.
 //   - A guest's walk-through on a join link (callline.ts startWatching) keeps only that they typed, and ends or goes
 //     with its call out (callouts.ts end).
+//   - A guest in the room with the board, on a device of their own (callguests.ts), records their room for the call's
+//     agent while the call is live (startOnGuest): the call's page and the prototypes they open there, only that they
+//     typed. The agent sees each screen with whose it is (screenTurn, screen's who), and nothing of a guest's is kept
+//     once the call ends.
+//   - Each of the board's other HQ screens (its iPad beside the desktop that holds the call) records itself on the call
+//     too while it's live (startOnScreen), as the board's screen 2, 3: what it opens and points at there. Nothing of
+//     them is kept once the call ends either.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
@@ -36,7 +43,9 @@ export const RECORDER = new URL('../node_modules/@rrweb/record/dist/record.js', 
 // and its replayer's folder (dist/), which the mirror and HQ's player replay with.
 export const REPLAY = new URL('../node_modules/@rrweb/replay/dist/', import.meta.url);
 const CALL = 'call',
-  CALLOUT = 'callout';
+  CALLOUT = 'callout',
+  GUEST = 'callguest',
+  SCREEN = 'callscreen';
 
 // POST /api/watchalong/start { call, key }: a watch-along for the board's live call, and where its page posts
 export function startOnCall(call: number, key: string) {
@@ -52,6 +61,39 @@ export function startOnCallout(callout: number, previews: string[]) {
   endCallout(callout);
   return posting(store.start(kept, CALLOUT, String(callout), 'hidden', previews));
 }
+// A call's guest's room on the live call (callguests.ts screenOf), and where it posts. guest: their room name; previews:
+// the origin of the call's prototypes' host, which their room frames. One at a time, as a call out's: a new start (their
+// room loaded again) ends their earlier one and its mirror.
+export function startOnGuest(call: number, guest: string, previews: string[]) {
+  endGuest(call, guest);
+  return posting(store.start(kept, GUEST, guestRef(call, guest), 'hidden', previews));
+}
+// ...and ended, their Pause: the agent sees nothing more of it (live skips it).
+export function endGuest(call: number, guest: string) {
+  store.end(kept, GUEST, guestRef(call, guest));
+  unwatchAll(GUEST, guestRef(call, guest));
+}
+const guestRef = (call: number | string, guest: string) => `${call}/${guest}`;
+// A call's guests (their room name, and the name the call knows them by), as callguests.ts tells: guestsBy
+export let guestsOf: (call: number) => { guest: string; name: string }[] = () => [];
+export const guestsBy = (list: typeof guestsOf) => {
+  guestsOf = list;
+};
+// POST /api/watchalong/screens/start { screen }: one of the board's HQ screens that isn't its live call's own (call: the
+// board's call live now, call.ts liveNow), the call's agent, and where its page posts. screen: the page's own id, so a
+// reload goes on as the same screen; one session at a time each, as a guest's. 404: no live call.
+export function startOnScreen(call: { id: number; agent: string } | undefined, b: { screen?: unknown }) {
+  if (!call) return 404;
+  const screen = String(b.screen ?? '');
+  if (!SCREEN_ID.test(screen)) return [400, 'screen is the page’s own id: 8 to 64 letters, digits, - or _'];
+  const ref = screenRef(call.id, screen);
+  store.end(kept, SCREEN, ref);
+  return { call: call.id, agent: call.agent, ...posting(store.start(kept, SCREEN, ref, 'shown')) };
+}
+const SCREEN_ID = /^[\w-]{8,64}$/;
+const screenRef = (call: number | string, screen: string) => `${call}/${screen}`;
+// The board's other screens on a call, in the order they first showed it: screen 2 first
+export const screensOf = (call: number | string) => store.refsOf(kept, SCREEN, `${call}/`);
 const posting = (session: { id: number; key: string }) => ({
   id: session.id,
   events: `/api/watchalong/events?id=${session.id}&key=${session.key}`,
@@ -68,6 +110,7 @@ export async function addEvents(req: IncomingMessage, res: ServerResponse) {
   if (!body) return refuse(req, res, 413, 'too large');
   const status = store.add(kept, id, key, body);
   if (status === 200) {
+    posted.set(id, Date.now());
     const watch = mirrors.seen(id) === false ? watches.get(id) : undefined;
     if (watch) reopen(watch);
     await mirrors.settled(id); // (the page may send no other batch to be told by)
@@ -99,11 +142,23 @@ export const startSweep = () => {
 export function endCall(call: number) {
   store.end(kept, CALL, String(call));
   unwatchAll(CALL, String(call));
+  forgetScreens(call);
 }
 export function forgetCall(call: number) {
   unwatchAll(CALL, String(call));
   store.forget(kept, CALL, String(call));
+  forgetScreens(call);
 }
+// Its guests' screens and the board's other ones go either way: they were for the agent while the call was on, never to
+// watch back.
+const forgetScreens = (call: number) =>
+  [
+    ...guestsOf(call).map(({ guest }) => [GUEST, guestRef(call, guest)]),
+    ...screensOf(call).map(ref => [SCREEN, ref]),
+  ].forEach(([purpose, ref]) => {
+    unwatchAll(purpose, ref);
+    store.forget(kept, purpose, ref);
+  });
 // A call out's, the same
 export function endCallout(callout: number) {
   store.end(kept, CALLOUT, String(callout));
@@ -115,12 +170,7 @@ export function forgetCallout(callout: number) {
 }
 
 // ---------------------------------------------------------------- what the call's agent sees
-// A turn's lines: at most TURN_LINES. Pictures: JPEG, TURN_PX on the long side with a turn, TOOL_PX for the screen tool.
-// The tool's moment list: at most LIST_LINES, the latest.
-const TURN_LINES = 20,
-  LIST_LINES = 60,
-  TURN_PX = 1024,
-  TURN_PICTURE_MS = 1_000; // (a picture of an open mirror takes about 0.2 s: server.py)
+// Pictures: JPEG, TOOL_PX on the long side for the screen tool (watchturns.ts has a turn's)
 export const TOOL_PX = 1568;
 // A watched session: its moments, how far the page's clock runs behind the server's, how many events have changed what
 // its screen shows (a turn's picture goes when that moved since the last one), and its last tap
@@ -137,6 +187,7 @@ const watches = new Map<number, Watch>();
 // its page or a frame's, and the session may show it (shows) (previewfiles.ts mirrored), and the fonts HQ's looks load
 // from Google Fonts (webfonts.ts). Nothing from another host.
 // (HQ's fonts: the Notebook's lettering)
+const GUEST_ROOM = '/guest/notebooks';
 const ASSETS = new Set(['.css', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.woff2']);
 const webFont = webFonts();
 export const mirrors = new Mirrors(REPLAY, async ({ url }, pages) => {
@@ -145,17 +196,19 @@ export const mirrors = new Mirrors(REPLAY, async ({ url }, pages) => {
   // (fromGoogle)
   if (origin !== ORIGIN) return pages.has(origin) ? fromPreview(asked) : fromGoogle(asked);
   if (!ASSETS.has(extname(pathname).toLowerCase())) return null;
-  const kit = /^\/kits\/([a-z0-9][a-z0-9-]*)(\/.+)$/.exec(pathname);
-  const found = kit ? findFile(`${KITS_DIR}/${kit[1]}/hq`, kit[2]) : findFile(hqDir(pathname), pathname);
+  // (a call guest's room has HQ's shell under its own address: notebookguestfiles.ts.
+  const path = pathname.startsWith(`${GUEST_ROOM}/`) ? pathname.slice(GUEST_ROOM.length) : pathname;
+  const kit = /^\/kits\/([a-z0-9][a-z0-9-]*)(\/.+)$/.exec(path);
+  const found = kit ? findFile(`${KITS_DIR}/${kit[1]}/hq`, kit[2]) : findFile(hqDir(path), path);
   return found && { type: found.type, body: await readFile(found.real) };
 });
 // The previews a session's replay may show, decided here, as its recording is whatever its page posted: the board's
-// call any (its key opens each, and its viewer may open any on a call), a guest's walk-through only the ones its call
-// out's share reached when it started (callline.ts walkOf)
+// call any, from any of its screens (its key opens each, and its viewer may open any on a call), a guest's walk-through
+// only the ones its call out's share reached when it started (callline.ts walkOf)
 const shows =
   (session: store.Session): Shows =>
   origin =>
-    session.purpose === CALL || session.origins.includes(origin);
+    session.purpose === CALL || session.purpose === SCREEN || session.origins.includes(origin);
 const fromPreview = (url: URL) =>
   mirrored(url, LOADING_MS).catch(err => {
     console.error(`Watch-along mirror: a file of ${url.host} didn't load:`, err);
@@ -224,7 +277,21 @@ function reopen(watch: Watch) {
 }
 function unwatch(id: number) {
   watches.delete(id);
+  posted.delete(id);
   void mirrors.close(id);
+}
+// A screen beside the board's call (another of the board's, a guest's) is on it while its page still posts: a page
+// posts each second as it records, an empty batch when quiet or paused (sender.js), so one gone without a word (closed,
+// asleep, or recording as the call's own screen since) leaves the agent's list and its mirror goes, and it comes back
+// with its next post. QUIET_MS leaves room for a big batch on a slow line and a page in the background.
+const posted = new Map<number, number>(),
+  QUIET_MS = 20_000;
+export function showing(purpose: string, ref: string) {
+  const session = store.sessionsOf(kept, purpose, ref).findLast(session => !session.ended);
+  if (!session) return undefined;
+  if (Date.now() - (posted.get(session.id) ?? 0) < QUIET_MS) return live(purpose, ref);
+  if (watches.has(session.id)) unwatch(session.id);
+  return undefined;
 }
 const unwatchAll = (purpose: string, ref: string) =>
   store.sessionsOf(kept, purpose, ref).forEach(session => unwatch(session.id));
@@ -242,119 +309,9 @@ export const clockOf = (watch: Pick<Watch, 'clockMs'>) => {
 };
 const settled = (watch: Watch) => watch.moments.settle(Date.now() - watch.clockMs);
 
-// The briefing's paragraph on a walk-through, for whoever shows the screen (who: 'the board', 'they'; their: 'its',
-// 'their'): it comes with the caller's turn once the screen is shown, as the call's briefing was written before
-const briefing = (who: string, their: string) => {
-  const Who = who.charAt(0).toUpperCase() + who.slice(1),
-    whose = who === 'they' ? their : `${who}'s`;
-  return `(You can now see ${whose} screen: a walk-through of our pages. With each of ${their} turns you get what was \
-done since your last turn, one line each (pages opened, taps, scrolls, typing: how much and where, never what), and a \
-picture of the screen as ${their} words ended when it changed, the last tap ringed. Your screen tool shows the screen \
-now, a moment before, a part zoomed in, or the moments since a time. ${Who} may describe things loosely ("this one", \
-"up here"): trust the screen, and ask about what's on it when it isn't clear. Talk about what you see as someone \
-looking over ${their} shoulder would ("the blue button at the bottom"), and never read the lines, their numbers or \
-times out. A box marked "picture not captured" stands for a picture your copy of the screen couldn't show: it is \
-there on ${their} screen, so never raise it. While the screen is paused you see nothing of it.)`;
-};
-
-// What each purpose's agent is told once the screen is shown. A purpose without a briefing is never watched for an agent.
-const BRIEFS = new Map([
-  [CALL, briefing('the board', 'its')],
-  [CALLOUT, briefing('they', 'their')],
-]);
-
-// POST /api/voice/screen-turn { purpose, ref, after, seen, briefed, picture }: for a caller's turn, the moments since the agent's
-// last (after: the last moment it had), and a picture of the screen now when it changed since the one it has (seen: that
-// picture's version), the last tap since then ringed. While paused, the lines up to the pause and no picture. brief:
-// what the agent is told of a walk-through (BRIEFS), for a session that hasn't had it (briefed false). picture false:
-// none (the call has had all it can hold). A picture not there within TURN_PICTURE_MS (its mirror opening, stalled or
-// failed) leaves the lines to go without it, saying so, and comes with a later turn: the line waits 1.5 s for the
-// whole answer (platform/voice/server.py SCREEN_TURN_SECONDS) and drops the lines with it. (28 Oct, call 161: every
-// turn waited 15 s on a stalled mirror, so the agent heard of the board's screen once in half an hour, while it was
-// paused, and took the share for dropped.)
-export async function screenTurn(b: Record<string, unknown>) {
-  const purpose = String(b.purpose ?? ''),
-    brief = BRIEFS.get(purpose);
-  const watch = brief ? live(purpose, String(b.ref ?? '')) : undefined;
-  if (!watch) return { on: false };
-  settled(watch);
-  const after = Number(b.after) || 0,
-    seen = Number(b.seen) || 0;
-  const moments = watch.moments.after(after);
-  const paused = watch.moments.paused;
-  const answer = {
-    on: true,
-    paused,
-    lines: turnLines(moments, clockOf(watch)),
-    last: watch.moments.list.at(-1)?.n ?? 0,
-    version: watch.version,
-    ...(b.briefed === true ? {} : { brief }),
-  };
-  if (paused || watch.version === seen || b.picture === false) return answer;
-  const ring = watch.tap && watch.tap.version > seen ? watch.tap : undefined;
-  const picture = await inTime(mirrors.now(watch.id, { long: TURN_PX, ring }), TURN_PICTURE_MS);
-  return picture
-    ? { ...answer, picture: { type: 'image/jpeg', data: picture.bytes.toString('base64') } }
-    : { ...answer, lines: [...answer.lines, NO_PICTURE] };
-}
-const NO_PICTURE = '(no picture of their screen came with this turn: it comes with a later one)';
-// What a step gives within ms, else undefined (failed too)
-const inTime = <T>(step: Promise<T>, ms: number) =>
-  Promise.race([step.catch(() => undefined), new Promise<undefined>(done => setTimeout(done, ms))]);
-// At most TURN_LINES: the latest, and how many earlier ones the screen tool lists
-function turnLines(moments: Moments['list'], clock: (at: number) => string) {
-  const all = lines(moments, clock);
-  if (all.length <= TURN_LINES) return all;
-  const left = all.length - TURN_LINES + 1;
-  return [`(${left} earlier lines left out: the screen tool lists them)`, ...all.slice(-TURN_LINES + 1)];
-}
-
-// POST /api/voice/screen { purpose, ref, at?, region?, since? }: the screen tool. since: the moments since then
-// ('-2m', '17:03', '#12'). Otherwise a picture, TOOL_PX on its long side: now, or at ('-20s', '17:03:12', '#12'; a
-// moment's own tap ringed), all of it or region { x, y, width, height } in fractions of the screen.
-export async function screen(b: Record<string, unknown>) {
-  const purpose = String(b.purpose ?? '');
-  const watch = BRIEFS.has(purpose) ? live(purpose, String(b.ref ?? '')) : undefined;
-  if (!watch) return [404, purpose === CALL ? UNSHOWN : 'No screen is being shown on this call.'];
-  settled(watch);
-  if (watch.moments.paused)
-    return [409, "They've paused showing their screen: you see nothing of it until they resume."];
-  const clock = clockOf(watch);
-  if (b.since != null) {
-    const since = when(String(b.since), watch);
-    if (since === undefined) return [400, WHEN_WORDS];
-    const listed = lines(
-      watch.moments.list.filter(moment => moment.at >= since),
-      clock,
-    ).slice(-LIST_LINES);
-    return { lines: listed.length ? listed : ['(nothing since then)'] };
-  }
-  const region = regionOf(b.region);
-  if (region === null) return [400, 'region is { x, y, width, height }, each a fraction of the screen from 0 to 1'];
-  const spec = String(b.at ?? 'now').trim();
-  if (spec === 'now' || spec === '') {
-    const picture = await exclude(mirrors.now(watch.id, { long: TOOL_PX, region }));
-    return picture ? pictured(picture.bytes, `The screen now (${clock(Date.now() - watch.clockMs)})`) : [404, NOTHING];
-  }
-  const time = when(spec, watch);
-  if (time === undefined) return [400, WHEN_WORDS];
-  const moment = spec.startsWith('#') ? watch.moments.list.find(m => m.n === Number(spec.slice(1))) : undefined;
-  const ring = moment?.kind === 'tap' ? { x: moment.x!, y: moment.y! } : undefined;
-  // (read on playback.ts's thread: a long share's recording would hold the loop.)
-  // (its waits there and on Chromium hold nothing of HQ's: latency.ts exclude.)
-  const session = store.find(kept, watch.id);
-  const events = session && (await exclude(playback.at(kept.dir, [session], time)));
-  const picture = events && (await exclude(mirrors.at(events, time, { long: TOOL_PX, region, ring }, shows(session))));
-  return picture
-    ? pictured(picture.bytes, `The screen at ${clock(time)}${moment ? ` (#${moment.n})` : ''}`)
-    : [404, NOTHING];
-}
+// What the call's agent sees of it, with each turn and by its screen tool: watchturns.ts, from these.
+export { CALL, CALLOUT, GUEST, SCREEN, guestRef, kept, live, settled, shows, type Watch };
 export const NOTHING = 'Nothing of the screen was recorded by then.';
-const UNSHOWN = "Their screen isn't shown to you: ask to see it with ask_to_see, and they answer yes or no.";
-const pictured = (jpeg: Buffer, words: string) => ({
-  picture: { type: 'image/jpeg', data: jpeg.toString('base64') },
-  line: words,
-});
 
 // ---------------------------------------------------------------- watching a call back
 // A call's recording, every session of it in order (a call minimised again after a restore records anew), read on

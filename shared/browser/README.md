@@ -111,10 +111,13 @@ Run `node --test shared/browser/render.test.ts` for concurrency, snapshot, artif
 ## Push tests
 
 
-Browser test areas (`shared/gates/tests.ts`, `BROWSER_AREAS`) receive the worker's Chromium headless shell, its
-runtime resources and shared libraries. Full Chromium and unused browser assets stay out of push-test bundles.
-Add an area there when it gains a browser push test, including an entry point that imports another area's test. The bootstrap sets `PLAYWRIGHT_BROWSERS_PATH` and `LD_LIBRARY_PATH` to the bundled
-copies, for both the change and its base comparison. `BROWSER_HEADLESS_SHELL` selects the bundled
+A push's tests receive the worker's browsers they launch, with their runtime resources and shared libraries, told from
+the tests themselves (`shared/gates/bundle.ts`, `browsersOf`.): a test file that, with the files it imports followed to the end, imports
+Playwright or `shared/browser` gets the Chromium headless shell; one that names Playwright's full Chromium
+(`chrome-linux64/chrome`, for `shared/chromium`'s `CHROMIUM_PATH`) gets full Chromium. The base comparison gets the
+browsers the base's own tests import. Any area, a company's own kits included, needs nothing listed. Unused browser
+assets stay out of push-test bundles. The bootstrap sets `PLAYWRIGHT_BROWSERS_PATH` and `LD_LIBRARY_PATH` to the
+bundled copies, for both the change and its base comparison. `BROWSER_HEADLESS_SHELL` selects the bundled
 shell for `launched()`, unless its caller supplies an executable, a channel or headed mode. Authored browser
 commands on a kind with `browsers: true` retain the full installed browser set. Playwright still installs from
 `shared/browser`'s lock through npm. No browser download or extra proxy destination is needed. The worker and tests helper must keep the same Debian

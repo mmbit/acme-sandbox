@@ -2,15 +2,16 @@
 // tooltip, and the islands floating over the paper (README, The book's frame): the tools on the right, upright and
 // centred (bookstrip.js), one bar along the foot between the screen's corners, the overview's key at its left, the
 // page's arrows and "3 / 12" in its middle, its dots menu at its right with whatever there's no room for
-// (bookcontrols.js), and Undo and Redo a pill of their own left of it, by the thumb (bookrail.js). What's written ends
-// left of the tools (--bk-rail-width), the paper running on under them to the screen's edge. Every part of the book makes its controls here, so they look
-// and answer alike. Only the page is paper; the controls are HQ's.
+// (bookcontrols.js), a guest's Undo of its send in Send's place (bookrail.js). The tools are an
+// opened scrap's, and what's written there ends left of them (--bk-rail-width), the paper running on under them to
+// the screen's edge. Every part of the book makes its controls here, so they look and answer alike. Only the page is
+// paper; the controls are HQ's.
 import { esc } from '../../util.js';
 import { icon } from '../icons.js';
 import { word } from './bookscope.js';
 
-// The islands and their groups: the tools; Undo and Redo in their pill (history); on the bar the page's own keys (keys:
-// the overview at its left, New page in the dots), the page's arrows and where it is (pages), a guest's Send; the dots
+// The islands and their groups: the tools; on the bar the page's own keys (keys: the overview at its left, New page in
+// the dots), the page's arrows and where it is (pages), a guest's Send and its Undo (history); the dots
 // menu's own rows (menu: the page's, book: the book's, Preferences to Close); the overview's tools in its head
 // (bookzoom.js).
 const BAR = ['history', 'pages', 'keys', 'send', 'menu', 'book'],
@@ -50,9 +51,9 @@ export function island(name) {
   islands();
   return made.get(name);
 }
-// The controls over the paper, for bookrail.js to place: the tools' island (.bk-strip), the bar along the foot
-// (.bk-bar), its three parts laid out so the page's arrows and where it is sit in its very middle, and Undo and Redo's
-// pill beside it (.bk-undo-pill), a toolbar of its own. Cards hang beside them (beside()), over the paper.
+// The controls over the paper, for bookrail.js to place: the tools' island (.bk-strip) and the bar along the foot
+// (.bk-bar), its three parts laid out so the page's arrows and where it is sit in its very middle. Cards hang beside
+// them (beside()), over the paper.
 export function islands() {
   if (controls) return controls;
   const div = (className, html = '') => Object.assign(document.createElement('div'), { className, innerHTML: html }),
@@ -68,12 +69,9 @@ export function islands() {
   const strip = div('bk-strip'),
     foot = div('bk-foot'),
     bar = div('bk-bar'),
-    // (Undo and Redo a pill of their own beside the bar, out of its layout: gone on a locked page, the bar unmoved.
-    pill = div('bk-undo-pill'),
-    at = div('bk-bar-at'),
     [start, middle, end] = ['start', 'middle', 'end'].map(part => div(`bk-bar-${part}`)),
     hidden = div('bk-menu-only');
-  for (const el of [strip, bar, pill]) {
+  for (const el of [strip, bar]) {
     el.setAttribute('data-no-ink', '');
     el.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of them.)
   }
@@ -86,14 +84,11 @@ export function islands() {
   more = moreButton();
   // (the bar as drawn, the Ink README's The book's frame: the overview's key, the arrows and "3 / 12" in the middle, the
   // dots.)
-  pill.append(one('history', { role: 'toolbar' }));
-  made.get('history').setAttribute('aria-label', word('undoRedo'));
   start.append(one('keys'));
   middle.append(one('pages'));
-  end.append(one('send'), more, hidden);
+  end.append(one('send'), one('history'), more, hidden);
   bar.append(start, middle, end);
-  at.append(pill, bar);
-  foot.append(at);
+  foot.append(bar);
   controls.append(strip, foot);
   one(OVERVIEW, { role: 'toolbar' }).classList.add('bk-far-tools');
   return controls;

@@ -113,7 +113,6 @@ export const en = {
   inkYellow: 'Yellow',
   inkPink: 'Pink',
   redo: 'Redo',
-  undoRedo: 'Undo and redo',
   preferences: 'Preferences',
   notebookPages: "The notebook's pages",
   notebookPagesAt: "The notebook's pages: {page}",
@@ -263,5 +262,12 @@ export const en = {
     ended: 'The call has ended.',
     micDenied: 'The microphone didn’t start. Allow it in your browser’s settings, then try again.',
     dropped: 'The connection dropped. Try again.',
+  },
+  // A call's room while its screen is shown to the call's agent (bookguestscreen.js): Pause and Show again, the words
+  // of the board's own on its minimised call, and the eye's.
+  screen: {
+    pause: 'Pause',
+    resume: 'Show again',
+    watched: '{agent} sees your screen',
   },
 };

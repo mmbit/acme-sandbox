@@ -133,8 +133,8 @@
 }
 
 /* ---- a card: one of the look's panels floating over the paper (the pairing card, a menu, the page's targets and the
-   asks still open as it goes: bookshare.css). It can't be pressed, so it lies as the islands do, their edge and shadow,
-   never a key's base under it (the Ink README, the tools' cards) */
+   asks still open as it goes: bookshare.css). It can't be pressed, so it lies flat, never on a key's base (the Ink
+   README, the tools' cards). */
 .bk-card,
 .bk-share,
 .bk-asks-open {

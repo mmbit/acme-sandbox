@@ -135,8 +135,8 @@ def drawing_asked(a):
 
 
 # A throwaway page of the agent's own, made on the call to show an idea: the coordinator's callprototypes.ts keeps it
-# with the call, takes its picture and shows it on the call's page and the iPads. The most of its name, its page and its
-# line of what a version changes are callprototypes.ts NAME_MOST, HTML_MOST and ABOUT_MOST.
+# with the call, takes its picture and shows it on the call's page and their screens. The most of its name, its page
+# and its line of what a version changes are callprototypes.ts NAME_MOST, HTML_MOST and ABOUT_MOST.
 PROTOTYPE_NAME, PROTOTYPE_HTML, PROTOTYPE_ABOUT = 60, 1_000_000, 200
 PROTOTYPE_WORDS = {
     'shape': (f"prototype takes name (at most {PROTOTYPE_NAME} characters: the same name again makes its next "
@@ -306,7 +306,7 @@ class CallNotes:
         return got if 'error' in got else {'line': one_line(got['ok']), 'picture': got['picture']}
 
     async def prototype_tool(self, asked):
-        """The agent's prototype tool: its page kept with the call and shown on both iPads, and its picture back with
+        """The agent's prototype tool: its page kept with the call and shown on their screens, and its picture back with
         its line and the call's number."""
         if refusal := self.refused(PROTOTYPE_WORDS):
             return {'error': refusal}

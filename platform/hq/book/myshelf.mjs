@@ -57,6 +57,9 @@ async function shelfAt(browser, c, { label, viewport, picture, upload }) {
     await c.shot(`myshelf-${label}`, page);
     await opensOnPages(page, shelf, 'Rocketlings', label);
     assert.deepEqual(errors, []);
+  } catch (error) {
+    await c.shot(`myshelf-${label}-failed`, page);
+    throw error;
   } finally {
     await context.close();
   }
@@ -213,7 +216,9 @@ export const shelfSeen = page =>
   });
 
 // The Shelf as the deck draws it: My journal (its cover given here, or already), Rocketlings and Carrel with their
-// projects' covers, Recurring quiet, and the shop round back from Lyra
+// projects' covers (HQ's mock project cover, as its projects' tiles wear it), Recurring quiet, and the shop round back
+// from Lyra
+const PROJECT_COVER = 'mock/covers/2026-09-25-we-have-a-building.svg';
 function shelfSeed(cover) {
   const now = Date.now(),
     book = (id, kind, name, more) => ({ id, kind, name, created: at(now - 30 * DAY), updated: at(now - DAY), ...more });
@@ -222,10 +227,10 @@ function shelfSeed(cover) {
       book(1, 'mine', 'My journal', { news: 1, updated: at(now), ...(cover && { cover }) }),
       book(2, 'project', 'Rocketlings', {
         updated: at(now - 3600_000),
-        cover: 'covers/rocketlings.png',
+        cover: PROJECT_COVER,
         asks: { open: 2, all: 3 },
       }),
-      book(3, 'project', 'Carrel', { cover: 'covers/carrel.png', asks: { open: 0, all: 14 } }),
+      book(3, 'project', 'Carrel', { cover: PROJECT_COVER, asks: { open: 0, all: 14 } }),
       book(4, 'project', 'Recurring', { updated: at(now - 10 * DAY) }),
       book(5, 'round', 'shop round', {
         updated: at(now - 12 * DAY),

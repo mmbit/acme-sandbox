@@ -147,8 +147,9 @@ async function deletesMarks(page, c, free, draw, pencil, paper) {
 
 // The marker drawn across a pen's line and a box of typed words, held before its lift: what the screen shows round
 // them then is what it shows once the marker is dry, the ink and the words over it both times (the Ink README, The
-// book's frame). Pixels that differ by more than CLOSE in a channel are counted; a line that stays as it was changes
-// at most a few soft-edge pixels, a marker over the ink and the words hundreds.
+// book's frame). A pixel is counted when no pixel of the other picture within one px of it is within CLOSE of it in
+// every channel: a line that stays as it was changes at most a few, its soft edge redrawn half a px over on an opened
+// scrap's zoom none, a marker over the ink and the words hundreds.
 async function under(page, c, free, draw, pencil, paper) {
   await pick(page, 'Pen');
   await draw([
@@ -206,17 +207,29 @@ async function held(page, points, pencil) {
   for (const point of rest) await page.mouse.move(...point);
   return () => page.mouse.up();
 }
-// (in the page) How many pixels of two pictures of one box differ by more than close in a channel
+// (in the page) How many pixels of two pictures of one box differ by more than close in a channel from every pixel within
+// one px of them in the other
 async function differing([a, b, close]) {
   const pixels = async png => {
     const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${png}`)).blob()),
       g = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
     g.drawImage(bitmap, 0, 0);
-    return g.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    return g.getImageData(0, 0, bitmap.width, bitmap.height);
   };
-  const [p, q] = [await pixels(a), await pixels(b)];
+  const [{ data: p, width: w, height: h }, { data: q }] = [await pixels(a), await pixels(b)],
+    near = (from, to, x, y) => {
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const [u, v] = [x + dx, y + dy];
+          if (u < 0 || v < 0 || u >= w || v >= h) continue;
+          const i = (y * w + x) * 4,
+            j = (v * w + u) * 4;
+          if ([0, 1, 2].every(k => Math.abs(from[i + k] - to[j + k]) <= close)) return true;
+        }
+      return false;
+    };
   let n = 0;
-  for (let i = 0; i < p.length; i += 4) if (Math.max(...[0, 1, 2].map(k => Math.abs(p[i + k] - q[i + k]))) > close) n++;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!near(p, q, x, y) || !near(q, p, x, y)) n++;
   return n;
 }
 

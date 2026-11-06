@@ -107,10 +107,19 @@ body ~ #book svg.icon[data-drawn^='icons/pixel/'] {
   width: 20px;
   height: 20px;
 }
-/* the tools' island, the bar and Undo and Redo's pill as glass (shell/ink/bookstrip.css), in pixels: the look's hard
-   line kept round it, its light a whole pixel (2 px) along its top edge.
-   (the pill) */
-body ~ #book :is(.bk-strip, .bk-bar, .bk-undo-pill) {
+/* (a pixel icon fills its 20 px, taller than a line icon's lines: the pen's and the marker's lifted further, so the
+   colour dot under it sits clear of its pixels on a phone's smaller keys too, shell/ink/bookstrip.css. Its upright
+   pens are narrow, so the gaps between them on the tool's card are wider than a line icon's: the card's margin
+   widened to stay its widest spacing, booktools.css.) */
+body ~ #book .bk-strip .bk-btn:is([data-mode='pen'], [data-mode='highlighter']) svg.icon[data-drawn^='icons/pixel/'] {
+  translate: 0 -6px;
+}
+body ~ #book .bk-palette {
+  padding: 26px;
+}
+/* the tools' island and the bar as glass (shell/ink/bookstrip.css), in pixels: the look's hard line kept round it,
+   its light a whole pixel (2 px) along its top edge. */
+body ~ #book :is(.bk-strip, .bk-bar) {
   box-shadow:
     inset 0 2px 0 color-mix(in srgb, white 70%, transparent),
     var(--shadow-sm, var(--bk-lift));

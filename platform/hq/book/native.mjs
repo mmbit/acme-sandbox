@@ -1,16 +1,18 @@
 // book-check.mjs's story of the book in a native shell that draws the Apple Pencil itself (platform/ios: Pen.swift;
 // shell/ink/booknative.js), on the played Notebook seeded as dev mode's, an iPad mini with a stand-in for the shell's
 // bridge:
-//   - the pen picked, the shell is told where the paper is on the screen and the pen's ink;
-//   - a stroke the shell hands back lands on the page shown as the pen's line, its pressure kept, saved to the store;
-//   - a tap the shell hands back is a click where it tapped: on a page arrow one page turned, on the Eraser the Pencil
-//     back to the page;
-//   - while an answer's slide has lent the zoom, the shell is told the pen's width at the board's zoom. The Pencil
-//     touching the paper gives that zoom back, and the stroke then drawn lands as drawn at it.
+//   - the pen picked, on the grid (no ink) the Pencil is the page's; on an opened scrap the shell is told where the
+//     paper is on the screen and the pen's ink;
+//   - a stroke the shell hands back lands on the opened scrap as the pen's line, its pressure kept, saved to the store;
+//   - a tap the shell hands back is a click where it tapped: on the Eraser beside the opened scrap, the Pencil back to
+//     the page;
+//   - while an answer's slide on the opened scrap has lent the zoom, the shell is told the pen's width at the board's
+//     zoom. The Pencil touching the paper gives that zoom back, and the stroke then drawn lands as drawn at it.
 import assert from 'node:assert/strict';
 import { open } from './notebook.mjs';
 import { tool } from './notebookscreen.mjs';
-import { MINI, middleOf, until } from './kit.mjs';
+import { MINI, middleOf, openScrap, until } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { inStory, slipOf, WENT_LIVE } from './answers.mjs';
 import { FEED_MS, notebookOn } from './answersplay.mjs';
 import { viewNow } from './canvas.mjs';
@@ -39,6 +41,11 @@ async function inShell(browser, c) {
   };
   const { page, play, errors, done } = await open(browser, { ...c, hqIn }, MINI, {});
   try {
+    // on the grid, which takes no ink, the Pencil is the page's (its tap, its circle and line); a card tapped opens its
+    // scrap, and there, the pen picked from its tools, the shell draws the pen
+    await until(() => told(page).then(p => p === false), "on the grid, the shell told the Pencil is the page's");
+    const card = await page.locator('#book .bk-unit').filter({ visible: true }).first().getAttribute('data-unit'),
+      { sheet } = await openScrap(page, (await hands(page)).pen, card);
     await tool(page, 'Pen');
     const pen = await until(() => told(page).then(p => p?.tool === 'pen' && p), 'the shell told of the pen');
     const desk = await page.locator('#book .bk-desk').boundingBox();
@@ -49,8 +56,8 @@ async function inShell(browser, c) {
     assert.match(pen.color, /^#[0-9a-f]{6}$/i, 'the ink as #rrggbb');
     assert.ok(pen.size > 0 && pen.alpha === 1, "the pen's width and no alpha");
 
-    // a wave on bare paper, pressing harder as it goes, as PencilKit hands it over
-    const [x, y] = await bare(page, pen.paper),
+    // a wave on the opened scrap's bare paper, pressing harder as it goes, as PencilKit hands it over
+    const [x, y] = await bare(page, [sheet.x, sheet.y, sheet.width, sheet.height]),
       points = Array.from({ length: 16 }, (_, i) => [x + i * 8, y + Math.sin(i / 2) * 10, 0.2 + i * 0.04, i * 8]),
       was = new Set(lines(play).map(s => JSON.stringify(s)));
     await page.evaluate(points => window.shellPen(points), points);
@@ -63,9 +70,7 @@ async function inShell(browser, c) {
     assert.ok(Math.max(...pressures) > 0.7, `its pressure kept: ${pressures}`);
     await c.shot('native-pen-line', page);
 
-    await arrowTap(page);
-
-    // a tap on the Eraser: picked, and the Pencil the page's again
+    // a tap on the Eraser, among the tools beside the opened scrap: picked, and the Pencil the page's again
     const eraser = middleOf(
       await page.locator('#book').getByRole('button', { name: 'Eraser', exact: true }).boundingBox(),
     );
@@ -77,25 +82,10 @@ async function inShell(browser, c) {
   }
 }
 
-// A Pencil tap on a page arrow, inside the paper the shell takes: one page turned, not one for the tap and one for its
-// click.
-async function arrowTap(page) {
-  const where = () => page.locator('#book .bk-where').textContent(),
-    [n, of] = (await where()).split(' / ').map(Number);
-  assert.ok(of > 1, `a chapter with pages to turn: ${n} / ${of}`);
-  const [label, to] = n > 1 ? ['The page before', n - 1] : ['The page after', n + 1],
-    arrow = middleOf(
-      await page.locator(`#book .bk-bar [data-island=pages] .bk-btn[aria-label="${label}"]`).boundingBox(),
-    );
-  await page.evaluate(at => window.shellPen([[...at, 0.5, 0]]), arrow);
-  await until(async () => (await where()) === `${to} / ${of}`, `${label}: ${to} / ${of}`);
-  await page.waitForTimeout(1000);
-  assert.equal(await where(), `${to} / ${of}`, `one Pencil tap on ${label}, one page`);
-}
-
-// In a native shell that draws the Pencil itself (booknative.js): a tall note's answer slid into sight zooms out to
-// show both. The Pencil touching the paper gives the board's zoom back (bookgroupshow.js giveBack), as a press does in a
-// browser, so the stroke the shell then draws and plays to the page lands as large as it was drawn at the board's zoom
+// In a native shell that draws the Pencil itself (booknative.js): a tall note opened, its answer slid into sight on its
+// sheet zooms out to show both (bookarrive.js hung). The Pencil touching the paper gives the board's zoom back
+// (bookgroupshow.js giveBack), as a press does in a browser, so the stroke the shell then draws and plays to the page
+// lands as large as it was drawn at the board's zoom
 async function lentZoom(browser, c) {
   const nb = notebookOn(c),
     asked = Object.assign(nb.typed(4170, 'Is this live yet?', 60, 60), {
@@ -108,9 +98,14 @@ async function lentZoom(browser, c) {
     return context;
   };
   await inStory(browser, { ...c, hqIn }, { viewport: MINI, nb }, async (page, play) => {
+    // (the note opened by the Pencil's tap on its card, the page's on the grid: what hangs by it slides into sight on
+    // its sheet; the pen picked from its tools.)
+    await openScrap(page, (await hands(page)).pen, asked.id);
     await tool(page, 'Pen');
     const { size } = await until(() => told(page).then(p => p?.tool === 'pen' && p), 'the shell told of the pen');
     const { s: boardScale } = await viewNow(page);
+    // (the board's hands off the paper: only then does what comes slide into sight)
+    await page.waitForTimeout(IDLE_MS);
     const { id } = play.answer(asked.id, nb.answer(asked, 'text', WENT_LIVE));
     await slipOf(page, asked, id).waitFor({ timeout: FEED_MS });
     let lent;
@@ -130,10 +125,9 @@ async function lentZoom(browser, c) {
     await atZoom(page, boardScale, 'as the Pencil touched the paper');
     await page.evaluate(points => window.shellPen(points), points);
     const line = await until(() => lines(play).find(s => !was.has(JSON.stringify(s))), 'the line saved', FEED_MS),
-      // (its last step, where the pen's smoothing has caught up with the hand: the smoothed line trails its ends, so
-      // its whole size is short of the hand's even at the right zoom. A step's size is the same wherever the store
-      // places the unit.)
-      [drawn, landed] = [points.map(([px, py]) => [px / boardScale, py / boardScale]), line.points].map(lastStep);
+      // (from its first point to its last: the pen's line starts and ends where the hand did, however its smoothing
+      // trails between. Its span is the same wherever the store places the unit.)
+      [drawn, landed] = [points.map(([px, py]) => [px / boardScale, py / boardScale]), line.points].map(span);
     assert.ok(
       drawn.every((v, k) => Math.abs(v - landed[k]) <= 0.5),
       `the line as large as it was drawn at the board's zoom, ${boardScale}: ${landed} on the page, drawn ${drawn}`,
@@ -153,8 +147,8 @@ async function stillView(page) {
   const now = await viewNow(page);
   return JSON.stringify(was) === JSON.stringify(now) ? now : null;
 }
-// (the last step of points: [dx, dy])
-const lastStep = points => [0, 1].map(k => points.at(-1)[k] - points.at(-2)[k]);
+// (from the first of points to the last: [dx, dy])
+const span = points => [0, 1].map(k => points.at(-1)[k] - points[0][k]);
 // A place on the paper on the screen with bare page under a wave's width (130 × 30 px) from it: no unit, box of words
 // or what hangs under them
 const bare = (page, [left, top, width, height]) =>
@@ -171,6 +165,9 @@ const bare = (page, [left, top, width, height]) =>
     },
     [left, top, width, height],
   );
+// How long the board's hands are off the paper before what an agent hangs by a note is slid into sight (ms:
+// bookarrive.js IDLE_MS, and a little)
+const IDLE_MS = 3500;
 // What the page last told the shell of its pen
 const told = page => page.evaluate(() => window.told.filter(m => 'pen' in m).at(-1)?.pen);
 // The lines in the store, on any of the notebook's pages

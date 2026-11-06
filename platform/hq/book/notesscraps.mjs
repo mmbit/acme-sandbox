@@ -2,11 +2,11 @@
 // bookunitcards.js, bookgroups.css; the store's stacking, notebookstack.js), by hand at 1133 × 744 and 744 × 1133 with
 // the Pencil and fingers in either engine (hands.mjs): a call's scraps, a tall crop among them, read as separate
 // pieces, each card holding its picture and words with room before the next, none cut at the paper's edge, the tall
-// crop no taller than the cap; the board writes a scrap's words longer with the pen's keyboard and the next still keeps
-// clear. A note the agent adds while the page is idle is scrolled to and pops in; one whose slide a scroll stops on the
+// crop no taller than the cap; the board opens a scrap with a finger, writes its words longer there, puts it back, and
+// its card still keeps clear of the next. A note the agent adds while the page is idle is scrolled to and pops in; one whose slide a scroll stops on the
 // way shows at once; one added while the Pencil is down moves nothing.
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, until } from './kit.mjs';
+import { MINI, UPRIGHT, closeScrap, openScrap, until } from './kit.mjs';
 import { mini } from './start.mjs';
 import { TALL_WORDS, callSeed, fillCall } from './notespage.mjs';
 import { TALL } from '../shell/ink/notebookstack.js';
@@ -97,7 +97,10 @@ async function shown({ page, pen }, c, put, held) {
   await until(() => page.evaluate(placeOf, HELD), 'the note put while the Pencil is down');
   await page.waitForTimeout(1200);
   assert.deepEqual(await page.evaluate(placeOf, SHOWN), still, 'nothing slides while the Pencil is down');
-  await pen.up(at);
+  // (lifted away from where it came down: no tap, which would open a scrap or make one)
+  const away = [at[0] + 40, at[1]];
+  await pen.move(away);
+  await pen.up(away);
 }
 // The agent's next note on the idle page, its slide into sight stopped by a scroll the moment it starts: shown at once,
 // where it is, nothing of it held unseen
@@ -109,31 +112,44 @@ async function stoppedOnTheWay({ page }, put) {
   await page.waitForTimeout(1000);
   assert.deepEqual(await page.evaluate(heldOf, STOPPED), [], 'the note stopped on its way shows whole');
 }
-// The board writes a scrap's words in sight longer (a finger's tap in them, the keyboard): every card still apart
+// The board writes a scrap's words in sight longer: a finger's tap on its card opens it, a tap in its words and the
+// keyboard there, Klaar puts it back: every card on the grid still apart
 async function written({ page, touch }, c, held) {
-  const at = await wordsInSight(page);
-  assert.ok(at, "a scrap's words in sight");
-  await touch.stroke([at], [at]);
-  await page.keyboard.press('End');
+  const card = await wordsInSight(page);
+  assert.ok(card, "a scrap's words in sight");
+  const finger = { tap: at => touch.stroke([at], [at]) },
+    { gid } = await openScrap(page, finger, undefined, card.at);
+  assert.equal(gid, card.gid, 'the scrap tapped opened');
+  const field = page.locator(`#book .bk-page[data-focus] .bk-words[data-g="${gid}"] textarea.bk-scrap-words`);
+  // (Playwright's tap: a touch the browser itself focuses the field for, as a hand's touch played in the page isn't)
+  await field.tap();
+  await until(() => field.evaluate(f => f === document.activeElement), 'its words being typed in');
+  await page.keyboard.press('Control+End');
   await page.keyboard.type(` ${LONGER}`);
   await page.evaluate(() => document.activeElement.blur());
+  await closeScrap(page, finger);
+  const onCard = page.locator(`#book .bk-page:not([data-focus]) .bk-words[data-g="${gid}"] textarea.bk-scrap-words`);
+  await until(async () => (await onCard.inputValue()).endsWith(LONGER), "the longer words on the scrap's card");
   await page.waitForTimeout(1500);
   await c.shot(`book-notes-apart-${held}-written`, page);
   readApart(await cards(page), 'with a scrap’s words written longer');
 }
-// The middle of a scrap's words in sight, the page scrolled back up to one as the board would (null: none)
+// A card on the grid whose words show on the paper, under no button, the page scrolled back up to one as
+// the board would: its group and the middle of its words ({ gid, at }; null: none)
 async function wordsInSight(page) {
   const paper = await page.locator('#book .bk-desk').boundingBox();
   for (let k = 0; k < 12; k++) {
-    const at = await page.evaluate(() => {
+    const card = await page.evaluate(() => {
       for (const t of document.querySelectorAll('[data-page="9101"] .bk-words textarea')) {
         const r = t.getBoundingClientRect(),
-          mid = [r.x + r.width / 2, r.y + r.height / 2];
-        if (document.elementFromPoint(...mid)?.closest('.bk-words')) return mid;
+          at = [r.x + r.width / 2, r.y + r.height / 2],
+          hit = document.elementFromPoint(...at);
+        if (r.height && hit?.closest('#book .bk-page:not([data-focus])') && !hit.closest('button'))
+          return { gid: Number(t.closest('[data-g]').dataset.g), at };
       }
       return null;
     });
-    if (at) return at;
+    if (card) return card;
     await page.mouse.move(paper.x + paper.width / 2, paper.y + paper.height / 2);
     await page.mouse.wheel(0, -300);
     await page.waitForTimeout(400);

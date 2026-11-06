@@ -52,6 +52,7 @@ export function mountScrapOpen(book, hooks) {
     open: gid => open(st, gid),
     close: () => close(st),
     view: () => st.open?.view ?? null,
+    busy: () => st.busy,
     gid: () => st.open?.gid ?? null,
     grid: () => st.open?.grid ?? null,
     key: node => st.keys.insertBefore(node, done),
@@ -249,14 +250,17 @@ function unpark(st, grid) {
   for (const el of [under, st.scrim, st.lift, st.keys]) el.remove();
   under.style.transform = '';
 }
-// The sheet and its keys where the paper's size puts them: the margin in from its edges, below the status bar's blur
+// The sheet and its keys where the paper's size puts them: the margin in from its edges, below the status bar's blur,
+// the keys left of the tools (book.size.right), never under them where a phone on its side has them the paper's
+// height.
 function place(st) {
   const r = sheetRect(st.book),
     inset = `${r.y}px ${st.book.size.w - r.x - r.w}px ${st.book.size.h - r.y - r.h}px ${r.x}px`;
   for (const el of [st.sheet, st.shade])
     Object.assign(el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
   st.flyer.style.clipPath = `inset(${inset} round 14px)`;
-  Object.assign(st.keys.style, { top: `${r.y + 10}px`, right: `${st.book.size.w - r.x - r.w + 10}px` });
+  const right = Math.max(st.book.size.w - r.x - r.w + 10, st.book.size.right);
+  Object.assign(st.keys.style, { top: `${r.y + 10}px`, right: `${right}px` });
 }
 // The sheet's box on the paper (CSS px from the paper's top-left)
 export function sheetRect(book) {

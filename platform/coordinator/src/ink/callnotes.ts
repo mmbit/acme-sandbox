@@ -32,6 +32,7 @@ import { findAgent } from '../jobs.ts';
 import { keysAgent } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import * as watchalong from '../watchalong.ts';
+import * as watchturns from '../watchturns.ts';
 import { regionOf } from '../region.ts';
 import type { Region } from '../../../../shared/watchalong/mirror.ts';
 import { BOARD, row, summary, type Page } from './book.ts';
@@ -226,7 +227,7 @@ async function cutOf(call: number, from: string, region: Region) {
       400,
       "from: 'note 3' (one of the board's notes on this call) or a moment of the shown screen ('now', '-20s', '17:03:12', '#12')",
     ] as Refused;
-  const got = await watchalong.screen({ purpose: 'call', ref: String(call), at: from, region });
+  const got = await watchturns.screen({ purpose: 'call', ref: String(call), at: from, region });
   if (Array.isArray(got)) return [got[0], got[1]] as Refused;
   const shot = (got as { picture?: { data: string } }).picture;
   if (!shot) return [404, watchalong.NOTHING] as Refused;

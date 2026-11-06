@@ -14,6 +14,7 @@ const guestbooks = await import('./notebookguests.ts');
 const members = await import('./notebookmembers.ts');
 const sending = await import('./notebooksend.ts');
 const sheets = await import('./ink/booksheets.ts');
+const feedback = await import('./feedback.ts');
 const { SEND_MS } = await import('./ink/booknotes.ts');
 const api = '/guest/notebooks/api';
 const stroke = {
@@ -502,3 +503,37 @@ async function assertOutsideSketchbook(
   assert.deepEqual(h.db.prepare('select * from book_pages where id = ?').get(page), before);
   assert.deepEqual(scrapFiles(page), files);
 }
+
+// (a reply goes as its writer's: their grant on the group and its note, an outside reviewer's in the agent's brief, never
+// the board's word or judged as the board's: notebooksend.ts replyTo, who === by for a member.)
+test("an invited guest's reply under an answer is kept as theirs, not the board's", async () => {
+  const book = await create('invited', ['Dora']);
+  const dora = await signIn(book.people[0].link);
+  const page = book.pages[0].id;
+  const created = (await dora(`${api}/groups/create`, note(page, 'Is this the final colour?'))).body;
+  assert.equal((await dora(`${api}/pages/send`, { id: page })).status, 200);
+  sheets.deliverDue(Date.now() + SEND_MS);
+  const sent = h.db
+    .prepare(
+      `select n.review, s.job from notebook_groups g join book_notes n on n.id = g.note
+    join book_sheets s on s.id = n.sheet where g.id = ?`,
+    )
+    .get(created.id) as { review: number; job: number };
+  const job = await h.claimJob(sent.job);
+  assert.equal((await h.agent('answer', job.token, { note: sent.review, text: 'Not yet: two to pick.' })).status, 200);
+  await h.finish(job);
+  const answer = (await dora(`${api}/pages/groups?page=${page}`)).body.groups[0].children[0];
+  const replied = await dora(`${api}/groups/reply`, { answer: answer.id, words: 'The warmer one, please' });
+  assert.equal(replied.status, 200);
+  sheets.deliverDue(Date.now() + SEND_MS);
+  const who = members.whoOf(guestbooks.pageMember(page, 'Dora')!);
+  const kept = h.db
+    .prepare(
+      `select g.by, n.by note_by, r.* from notebook_groups g join book_notes n on n.id = g.note
+    join review_notes r on r.id = n.review where g.id = ?`,
+    )
+    .get(replied.body.id) as any;
+  assert.deepEqual([kept.by, kept.note_by, kept.author], [who, who, 'Dora']);
+  assert.match(feedback.noteText(kept), /an outside reviewer/);
+  assert.doesNotMatch(feedback.noteText(kept), /The warmer one/);
+});

@@ -113,7 +113,6 @@ export const nl = {
   inkYellow: 'Geel',
   inkPink: 'Roze',
   redo: 'Opnieuw',
-  undoRedo: 'Ongedaan maken en opnieuw',
   preferences: 'Voorkeuren',
   notebookPages: 'De pagina’s van het notitieboek',
   notebookPagesAt: 'De pagina’s van het notitieboek: {page}',
@@ -259,5 +258,10 @@ export const nl = {
     ended: 'Het gesprek is afgelopen.',
     micDenied: 'De microfoon startte niet. Sta hem toe in de instellingen van je browser en probeer het opnieuw.',
     dropped: 'De verbinding viel weg. Probeer het opnieuw.',
+  },
+  screen: {
+    pause: 'Pauze',
+    resume: 'Weer laten zien',
+    watched: '{agent} ziet je scherm',
   },
 };

@@ -113,7 +113,6 @@ export const de = {
   inkYellow: 'Gelb',
   inkPink: 'Rosa',
   redo: 'Wiederholen',
-  undoRedo: 'Rückgängig und wiederholen',
   preferences: 'Einstellungen',
   notebookPages: 'Die Seiten des Notizbuchs',
   notebookPagesAt: 'Die Seiten des Notizbuchs: {page}',
@@ -260,5 +259,10 @@ export const de = {
     micDenied:
       'Das Mikrofon ist nicht angegangen. Erlaube es in den Einstellungen deines Browsers und versuch es noch einmal.',
     dropped: 'Die Verbindung ist abgebrochen. Versuch es noch einmal.',
+  },
+  screen: {
+    pause: 'Pause',
+    resume: 'Wieder zeigen',
+    watched: '{agent} sieht deinen Bildschirm',
   },
 };

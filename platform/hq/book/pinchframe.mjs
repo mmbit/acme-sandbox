@@ -1,11 +1,13 @@
 // book-check.mjs's story of the pinch on the book's frame (README, The book's frame): only the page pinch-zooms. On
 // journal.mjs's My journal on a phone by finger (390 × 844, a home-screen app's blur at the top) and on an iPad mini
 // on its side, at every point of the screen over the book, the islands, the gaps in and round them and each card they
-// open (the pen's colours, the dots menu, the preferences and the pages' list), the touch-action the browser goes by
-// leaves the screen's own zoom out: a pinch there can't zoom the controls off the screen. Beside the book on the iPad,
+// open (the dots menu, the preferences and the pages' list; on a scrap opened, the pen's colours), the touch-action
+// the browser goes by leaves the screen's own zoom out: a pinch there can't zoom the controls off the screen.
+// (the pen's colours on an opened scrap) Beside the book on the iPad,
 // HQ's own page still pinch-zooms as it did.
 import assert from 'node:assert/strict';
-import { MINI, PREFERENCES, until } from './kit.mjs';
+import { MINI, PREFERENCES, middleOf, openScrap, until } from './kit.mjs';
+import { paperBox } from './mouse.mjs';
 import { CALLS, landed, onJournal } from './journal.mjs';
 import { SIZES } from './bookmarks.mjs';
 
@@ -41,13 +43,6 @@ async function walk(p, c, name, press, beside = false) {
   await landed(p, 'calls', `Call ${CALLS}`, `${CALLS} / ${CALLS}`, `${name}: the book opens on Calls' last page`);
   await noPinch(p, `${name}: the book at rest`);
   if (beside) assert.ok((await pinched(p)).hq > 0, `${name}: HQ's page beside the book still pinch-zooms`);
-  // the pen's colours (the pen picked, then pressed again)
-  const pen = keys.getByRole('button', { name: 'Pen', exact: true });
-  await until(async () => (await p.locator('#book .bk-palette').count()) || (await press(pen), false), 'the colours');
-  await noPinch(p, `${name}: the pen's colours open`);
-  await c.shot(`pinch-${name}-colours`, p);
-  await p.keyboard.press('Escape');
-  await p.locator('#book .bk-palette').waitFor({ state: 'detached' });
   // the dots menu, then the preferences from it
   await press(p.locator('#book .bk-more'));
   await p.locator('#book .bk-more-card').waitFor();
@@ -63,6 +58,13 @@ async function walk(p, c, name, press, beside = false) {
   await p.locator('#book .bk-pages-menu').waitFor();
   await noPinch(p, `${name}: the pages' list open`);
   await c.shot(`pinch-${name}-pages`, p);
+  await p.keyboard.press('Escape');
+  // the pen's colours on a scrap opened by a finger's tap (the pen picked, then pressed again)
+  await openScrap(p, { tap: ([x, y]) => p.touchscreen.tap(x, y) }, undefined, middleOf(await paperBox(p)));
+  const pen = keys.getByRole('button', { name: 'Pen', exact: true });
+  await until(async () => (await p.locator('#book .bk-palette').count()) || (await press(pen), false), 'the colours');
+  await noPinch(p, `${name}: the pen's colours open`);
+  await c.shot(`pinch-${name}-colours`, p);
 }
 
 // Nothing of the book's under any point lets the browser pinch-zoom the screen

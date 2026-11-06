@@ -1,4 +1,4 @@
-// The marks on a call's page its agent heard (callguests.ts markForVoice): who, and the group as it was (bookseen.ts
+// The marks on a call's page its agent heard (callmarks.ts markForVoice): who, and the group as it was (bookseen.ts
 // drawnOf), so its seen tick (groupanswers.ts seenTick) holds until more is drawn on it.
 import { db } from '../db.ts';
 import { drawnOf } from './bookseen.ts';

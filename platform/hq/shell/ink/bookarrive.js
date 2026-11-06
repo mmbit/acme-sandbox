@@ -7,6 +7,8 @@ import { boundsOf } from './bookselectmath.js';
 import { keyOf, landing } from './bookgroupmath.js';
 import { bringIntoSight } from './bookgroupshow.js';
 import { isCanvas } from './sketchcanvas.js';
+import { fitted } from './bookunits.js';
+import { PAD } from './booktexts.js';
 import { picture } from '../../util.js';
 
 // each group arriving at once lands this long after the one before (ms); a picture not loaded within LOAD_MS lands
@@ -98,8 +100,12 @@ async function landGroup(book, view, els, delay) {
   unseen.forEach(a => a.cancel());
   for (const el of bits)
     el.animate({ opacity: [0, 0, 1], offset: [0, 0.55, 1] }, { duration: LAND_MS, delay, fill: 'backwards' });
-  const extent = boundsOf(things, t => wordsBox(view, t));
-  if (extent && !book.away && !view.el.hidden) await land(...thingsPicture(view, things, extent, book.scale), delay);
+  const extent = boundsOf(things, t => wordsBox(view, t)),
+    // (on its card as the grid shows it.)
+    fit = fitted(page, els[0].g),
+    card = fit && { fit, o: page.origins.get(els[0].g) };
+  if (extent && !book.away && !view.el.hidden)
+    await land(...thingsPicture(view, things, extent, book.scale, card), delay);
   for (const el of els) page.landing.delete(keyOf(el));
   if (extent) view.redraw(extent);
   showWords(view);
@@ -112,16 +118,13 @@ async function loaded(scraps) {
     pictures = scraps.map(s => (s.img ?? picture(s.url)).decode().catch(() => {}));
   await Promise.race([Promise.all(pictures), wait]);
 }
-// A box of words as the page shows it (page px): its box's, or one line at its place before it has one
+// A box of words in the page's own px (as setBox lays it, before a fitted card shrinks it: thingsPicture fits it to
+// the card): its box's size at its place, or one line there before it has one.
 function wordsBox(view, t) {
   const box = [...view.el.querySelectorAll(':scope > .bk-typed')].find(b => keyOf(b.typed) === keyOf(t));
   if (!box) return { x0: t.x, y0: t.y, x1: t.x + t.w, y1: t.y + LINE_PX };
-  return {
-    x0: box.offsetLeft,
-    y0: box.offsetTop,
-    x1: box.offsetLeft + box.offsetWidth,
-    y1: box.offsetTop + box.offsetHeight,
-  };
+  const [x0, y0] = [t.x - PAD, t.y - PAD];
+  return { x0, y0, x1: x0 + box.offsetWidth, y1: y0 + box.offsetHeight };
 }
 // The page's boxes of words shown, but those landing (booktexts.js hides one made meanwhile)
 const showWords = view => {

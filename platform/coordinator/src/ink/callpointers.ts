@@ -1,12 +1,14 @@
 // Pointer ink on a live call's notes page: what the board (or its guest) draws there on an artifact of the call's
-// agent, one of its scraps or versions, or on a prototype from another screen, points while it talks; it's no note of
-// its own. It reaches the call's agent as a mark once the drawing rests (callguests.ts markForVoice, HQ's calldraw.js
+// agent, one of its scraps or versions, points while it talks; it's no note of
+// its own. It reaches the call's agent as a mark once the drawing rests (callmarks.ts markForVoice, HQ's calldraw.js
 // relayMarks), never a judge or a run of its own (bookjudge.ts leaves a call's page be), and once the agent's turn on it
 // is done it goes (clear, from the voice line): the agent keeps what it settled in its own notes. What the board draws
 // on the page beside them is its own and stays.
 //   - On the agent's scrap: the strokes drawn on it by someone else are kept here (ink), and only those go.
-//   - A reply on one of its versions (notebooksend.ts replyTo), and a mark on a prototype from a screen that isn't the
-//     call's (callprototypes.ts markOnCall), are pointer ink whole (whole): the group goes.
+//   - A reply on one of its versions (notebooksend.ts replyTo) is pointer ink whole (whole): the group goes. After the
+//     call, such a reply with ink alone stays on the page, no note (notebooksend.ts replyTo).
+// (A pen on a prototype from another screen is no ink on the page at all: a note of the call's, callprototypes.ts
+// markOnCall.)
 import { db } from '../db.ts';
 import { pageRow } from '../notebook.ts';
 import { partsOf, putAside, row, write, type Group } from '../notebookgroups.ts';

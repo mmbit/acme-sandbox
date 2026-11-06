@@ -7,8 +7,7 @@ import { fileURLToPath } from 'node:url';
 // intake-check and intercom-badge-check.
 //   - heard(path, body, picture): each POST as it comes in, before the play answers it. picture is true for an upload
 //     to /api/notebooks/pictures, and its body is then { bytes, type }.
-//   - bytes(): a picture's bytes the browser didn't hand over (WebKit gives a blob's body as null).
-export function notebookRoute(r, play, { heard, bytes } = {}) {
+export function notebookRoute(r, play, { heard } = {}) {
   const req = r.request(),
     url = new URL(req.url()),
     path = url.pathname,
@@ -17,7 +16,7 @@ export function notebookRoute(r, play, { heard, bytes } = {}) {
     req.method() !== 'POST'
       ? undefined
       : picture
-        ? { bytes: req.postDataBuffer() ?? bytes?.(), type: req.headers()['content-type'] }
+        ? { bytes: req.postDataBuffer(), type: req.headers()['content-type'] }
         : req.postDataJSON();
   if (body) heard?.(path, body, picture);
   try {

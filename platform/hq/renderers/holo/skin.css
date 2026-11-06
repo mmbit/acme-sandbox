@@ -71,8 +71,8 @@ body { font-weight: 500; }
 #card { background: rgba(5, 20, 28, .75); }
 /* the shared controls (controls.css) in the deck's cyan, the Notebook's too (--ui-*: shell/ink/bookui.css): its pressed
    tool and the one to press lit in it, its cards on a solid deck panel, since nothing blurs the paper under them. The
-   tools' island, the bar and Undo and Redo's pill are glass (shell/ink/bookstrip.css), lit along their top edge in the cyan, dimming the page they let through. (the pill) */
-body ~ #book :is(.bk-strip, .bk-bar, .bk-undo-pill) { --bk-glass-sheen: rgba(110, 225, 255, .35); --bk-glass-frost: blur(16px) saturate(1.3) brightness(.45); }
+   tools' island and the bar are glass (shell/ink/bookstrip.css), lit along their top edge in the cyan, dimming the page they let through. */
+body ~ #book :is(.bk-strip, .bk-bar) { --bk-glass-sheen: rgba(110, 225, 255, .35); --bk-glass-frost: blur(16px) saturate(1.3) brightness(.45); }
 body, #book { --ui-bg: #0a2a36; --ui-lit: var(--cy); --ui-on-lit: var(--scr-ink); --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, .14); --cy-glow: 0 0 12px rgba(110, 225, 255, .45);
   --glass: rgba(6, 26, 36, .62); --alarm: #ff6b7a; --alarm-ink: #ffd6db; --alarm-fill: rgba(255, 107, 122, .16);
   --cy-on: rgba(110, 225, 255, .24); --cy-on-inset: inset 0 0 12px rgba(110, 225, 255, .25); --cy-tint: rgba(110, 225, 255, .18); --cy-pale: #bff4ff;

@@ -81,10 +81,12 @@ async function throwAndUndo(page, play, c, hand) {
   assert.ok(!(await clipped(page)).includes(WAVE), 'its card goes with its group at once');
   fellAway(answer, 'the group');
   assert.ok(answer.length <= 2000, `over within two seconds (${answer.length} ms)`);
-  await page.locator('#toasts .toast', { hasText: 'Deleted' }).waitFor();
+  const toast = page.locator('#toasts .toast', { hasText: 'Deleted' });
+  await toast.waitFor();
   await until(() => !ids(play, NEWEST).includes(WAVE), 'the group deleted in the store');
   await c.shot('notebook-mini-deleted', page);
-  await page.locator('#book').getByRole('button', { name: 'Undo' }).filter({ visible: true }).first().tap();
+  // (its toast's Undo, a tap on it: the grid has no Undo key of its own.)
+  await toast.locator('button.cover').tap();
   await until(() => ids(play, NEWEST).includes(WAVE), 'Undo restores it in the store');
   await until(async () => (await clipped(page)).includes(WAVE), 'and its card is back');
 }
@@ -185,6 +187,8 @@ async function moveAndUndo(page, play, mouse) {
   await page.locator('#book .bk-sel-bar').getByRole('button', { name: 'Move to page…', exact: true }).click();
   await page.locator(`#book [role=menu] [data-page="${SECOND}"]`).click();
   await until(() => group(play, WAVE)?.page === SECOND, 'the group moved in the store');
+  // (told here once the move is a step: the store's answer reaches the page after the store has moved it.)
+  await page.locator('#toasts .toast', { hasText: 'Moved to' }).waitFor();
   // (Undo while it's open: the move is the opened scrap's step, as its lines are)
   await page.mouse.move(sheet.x + sheet.width / 3, sheet.y + sheet.height / 2);
   await page.keyboard.press('Control+z');

@@ -156,10 +156,16 @@
 /* A page the whole screen, the book landed (the spread): folded in against its left edge, all alike, slivers as far
    out each with its icon clear of the edge, their free ends on the right; their fold in played as it lands. A tap or
    a pull brings them out over the margin, the page's own a little longer; folded away again once one is picked or the
-   page is touched. (book.js's data-whole) */
+   page is touched. Bigger than beside HQ's page, so a phone's are easy to see and to hit, the folded slivers out a
+   little further than the pull tab a clear gap below them and just short of the grid's first column (bookunits.js INSET). (book.js's data-whole) */
 #book[data-whole] .bk-marks {
-  --bk-mk-out: 56px;
-  --bk-mk-fold: 27px;
+  --bk-mk-out: 68px;
+  --bk-mk-fold: 32px;
+  --bk-mk-thick: 48px;
+}
+#book[data-whole] .bk-mk-icon {
+  width: 22px;
+  height: 22px;
 }
 /* (out of the block while it swings by the folded tabs' own translate, the tabs placed by the nav, so landing leaves
      their translate nothing to ease: only their fold in plays) */
@@ -191,7 +197,12 @@
   translate: calc(var(--bk-mk-fold) - var(--bk-mk-out)) 0;
   filter: drop-shadow(1px 1px 0.6px rgba(42, 35, 82, 0.2)) drop-shadow(1px 2px 3px rgba(42, 35, 82, 0.14));
 }
+/* (folded, a finger's reach is the sliver itself and its gaps, never past it over the grid's column a few px on,
+   bookunits.js INSET: a tap on a card's edge is the card's.) */
 #book[data-whole][data-mode='spread'] .bk-marks button::after {
+  inset: calc(var(--bk-mk-gap) / -2) 0;
+}
+#book[data-whole][data-mode='spread'] .bk-marks[data-out] button::after {
   inset: calc(var(--bk-mk-gap) / -2) -18px calc(var(--bk-mk-gap) / -2) 0;
 }
 #book[data-whole][data-mode='spread'] .bk-marks[data-out] button {

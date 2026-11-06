@@ -210,8 +210,14 @@ export async function onPaper(page, selector) {
     `on the paper, clear of the tools: ${JSON.stringify({ boxes, desk, tools })}`,
   );
 }
-// (where the tools' island starts, screen px.)
-const toolsLeft = page => page.locator('#book .bk-strip').evaluate(el => el.getBoundingClientRect().left);
+// (where the tools' island starts, screen px: the paper's right side where none shows, as on a page of scraps.
+const toolsLeft = page =>
+  page.evaluate(() => {
+    const strip = document.querySelector('#book .bk-strip');
+    return strip.checkVisibility()
+      ? strip.getBoundingClientRect().left
+      : document.querySelector('#book .bk-desk').getBoundingClientRect().right;
+  });
 // A stroke in screen px, as Safari hands a pen's over (or a mouse's, on a desktop); pace: ms between its points, as a
 // hand draws it (0, at once)
 export async function stroke(page, points, type = 'pen', pace = 0) {

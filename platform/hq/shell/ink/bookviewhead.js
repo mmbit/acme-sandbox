@@ -4,7 +4,7 @@
 // It takes no press: the page under it is drawn on as anywhere, and the title is renamed from the dots menu's Rename
 // page (bookcontrols.js, booktitle.js). A page turn's picture carries it with the page it shows (bookflip.js).
 import { dayWords, nameOf } from './bookhead.js';
-import { viewOf } from './bookview.js';
+import { contentOf, viewOf } from './bookview.js';
 import { icon } from '../icons.js';
 
 // book (bookpages.js). Returns { el, update(), locked(on) }: el, the head, where the rename's field is written
@@ -81,7 +81,7 @@ function under(book, page, h) {
   const s = book.scale,
     box = {
       x0: book.pan.x,
-      x1: book.pan.x + (book.size.w - book.size.right) / s,
+      x1: book.pan.x + contentOf(book).w / s,
       y0: book.pan.y,
       y1: book.pan.y + h / s,
     },

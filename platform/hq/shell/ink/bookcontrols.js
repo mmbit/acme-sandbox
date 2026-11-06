@@ -2,14 +2,14 @@
 // - In its middle: the page before, where the page is in its chapter ("3 / 12") and the page after. "3 / 12" opens the
 //   notebook's pages by name.
 // - At its left the overview (on a page only: the overview shows all the pages already, a page opens by its tile), at
-//   its right the dots. New page folds into the dots menu. Undo and Redo are a pill of their own left of the bar
-//   (bookui.js).
+//   its right the dots. New page folds into the dots menu. A guest's Undo of its send is a pill of its own left of
+//   the bar (bookui.js).
 // - The dots menu: Rename page (its title written where it shows, booktitle.js), Tear off and send (booktear.js),
 //   Archive this page (into the overview's archived pages, bookshelf.js) and Give a copy… (to a guest, bookgive.js).
 //   Then Preferences for this device (bookprefs.js).
 // The page's name is its title, fixed on the view (bookviewhead.js), and its control's label. The board's page goes by
-// tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: the tools go, Undo and Redo with
-// them, and on a sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
+// tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: its scraps' tools go, and on a
+// sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
 // person's page goes by its Send key on the bar (bookpagesend.js), never on a page already sent or a call's notes page.
 import { button, island, beside, moreKey } from './bookui.js';
 import { icon } from '../icons.js';
@@ -59,7 +59,7 @@ export function mountControls(book, act) {
       locked?.(still && page);
       // (a locked page takes no change, but a guest's send can still be taken back; once sent, no Tear off and send:
       // booktear.js)
-      historyKeys(book, page, still);
+      historyKeys(book, page);
       book.tear?.();
       if (archive) archive.hidden = far || !page;
       give?.(far, page);
@@ -75,11 +75,12 @@ export function mountControls(book, act) {
     },
   };
 }
-// Undo and Redo, hidden on a locked page (still), unless it's a guest's page whose send can still be taken back: in its
-// seconds to undo, its step still there (bookpagesend.js).
-function historyKeys(book, page, still) {
+// The bar's Undo, only on a guest's page whose send can still be taken back: in its seconds to undo, its step still
+// there (bookpagesend.js). The page itself takes no ink, so drawing's Undo and Redo are an opened scrap's
+// (bookscrapopen.js), the keys' on the page too.
+function historyKeys(book, page) {
   const undoable = !!scope && !!page?.sending && book.steps.some(s => s.page === page);
-  for (const b of island('history').children) b.hidden = still && !undoable;
+  for (const b of island('history').children) b.hidden = !undoable;
 }
 // Rename page, first of the page's rows in the dots menu (bookui.js): the title written where it shows, on the view
 // (bookviewhead.js), the focus going back to the dots as it ends. Returns update(far, page): the overview open or the

@@ -94,43 +94,29 @@ function absentHelperCase() {
   );
 }
 
-test('browser test areas receive executable runtime assets and their shared libraries, while other areas do not', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'tests-browsers-'));
-  const browsers = join(directory, 'ms-playwright');
-  const shell = 'chromium_headless_shell-fixture/chrome-headless-shell-linux64/chrome-headless-shell';
-  mkdirSync(join(browsers, shell, '..'), { recursive: true });
-  cpSync('/bin/true', join(browsers, shell));
-  for (const name of ['chromium-fixture', 'ffmpeg-fixture']) {
-    mkdirSync(join(browsers, name));
-    cpSync('/bin/true', join(browsers, name, 'unused'));
-  }
-  writeFileSync(join(browsers, shell, '..', 'runtime-resource'), 'needed by the shell');
-  const env = { ...(await playedHq()), TESTS_BROWSERS_PATH: browsers };
-  const bootstrap = {
-    'shared/gates/tests-on-helper.sh':
-      'export BROWSER_ASSETS="$PWD/../ms-playwright" BROWSER_LIBRARIES="$PWD/../tools"\n' + ON_HELPER,
+test('tests that launch a browser receive its runtime assets and shared libraries, in any area, and others do not', async () => {
+  const { directory, env, bootstrap, check, shell, full } = await browsersCase();
+  const cases = {
+    'kits/pages/browser.test.ts': check("import './page.ts';", shell, full),
+    'kits/prints/render.test.ts': check("import './for-tests.ts';", full, shell),
   };
-  const check = `import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-test('the bundled runtime starts with its libraries', () => {
-  const assets = process.env.BROWSER_ASSETS;
-  const tools = process.env.BROWSER_LIBRARIES;
-  assert.ok(existsSync(tools + '/libc.so.6'));
-  assert.ok(existsSync(assets + '/chromium_headless_shell-fixture/chrome-headless-shell-linux64/runtime-resource'));
-  assert.equal(existsSync(assets + '/chromium-fixture'), false);
-  assert.equal(existsSync(assets + '/ffmpeg-fixture'), false);
-  execFileSync(assets + '/${shell}', { env: { LD_LIBRARY_PATH: tools } });
-});
-`;
-  const browser = clone(
-    { ...bootstrap, 'platform/coordinator/browser.test.ts': check },
-    { 'platform/coordinator/notes.md': 'touched\n' },
-  ).run(env, 'tests.ts', ['--helper']);
-  assert.equal(browser.status, 0, browser.out);
-  assert.match(browser.out, /1 passed/);
-  assert.doesNotMatch(browser.out, /failing|flaky/);
+  // (the shell three files deep, as a page's check reaches it through a demo)
+  const helpers = {
+    'kits/pages/page.ts': "import '../../shared/demo/core.mjs';\n",
+    'shared/demo/core.mjs': "import '../browser/browser.mjs';\n",
+    'kits/prints/for-tests.ts': "export const BROWSER = 'chrome-linux64/chrome';\n",
+  };
+  for (const [file, text] of Object.entries(cases)) {
+    const area = file.split('/').slice(0, 2).join('/');
+    const browser = clone({ ...bootstrap, ...helpers, [file]: text }, { [area + '/notes.md']: 'touched\n' }).run(
+      env,
+      'tests.ts',
+      ['--helper'],
+    );
+    assert.equal(browser.status, 0, browser.out);
+    assert.match(browser.out, /1 passed/);
+    assert.doesNotMatch(browser.out, /failing|flaky/);
+  }
   for (const area of ['kits/adds', 'shared/chromium', 'shared/watchalong']) {
     const ordinary = clone(
       {
@@ -144,6 +130,55 @@ test('the bundled runtime starts with its libraries', () => {
     assert.match(ordinary.out, /1 passed/);
   }
 });
+
+test("a base comparison gets the browsers the base's tests launch, so a push's test that drops its own still fails", async () => {
+  const { env, bootstrap, check, shell, full } = await browsersCase();
+  const ran = clone(
+    { ...bootstrap, 'kits/pages/browser.test.ts': check("import '../../shared/browser/browser.mjs';", shell, full) },
+    { 'kits/pages/browser.test.ts': check('', shell, full) },
+  ).run(env, 'tests.ts', ['--helper']);
+  assert.equal(ran.status, 1, ran.out);
+  assert.match(ran.out, /1 failing/);
+  assert.doesNotMatch(ran.out, /on main too/i);
+});
+
+// A worker's browsers (a headless shell, full Chromium and an asset no test needs), the bootstrap that names where the
+// helper finds them, and a check that `has` came and `lacks` didn't.
+async function browsersCase() {
+  const directory = mkdtempSync(join(tmpdir(), 'tests-browsers-'));
+  const browsers = join(directory, 'ms-playwright');
+  const shell = 'chromium_headless_shell-fixture/chrome-headless-shell-linux64/chrome-headless-shell';
+  const full = 'chromium-fixture/chrome-linux64/chrome';
+  for (const binary of [shell, full]) {
+    mkdirSync(join(browsers, binary, '..'), { recursive: true });
+    cpSync('/bin/true', join(browsers, binary));
+  }
+  mkdirSync(join(browsers, 'ffmpeg-fixture'));
+  cpSync('/bin/true', join(browsers, 'ffmpeg-fixture', 'unused'));
+  writeFileSync(join(browsers, shell, '..', 'runtime-resource'), 'needed by the shell');
+  const env = { ...(await playedHq()), TESTS_BROWSERS_PATH: browsers };
+  const bootstrap = {
+    'shared/gates/tests-on-helper.sh':
+      'export BROWSER_ASSETS="$PWD/../ms-playwright" BROWSER_LIBRARIES="$PWD/../tools"\n' + ON_HELPER,
+    'shared/browser/browser.mjs': 'export const playwright = () => null;\n',
+  };
+  const check = (asks: string, has: string, lacks: string) => `import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+${asks}
+test('the bundled runtime starts with its libraries', () => {
+  const assets = process.env.BROWSER_ASSETS;
+  const tools = process.env.BROWSER_LIBRARIES;
+  assert.ok(existsSync(tools + '/libc.so.6'));
+  assert.ok(existsSync(assets + '/${has.split('/')[0]}'));
+  assert.equal(existsSync(assets + '/${lacks.split('/')[0]}'), false);
+  assert.equal(existsSync(assets + '/ffmpeg-fixture'), false);
+  execFileSync(assets + '/${has}', { env: { LD_LIBRARY_PATH: tools } });
+});
+`;
+  return { directory, env, bootstrap, check, shell, full };
+}
 
 test('a missing required tool stops helper bundling instead of counting as a failure shared with main', async () => {
   const bin = mkdtempSync(join(tmpdir(), 'tests-missing-tool-'));

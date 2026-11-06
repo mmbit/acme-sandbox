@@ -17,7 +17,7 @@ export function seatStatusWords(status: SeatStatus, at: (ms: number) => string) 
     return `${running}. New work waits ${waitsFor}`;
   }
   if (status.admission === 'paced')
-    return `${running}. New non-urgent work waits for pacing${when ? ` until ${when} at current usage` : ''}. Urgent work and board conversations may run`;
+    return `${running}. New non-urgent work waits for pacing${when ? ` until ${when} at current usage` : ''}. Urgent work, a board call's follow-up and board conversations may run`;
   return `${running}. Takes new work within available room`;
 }
 // What a seat with no return time waits for, by its state

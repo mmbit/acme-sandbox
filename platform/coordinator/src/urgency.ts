@@ -30,16 +30,21 @@ const urgentSourceOn = (branchSql: string) => `exists (
   select 1 from jobs source indexed by jobs_work_branch join urgent_work origin on origin.id = source.id
   where ${workBranch('source')} = ${branchSql} and source.kind = 'work' and origin.urgent)`;
 
+// A board call's follow-up (the job its call records: ledger.ts calls.job) is urgent work of its own, so no seat's
+// pacing holds it.
+export const CALL_FOLLOW_UP = (job: string) => `exists (select 1 from calls c where c.job = ${job}.id)`;
+
+// `create view if not exists` keeps a stored definition, so the urgency views are dropped before they're created again.
 // A view on a LEFT JOIN's right side is built whole at each read, so urgent_work joins a job's thread and project
 // itself.
-once('2026-11-04-urgent-work-own-joins', 'drop view if exists urgent_tasks; drop view if exists urgent_work;');
+once('2026-11-05-urgent-work-call-follow-ups', 'drop view if exists urgent_tasks; drop view if exists urgent_work;');
 db.exec(`
   create view if not exists urgent_projects as select id, urgent from projects;
   create view if not exists urgent_threads as
     select t.id, (t.urgent or coalesce(p.urgent, 0)) urgent
     from threads t left join projects p on p.id = t.project;
   create view if not exists urgent_work as
-    select j.id, (j.urgent or coalesce(t.urgent, 0) or coalesce(p.urgent, 0)) urgent
+    select j.id, (j.urgent or coalesce(t.urgent, 0) or coalesce(p.urgent, 0) or ${CALL_FOLLOW_UP('j')}) urgent
     from jobs j left join threads t on t.id = j.thread left join projects p on p.id = t.project;
   create view if not exists urgent_tasks as
     select j.id, (u.urgent or j.expedite or (j.pr is not null and

@@ -29,6 +29,9 @@ export type Event = {
   studio?: unknown;
   prototype?: unknown; // (a call's prototype saved: callprototypes.ts.)
   guest?: { call: number; name: string }; // (someone joined a call's page from its QR code: callguests.ts.)
+  // (a pen on a call's prototype from another screen: a note of the call's, callprototypes.ts markOnCall.
+  note?: { id: number; n: number; page: number; call: number };
+  call?: number; // (the board's call live: its other screens show themselves on it, call.ts.)
 };
 // since: when it set to work on its task (as HQ's world counts it, so one opened mid-job knows too)
 type Lines = { add: number; del: number };

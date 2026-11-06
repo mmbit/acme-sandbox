@@ -28,7 +28,7 @@ export function pageArrowsStories(c) {
 
 // Quick taps on the page before from Calls' last page, a finger's then a pen's (a pen's tap is its press and lift
 // alone: Safari makes no click of some taps), each a page; the bar's box where it was on each page turned
-// to, and on Sketch's open page (Undo and Redo's pill shown) as on a call's locked one (no pill).
+// to, on Sketch's open page as on a call's locked one (Undo and Redo on neither: an opened scrap's.
 const FINGER_TAPS = 4,
   PEN_TAPS = 3;
 // (Calls 14 to 16 sent on, read-only: the finger's taps end on one)
@@ -60,10 +60,6 @@ const tapsTurn = (browser, c, viewport, name) =>
     await landed(p, 'sketch', 'Ideas', '1 / 2', `${name}: Sketch`);
     bars.push(await barOf(p, 'Ideas'));
     await c.shot(`pagearrows-${name}-sketch`, p);
-    assert.ok(
-      bars.some(b => b.pill) && bars.some(b => !b.pill),
-      `${name}: a page with Undo and Redo and one without: ${JSON.stringify(bars)}`,
-    );
     for (const b of bars) assert.deepEqual(b.box, bars[0].box, `${name}: the bar on ${b.page} where it was`);
     await overview(p, c, name);
   });
@@ -76,9 +72,7 @@ async function overview(p, c, name) {
   await p.waitForTimeout(800);
   await c.shot(`pagearrows-${name}-overview`, p);
   const keys = await p.evaluate(
-    () =>
-      [...document.querySelectorAll('#book :is(.bk-bar, .bk-undo-pill) .bk-btn')].filter(b => b.checkVisibility())
-        .length,
+    () => [...document.querySelectorAll('#book .bk-bar .bk-btn')].filter(b => b.checkVisibility()).length,
   );
   assert.equal(keys, 0, `${name}: the overview with no bar`);
   await tile.tap();
@@ -90,16 +84,9 @@ const lockedJournal = () => {
   for (const page of notebooks.pages.filter(pg => pg.kind === 'call').slice(LOCKED[0] - 1, LOCKED[1])) page.send_at = 1;
   return { hasTouch: true, notebooks };
 };
-// The bar's box on the screen (px) and whether Undo and Redo's pill shows, page named
+// The bar's box on the screen (px), page named
 const barOf = (p, page) =>
-  p.evaluate(
-    page => ({
-      page,
-      box: document.querySelector('#book .bk-bar').getBoundingClientRect().toJSON(),
-      pill: !!document.querySelector('#book .bk-undo-pill')?.checkVisibility(),
-    }),
-    page,
-  );
+  p.evaluate(page => ({ page, box: document.querySelector('#book .bk-bar').getBoundingClientRect().toJSON() }), page);
 
 const within = (browser, c, viewport, name, options) =>
   onJournal(browser, c, { viewport, name, options, story: 'pagearrows' }, (p, { press, tab: pick }) =>

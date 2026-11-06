@@ -14,6 +14,7 @@ import * as ledger from './ledger.ts';
 import * as review from './review.ts';   // (reach)
 import * as pictures from './pictures.ts';
 import * as watchalong from './watchalong.ts';
+import { publish } from './events.ts';
 import * as walks from './walkthroughs.ts';
 import * as goingon from './goingon.ts';
 import * as forecast from './forecast.ts';
@@ -78,12 +79,15 @@ export function context(agent: string, lang: string, request = 0, again = '', ph
   const token = randomBytes(32).toString('base64url');
   db.prepare('delete from call_tokens where expires < ?').run(Date.now() - 86400e3);
   const earlier = unfinished(agent);
-  const call = Number(db.prepare("insert into calls (ts, agent, request, lines, status, resumes) values (?, ?, ?, '[]', 'live', ?)")
-    .run(new Date().toISOString(), agent, req?.id ?? null, earlier.length ? JSON.stringify(earlier) : null).lastInsertRowid);
+  // (phone)
+  const call = Number(db.prepare("insert into calls (ts, agent, request, lines, status, resumes, phone) values (?, ?, ?, '[]', 'live', ?, ?)")
+    .run(new Date().toISOString(), agent, req?.id ?? null, earlier.length ? JSON.stringify(earlier) : null, phone ? 1 : 0).lastInsertRowid);
   walks.begin(call, req?.id ?? 0, walk);
   const p = heard(prompt(spoken(lang), agent, req, 0, phone, earlier, call));
   db.prepare('insert into call_tokens (hash, agent, expires, call, listed) values (?, ?, ?, ?, ?)')
     .run(sha256(token), agent, Date.now() + CALL_MS, call, JSON.stringify(p.listed));
+  // (the board's other HQ screens show themselves on it: watchalong.ts startOnScreen.
+  if (!phone) publish({ type: 'book', text: 'call', call });
   // call: HQ watches its follow-up by it. key: HQ's picture uploads for this call carry it (pictures.ts)
   return { prompt: p.text, token, call, key: pictures.callKey(sha256(token)), voice: who.voice, ...callModel(), ...line() };
 }
@@ -156,6 +160,10 @@ function heard(p: { text: string; listed: { id: number; end: number }[] }) {
   const text = fit(p.text);
   return { text, listed: p.listed.filter(l => text.startsWith(p.text.slice(0, l.end))).map(l => l.id) };
 }
+// The board's call live now on HQ, the newest (its other screens show themselves on it: watchalong.ts startOnScreen),
+// never one on the phone line, where nobody looks at a screen.
+// (phone)
+export const liveNow = () => db.prepare("select id, agent from calls where status = 'live' and phone = 0 order by id desc limit 1").get() as { id: number; agent: string } | undefined;
 export const callAgent = (token: string) => token ? db.prepare('select agent, call, listed from call_tokens where hash = ? and expires > ?')
   .get(sha256(token), Date.now()) as { agent: string; call: number | null; listed: string } | undefined : undefined;
 

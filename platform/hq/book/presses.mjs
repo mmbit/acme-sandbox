@@ -22,12 +22,14 @@ export function pressesStories(c) {
 const AT_ONCE_MS = 250,
   FALLEN_MS = [500, 2000];
 
-// What the page hears: each press's time (a click, as the book hears it), and when each sound the sound kit plays is
-// heard (a stereo buffer started: audio.js sample(); the rain's noise is mono)
+// What the page hears: each press's time, as it goes down (a finger's tap on the page's arrows is answered on its lift,
+// before its click: bookcontrols.js onEveryTap), or a click made by the story's script, and when each sound the sound
+// kit plays is heard (a stereo buffer started: audio.js sample(); the rain's noise is mono)
 function listen() {
   window.presses = [];
   window.heard = [];
-  addEventListener('click', () => window.presses.push(performance.now()), { capture: true });
+  addEventListener('pointerdown', () => window.presses.push(performance.now()), { capture: true });
+  addEventListener('click', e => e.isTrusted || window.presses.push(performance.now()), { capture: true });
   const start = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function (when = 0, ...rest) {
     if (this.buffer?.numberOfChannels === 2)

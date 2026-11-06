@@ -254,12 +254,10 @@ async function thrownAway(s, shot) {
   await until(async () => !(await page.locator(`#book .bk-unit[data-unit="${gid}"]`).count()), 'the card gone');
   await until(() => !groupsOn(page, HERE).some(g => g.id === gid), 'thrown away in the store');
   await shot('thrown');
-  await page.locator('#toasts .toast', { hasText: 'Deleted.' }).waitFor();
-  await page
-    .locator('#book')
-    .getByRole('button', { name: say('undo'), exact: true })
-    .first()
-    .tap();
+  // (the toast's Undo, a tap on it: the grid has no Undo key of its own.)
+  const toast = page.locator('#toasts .toast', { hasText: 'Deleted.' });
+  await toast.waitFor();
+  await toast.locator('button.cover').tap();
   await until(() => groupsOn(page, HERE).some(g => g.id === gid), 'Undo brings it back');
   await page.locator(`#book .bk-unit[data-unit="${gid}"]`).waitFor();
 }

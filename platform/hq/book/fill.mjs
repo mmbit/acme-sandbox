@@ -77,7 +77,6 @@ async function byHand(browser, c, name, viewport, columns) {
     if (columns) await scrapColumns(page, columns);
     await tabsBeside(page, hand, viewport);
     islandsUsable(await islandsSeen(page), 'by hand');
-    await picksByHand(page, hand);
     await oneTitle(page, hand);
     await writes(page, context, hand);
     await edgeDraws(page, context, hand);
@@ -154,15 +153,19 @@ async function scrapColumns(page, columns) {
   assert.equal(found, columns, `${columns} columns of scraps`);
 }
 
-// The Pencil's tap on the first scrap opens it, and its line there is saved as that scrap's ink; Klaar puts it back.
-async function writes(page, context, { pen }) {
-  const [first] = await units(page),
+// The Pencil's tap on the first scrap opens it, its tools picked from by hand, and its line there is saved as that
+// scrap's ink; Klaar puts it back.
+async function writes(page, context, hand) {
+  const { pen } = hand,
+    [first] = await units(page),
     inked = () =>
       context.notebook.route('/api/notebooks/pages/groups', { page: 1 }).groups.find(g => g.id === first.id).ink.length,
     was = inked(),
     { gid, sheet } = await openScrap(page, pen, first.id),
     y = sheet.y + sheet.height * 0.6;
   assert.equal(gid, first.id, 'the scrap tapped opened');
+  // (its tools picked from by hand: an opened scrap's.)
+  await picksByHand(page, hand);
   await pen.stroke(Array.from({ length: 14 }, (_, k) => [sheet.x + 40 + k * 12, y + Math.sin(k / 2) * 6]));
   await until(() => inked() > was, "the Pencil's line saved in the scrap", 8000);
   await closeScrap(page, pen);

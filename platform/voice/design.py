@@ -1,6 +1,6 @@
 """A design session: the board's call as a brainstorm at the table. The board
-asks the agent for one, which turns the call into one with its design_session tool, and back into an ordinary call
-the same way (HQ's one call key). Its page is a free sketch page in the
+asks the agent for one, or the call is one in all but name, and the agent turns it into one with its design_session
+tool, and back into an ordinary call the same way (HQ's one call key). Its page is a free sketch page in the
 Notebook (HQ's), and the agent takes part as one of the people in the room: the words below tell it how, its own
 judgment does the rest. There are no turns: what it hears it may let pass in silence, and its replies with no words
 are fine.
@@ -15,8 +15,8 @@ something writes something back (a stage direction like "(listening)", read alou
 turn: nothing more of the reply is said, and its tool steps after it play no tick, which is for someone waiting on an
 answer (Call.answer).
 A prototype built in the background: the prototype tool with a brief instead of a page. A builder of its own (the CLI
-once, at BUILD_EFFORT, no tools) takes the minutes a good one needs while the call goes on, the page lands on the iPads
-as the agent's would, and the agent's hand goes up for it (Call.build, built)."""
+once, at BUILD_EFFORT, no tools) takes the minutes a good one needs while the call goes on, the page lands on their
+screens as the agent's would, and the agent's hand goes up for it (Call.build, built)."""
 import os, re
 from callnotes import PROTOTYPE_ABOUT, PROTOTYPE_NAME
 
@@ -68,7 +68,7 @@ DESIGN_WORDS = (
     "ones (change_note deletes them), never a second list beside them. The page is about this session's subject: a "
     "fault in our own tools goes on the call's list alone (write_down with page false), not on the page.\n"
     "- Bring your own ideas, and what's been overlooked. Have prototypes built while they talk (prototype with a "
-    "brief): a builder takes the few minutes a good one needs in the background, it lands on their iPads, and your "
+    "brief): a builder takes the few minutes a good one needs in the background, it lands on their screens, and your "
     "hand goes up for it (or, if it fails, to say why). They'd rather wait a few minutes for one that's really good "
     "than have a thin one at once: brief it to be worth playing with, and brief one idea at its heart (a screen or a "
     "flow to feel), never a whole product: a brief for everything at once runs past the quarter of an hour a build may "
@@ -99,11 +99,11 @@ HAND_WORDS = {
               'is down.)',
     # (the line's own hand, for a prototype built in the background: Call.build.)
     'built pause': '(A natural pause now, with your hand up because a prototype you had built is ready: {about}. Say '
-                   "briefly that it's on their iPads, what changed in a next version, and what to try first, if it "
-                   "still fits; if not, say nothing: "
-                   'its card is on their iPads. Your hand is down.)',
+                   "briefly that it's on their screens, what changed in a next version, and what to try first, if it "
+                   "still fits; if not, say nothing: its card is on their screens. Your hand is down.)",
     'built tapped': '(They tapped your raised hand: a prototype you had built is ready: {about}. Say briefly that '
-                    "it's on their iPads, what changed in a next version, and what to try first. Your hand is down.)",
+                    "it's on their screens, what changed in a next version, and what to try first. Your hand is "
+                    'down.)',
     # (and for one that failed: they're waiting for it.)
     'failed pause': "(A natural pause now, with your hand up because a prototype you had built didn't come: {about}. "
                     "Say briefly that it didn't, why, and what you'll do instead, if it still fits; if not, say "
@@ -139,10 +139,10 @@ BRIEF_MOST = 4000
 # The builder's own briefing: the call agent hands it only the brief (and the version before, for a next one).
 BUILD_WORDS = (
     "You build one prototype for a design session in progress: the people in it are talking on while you work, and "
-    "the moment it's done it lands on their iPads to play with. They'd rather wait a few minutes for one that's three "
-    "times as good than get a thin one in seconds, but they're waiting minutes, not a quarter of an hour: the line "
-    "stops a build after that, and nothing lands. A page of about 30 KB is with them in minutes; one of 60 KB runs "
-    "past the quarter hour. So go deep, not wide: the heart of the idea, the moment that makes people show each "
+    "the moment it's done it lands on their screens to play with. They'd rather wait a few minutes for one that's "
+    "three times as good than get a thin one in seconds, but they're waiting minutes, not a quarter of an hour: the "
+    "line stops a build after that, and nothing lands. A page of about 30 KB is with them in minutes; one of 60 KB "
+    "runs past the quarter hour. So go deep, not wide: the heart of the idea, the moment that makes people show each "
     "other, done really well, with simple stand-ins for the rest of a big brief (a few drawn photos, a book's first "
     "pages).\n"
     "What good is here:\n"
@@ -157,7 +157,7 @@ BUILD_WORDS = (
     "- Sound where it adds (Web Audio, synthesised in code, quiet, started by the first tap).\n"
     "- Its words few, in the language the brief gives.\n"
     "The page: one whole HTML page with everything inline (CSS, script, SVG, data URLs). Nothing outside it loads: no "
-    "fonts, scripts or pictures from the web. It fills an iPad in either orientation, held by people at a table, with "
+    "fonts, scripts or pictures from the web. It fits a tablet or phone in either orientation, or a laptop, with "
     "big touch targets and no hover-only parts. Never anyone's real details. It's a throwaway: no build step, no "
     "backend, nothing saved past a reload unless the idea needs localStorage.\n"
     "Answer with the page alone, from <!doctype html> to </html>, then one line after it: what to try first, in the "
@@ -165,7 +165,7 @@ BUILD_WORDS = (
 )
 BUILD_TOOL_WORDS = {
     'started': ("The builder has it and takes the few minutes a good one needs, in the background: it lands on their "
-                "iPads as a card, and your hand goes up for it then. If you haven't yet, say in a sentence that it's "
+                "screens as a card, and your hand goes up for it then. If you haven't yet, say in a sentence that it's "
                 "being made (a next version: what goes in it)."),
     'shape': (f'prototype with a brief takes name (at most {PROTOTYPE_NAME} characters: the same name again builds '
               f'its next version from the last one), brief (what to build and how it should feel, at most '
@@ -179,7 +179,7 @@ BUILD_TOOL_WORDS = {
 # hears with its next message instead (Design.hear_built).
 BUILD_FAILED = ("(A prototype you had built didn't come: {about}. They're waiting for it: say so briefly, with why, "
                 'when you next speak.)')
-BUILT = '({about} Its card is on their iPads.)'
+BUILT = '({about} Its card is on their screens.)'
 LANGUAGES = {'en': 'English', 'nl': 'Dutch', 'de': 'German'}
 
 

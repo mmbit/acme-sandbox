@@ -8,8 +8,8 @@ import { freePage, paperBox } from './mouse.mjs';
 import { microphone, voiceServed, SAID } from './voice.mjs';
 import { playLine } from './call.mjs';
 import { press } from './bar.mjs';
-import { DESKTOP, MINI, UPRIGHT, QUIET_MS, pressAlong, say, ui } from './kit.mjs';
-import { hands } from './hands.mjs';
+import { DESKTOP, MINI, UPRIGHT, QUIET_MS, middleOf, openScrap, pressAlong, say, ui } from './kit.mjs';
+import { hands, mouseOf } from './hands.mjs';
 import { PREVIEW, previewServed } from './preview.mjs';
 import { watchedPage } from './start.mjs';
 
@@ -91,7 +91,7 @@ async function callMic(context) {
 // The book's mic tapped, then a spot held: recording at once, with no switch-on prompt; Escape lets it go, or letting
 // go lands the words
 async function callTapped(page, cancel = false) {
-  await press(page, 'Voice note');
+  await micTapped(page);
   const paper = await paperBox(page),
     at = [paper.x + paper.width * 0.3, paper.y + paper.height * 0.5];
   await finger(page, 'pointerdown', at);
@@ -110,6 +110,13 @@ async function callTapped(page, cancel = false) {
   await finger(page, 'pointerup', at);
   if (cancel)
     assert.equal(await page.evaluate(() => window.callTrack.readyState), 'live', 'cancelling keeps the call mic');
+}
+// The book's mic tapped, on a scrap opened first by the mouse in the paper's middle where none is (the mic an opened
+// scrap's tool)
+async function micTapped(page) {
+  if (!(await page.locator('#book[data-scrap-open]').count()))
+    await openScrap(page, mouseOf(page), undefined, middleOf(await paperBox(page)));
+  await press(page, 'Voice note');
 }
 // A finger's pointer event as Safari hands it over, on what's at its point
 const finger = (page, type, [x, y]) =>
@@ -178,7 +185,7 @@ async function inBook(c) {
     await page.waitForTimeout(QUIET_MS);
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'nothing asked for the microphone');
     // the book's mic tapped asks, once, and says it's blocked when refused
-    await press(page, 'Voice note');
+    await micTapped(page);
     await page.locator('.toast', { hasText: 'blocked' }).waitFor({ timeout: 15_000 });
     assert.equal(await page.evaluate(() => window.micsAsked), 1, 'the mic tapped asked, once');
     // (HQ's sounds wake at a touch's end, as Safari lets them: Linux's headless WebKit has no audio output to start.
@@ -217,7 +224,7 @@ async function across(c) {
     await page.locator(ui('.sheet .mic.on')).waitFor({ timeout: 15_000 });
     await page.locator(ui('.sheet .mic')).dispatchEvent('click');
     assert.equal(await page.evaluate(() => window.micsAsked), 1, 'the post-it’s mic recorded');
-    await press(page, 'Voice note');
+    await micTapped(page);
     await page.waitForFunction(() => window.micsAsked === 2, null, { timeout: 15_000 }); // (opened at the mic's tap)
     assert.equal(await page.locator('#book .bk-mic').getAttribute('aria-pressed'), 'true', 'the mic waits for a spot');
     await press(page, 'Voice note');

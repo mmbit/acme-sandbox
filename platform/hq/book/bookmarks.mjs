@@ -313,9 +313,9 @@ export const shown = p =>
 // Where the tabs lie: all below the blur, apart, and clear of the book's pull tab; thin ribbons, the last a clear gap
 // above the pull tab where the screen has the room (a phone on its side puts its pull tab at the foot), each sticking
 // out less than it, each icon tinted from its own ribbon (README, Bookmarks).
-// On a page that is the whole screen, folded at the screen's left edge, most of each past it and its icon showing.
-// Each a ribbon a finger's 44 px with its gap (the Ink README, Bookmarks.).
-// Beside HQ's page: beside().
+// On a page that is the whole screen, folded at the screen's left edge, most of each past it and its icon showing,
+// bigger. Each a ribbon a finger's 44 px with its gap (the Ink README,
+// Bookmarks.). Beside HQ's page: beside().
 async function placed(p, name) {
   const t = await tabs(p),
     isWhole = await whole(p),
@@ -348,12 +348,11 @@ async function placed(p, name) {
         `${name}: ${a.chapter}'s icon showing (${a.icon.x}–${a.icon.right})`,
       );
     } else beside(name, a, { edge, paper, keys });
-    assert.ok(a.box.height <= 40, `${name}: ${a.chapter} a ribbon (${a.box.height} px)`);
-    const reach = isWhole ? a.box.right : edge.x - a.box.x;
-    assert.ok(
-      reach < lip.right - lip.x,
-      `${name}: ${a.chapter} out ${reach} px, less than the pull tab's ${lip.right - lip.x}`,
-    );
+    assert.ok(a.box.height <= (isWhole ? 52 : 40), `${name}: ${a.chapter} a ribbon (${a.box.height} px)`);
+    // (folded on a whole screen, bigger than the pull tab)
+    const reach = edge.x - a.box.x;
+    if (!isWhole)
+      assert.ok(reach < lip.right - lip.x, `${name}: ${a.chapter} out ${reach} px, less than the pull tab's`);
     tinted(name, a);
     const b = t[i + 1];
     if (b) assert.ok(a.box.bottom <= b.box.y, `${name}: ${a.chapter} and ${b.chapter} apart`);

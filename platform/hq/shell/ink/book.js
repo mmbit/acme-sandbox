@@ -65,7 +65,7 @@ export async function initBook({ scope = null } = {}) {
   if (scope?.spread) roomMode = 'spread';
   state = recalled();
   if (scope && !scope.spread) state.mode = 'open'; // (a guest's work or round: beside it)
-  mountRail(parts.rail, { undo: () => pages.undo(), redo: () => pages.redo() });
+  mountRail(parts.rail, { undo: () => pages.undo() });
   const calls = scope ? null : await import('../calldrop.js');
   pages = mountPages(parts.paper, { dev: world.dev, calls, shelf: scope ? null : openShelf });
   if (!scope) mountBookmarks(parts, pages); // (the board's books' chapters: bookmarks.js)
@@ -119,6 +119,10 @@ function mountRoot() {
     )}"></nav></section>
     <button class="bk-lip" aria-label="${word('notebookLip')}" data-keep-clear data-no-ink></button>`;
   document.documentElement.append(root);
+  // (HQ's toasts beside it on <html>, as a guest's book has them, so they show over it: nothing in the page's body, a
+  // layout container, lies over the book. A scrap thrown away has its Undo there.)
+  const toasts = document.querySelector('#toasts');
+  if (toasts) document.documentElement.append(toasts);
   pressesHeard(root);
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'stack', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),
