@@ -3460,13 +3460,17 @@ class Restart(unittest.IsolatedAsyncioTestCase):
                          ('t1', ['Board: This is the shop.', 'Juno: Nice shop.']))
         server.keep_in_hq(self.wiring, sent)
         self.assertNotIn('lines', self.asked[-1][2], 'unchanged: the token alone, for the messages')
-        self.assertEqual(heard, [(call.file.name, [{'from': 'bolt', 'job': 7, 'text': 'Merged.'}])])
-        call.messaged(heard[0][1])
+        self.assertEqual(heard, [(call.file.name, {'messages': [{'from': 'bolt', 'job': 7, 'text': 'Merged.'}]})])
+        call.messaged(heard[0][1]['messages'])
         self.assertIn("(A message from Bolt's job #7 reached the call.)", call.lines)
         await call.answer('Anything new?', None)
         told = self.started[0].heard_messages[1]['content'][-1]['text']
         self.assertIn('A message from Bolt\'s job #7 reached you on this call: "Merged."', told)
         self.assertEqual(call.messages, [], 'heard once')
+        # (and the prototypes built for it that ended since: Call.built)
+        answers['call-lines'] = {'ok': True, 'messages': [], 'built': [{'name': 'Poster', 'version': 1, 'job': 41}]}
+        self.assertEqual(server.keep_in_hq(self.wiring, sent),
+                         [(call.file.name, {'built': [{'name': 'Poster', 'version': 1, 'job': 41}]})])
         call.end()
 
     async def test_a_colleagues_message_reaches_a_call_on_the_phone_too(self):
@@ -3867,7 +3871,7 @@ class Restart(unittest.IsolatedAsyncioTestCase):
                 call.active = CLOCK[0] - server.LIVE_IDLE - 1
                 os.utime(self.paths.live / call.file.stem, (0, 0))
             replying.turn = asyncio.create_task(asyncio.sleep(10))
-            building.builders.add(asyncio.create_task(asyncio.sleep(10)))
+            building.builds.add(41)
             try:
                 await self.watched()
                 self.assertFalse(self.touched(idle))
@@ -5479,6 +5483,10 @@ class BoardCallNotes(Juno):
             version = sum(1 for _, path, b in self.asked if path == 'prototype' and b['name'] == body['name'])
             return {'ok': f"{body['name']} v{version} is on the call's page.", 'id': 3, 'version': version,
                     'link': None, 'picture': {'type': 'image/jpeg', 'data': 'AAAA'}}
+        if path == 'prototype-build':
+            self.asked.append((method, path, body))
+            return {'ok': f"Moss builds {body['name']} v1 as job #41: its placeholder is on the call's page now.",
+                    'job': 41, 'version': 1}
         if path == 'try':
             self.asked.append((method, path, body))
             if body['id'] == 9:
@@ -5667,186 +5675,65 @@ class BoardCallNotes(Juno):
         self.assertEqual(await tool({'prototype': {'name': 'Card flip', 'html': page}}), {'error': server.PROTOTYPE_WORDS['none']})
         self.assertEqual(len(self.asked), asked)
 
-    async def test_a_brief_is_built_in_the_background_and_the_hand_goes_up_when_it_lands(self):
-        """prototype with a brief: the tool answers at once, a builder (the CLI once on the call's seat, no tools, no
-        HQ token) makes the page while the call goes on, it's saved as the agent's own would be, and the agent's hand
-        goes up for it; at its moment the agent hears what landed. A next version is built on the page before; for one
-        that fails, the hand goes up too, and the agent hears why."""
-        files = Path(self.tmp.name)
-        (files / 'seat').write_text('seat')
-        done, runs, started, answers = asyncio.Event(), [], [], []
-        builder = builder_cli(runs, done, answers)
-
-        async def start_cli(*args, **kw):
-            fd = int(kw['env']['CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
-            started.append((args, kw['env']['HQ_TOKEN'], 'SCREEN_SOCKET' in kw['env'], os.read(fd, 99).decode()))
-            return builder()
-
-        self.call.wiring = self.call.wiring._replace(paths=server.Paths(seat=files / 'seat', calls=files, live=files,
-                                                                        work=files), start_cli=start_cli)
+    async def test_a_brief_goes_to_hq_as_a_colleagues_build_job(self):
+        """prototype with a brief: HQ has a colleague build it as a job (the coordinator's callbuilds.ts), with who
+        builds it and how as the agent judged, and the call's language; the line runs nothing of it, and keeps its job
+        as one at work for the call. A brief that isn't one, or a call with no page, asks nothing."""
         self.call.lang = 'nl'
-        hands = lambda: [e for e in self.events if e.get('type') == 'hand']
-        page = '<!doctype html><svg><circle r="9"/></svg></html>'
-        answers.append(f'{page}\nTik op de kat en hij spint.')
-        got = await self.call.prototype_tool({'prototype': {'name': 'Kattengotchi', 'brief': 'A cat to feed and pet.'}})
-        self.assertEqual(got, {'ok': server.BUILD_TOOL_WORDS['started']})
-        await asyncio.sleep(0.05)
-        self.assertEqual(runs, ['Prototype: Kattengotchi\nIts words in Dutch.\n\nA cat to feed and pet.'])
-        args, token, screen, seat = started[0]
-        self.assertEqual((token, screen, seat), ('', False, 'seat'))
-        self.assertEqual(args[args.index('--tools') + 1], '')
-        self.assertEqual(args[args.index('--effort') + 1], server.BUILD_EFFORT)
-        self.assertNotIn('--mcp-config', args)
-        self.assertEqual((self.asked, hands()), ([], []))  # (still building)
-        done.set()
-        await asyncio.sleep(0.05)
-        self.assertEqual(self.asked, [('POST', 'prototype', {'call': 7, 'name': 'Kattengotchi', 'html': page})])
-        self.assertEqual(hands(), [{'type': 'hand', 'up': True, 'about': 'Kattengotchi v1'}])
-        self.call.hand_waits.cancel()  # (its moment, at once)
-        await self.call.design.moment()
-        told = self.call.design.told()
-        self.assertIn('a prototype you had built is ready: Kattengotchi v1: Tik op de kat en hij spint.', told)
-        self.assertEqual(hands()[-1], {'type': 'hand', 'up': False})
-        answers.append('Sorry, no page this time.')  # (the next version: built on the last, and failing)
-        await self.call.prototype_tool({'prototype': {'name': 'Kattengotchi', 'brief': 'Feeding shows a bowl.'}})
-        await asyncio.sleep(0.05)
-        self.assertTrue(runs[1].endswith(f'Feeding shows a bowl.\n\nThe version before, to build on (keep what works, '
-                                         f'make it better):\n{page}'), runs[1])
-        self.assertEqual(len(self.asked), 1)
-        self.assertEqual(hands()[-1], {'type': 'hand', 'up': True, 'about': 'Kattengotchi'})
-        self.call.hand_waits.cancel()
-        await self.call.design.moment()
-        self.assertIn("a prototype you had built didn't come: Kattengotchi: no whole page in its answer. Say briefly",
-                      self.call.design.told())
-        for wrong in ({'name': 'Cat', 'brief': ''}, {'name': '', 'brief': 'A cat.'}, {'name': 'Cat', 'brief': 'A cat.', 'html': page},
-                      {'name': 'Cat', 'brief': 'x' * 5000}):
+        got = await self.call.prototype_tool({'prototype': {'name': 'Poster', 'brief': 'Een stilstaande poster.',
+                                                            'by': 'moss', 'lighter': True, 'effort': 'low'}})
+        self.assertEqual(got, {'ok': "Moss builds Poster v1 as job #41: its placeholder is on the call's page now. "
+                                     + server.BUILD_TOOL_WORDS['started']})
+        self.assertEqual(self.asked, [('POST', 'prototype-build', {'call': 7, 'name': 'Poster', 'brief': 'Een stilstaande '
+                                       'poster.', 'by': 'moss', 'lighter': True, 'effort': 'low', 'lang': 'nl'})])
+        self.assertEqual(self.call.builds, {41})
+        for wrong in ({'name': 'Cat', 'brief': ''}, {'name': '', 'brief': 'A cat.'}, {'name': 'Cat', 'brief': 'x' * 5000},
+                      {'name': 'Cat', 'brief': 'A cat.', 'html': '<p>'}, {'name': 'Cat', 'brief': 'A cat.', 'about': 3},
+                      {'name': 'Cat', 'brief': 'A cat.', 'effort': 'max'}, {'name': 'Cat', 'brief': 'A cat.', 'by': 'Moss'},
+                      {'name': 'Cat', 'brief': 'A cat.', 'about': 'x' * 300}):
             self.assertEqual(await self.call.prototype_tool({'prototype': wrong}), {'error': server.BUILD_TOOL_WORDS['shape']})
         self.call.callout = 12
         self.assertEqual(await self.call.prototype_tool({'prototype': {'name': 'Cat', 'brief': 'A cat.'}}),
                          {'error': server.PROTOTYPE_WORDS['none']})
-        self.assertEqual(len(runs), 2)
+        self.assertEqual(len(self.asked), 1)
 
-    async def test_a_build_that_runs_out_of_time_says_how_far_it_got(self):
-        """A builder still going at BUILD_SECONDS is stopped, and the reason says where its minutes went (a TimeoutError
-        alone has no words). The first raises the hand; the agent hears of the rest with its next message. One that ends
-        with an error says the CLI's words, or else its last words on stderr."""
-        files = Path(self.tmp.name)
-        (files / 'seat').write_text('seat')
-        never, runs, kinds = asyncio.Event(), [], []
-
-        async def start_cli(*args, **kw):
-            return kinds.pop(0)()
-
-        self.call.wiring = self.call.wiring._replace(paths=server.Paths(seat=files / 'seat', calls=files, live=files,
-                                                                        work=files), start_cli=start_cli)
+    async def test_a_build_that_ended_raises_the_hand_with_what_landed_or_why_not(self):
+        """HQ's word that a build ended (built, with the call's lines): the hand goes up for it, and at its moment the
+        agent hears what landed, what changed and what to try first, or why nothing did; the transcript says so, and
+        the call no longer counts it at work."""
         hands = lambda: [e for e in self.events if e.get('type') == 'hand']
-        thinking = [{'type': 'stream_event', 'event': {'type': 'message_start'}},
-                    {'type': 'stream_event', 'event': {'type': 'content_block_start', 'content_block': {'type': 'thinking'}}}]
-        writing = [*thinking, {'type': 'stream_event', 'event': {'type': 'content_block_start', 'content_block': {'type': 'text'}}},
-                   {'type': 'stream_event', 'event': {'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': 'x' * 3000}}}]
-        kinds += [builder_cli(runs, never, [], events) for events in ([], thinking, writing)]
-        with unittest.mock.patch.object(server, 'BUILD_SECONDS', 0.2):
-            for name, said in (('Reis A', 'the model never started answering'),
-                               ('Reis B', 'it was still thinking after 0 s, no page begun'),
-                               ('Reis C', 'it thought for 0 s, then wrote 2 KB of its page')):
-                await self.call.build(name, 'Een fotoboek.')
-                self.assertEqual(hands()[-1]['about'], 'Reis A')
-                words = self.call.design.hand['built'] if name == 'Reis A' else self.call.design.due
-                self.assertIn(f'{name}: not done after 0 minutes, so the line stopped it: {said}', words)
-        self.assertEqual(len(runs), 3)
-        kinds.append(builder_cli(runs, None, [], result={'type': 'result', 'is_error': True, 'result': ''}, stderr=b'Not logged in\n',
-                                 code=1))
-        await self.call.build('Reis D', 'Een fotoboek.')
-        self.assertIn('Reis D: the builder ended with 1: Not logged in', self.call.design.due)
-
-    async def test_a_round_of_feedback_is_one_version_with_what_changed(self):
-        """One version per round of feedback: a brief takes about, the change in a line, which goes on the
-        version's slip and is what the agent hears at its hand's moment, to say. A prototype's next brief while its
-        version is still being built is refused (it would build on the version before and lose this one's changes):
-        that's the round after it, even before its builder has started. Another prototype builds beside it."""
-        page = '<!doctype html><svg><circle r="9"/></svg></html>'
-        gates, asks = {}, []
-
-        async def builder(ask):
-            asks.append(ask)
-            name = ask.split('\n')[0].removeprefix('Prototype: ')
-            await gates.setdefault(name, asyncio.Event()).wait()
-            return f'{page}\nBlader naar de kaft.'
-
-        self.call.builder = builder
-        tool = self.call.prototype_tool
-        self.assertEqual(await tool({'prototype': {'name': 'Reis A', 'brief': 'Een fotoboek, stap voor stap.'}}),
-                         {'ok': server.BUILD_TOOL_WORDS['started']})
-        self.assertEqual(await tool({'prototype': {'name': 'reis a', 'brief': 'Grotere foto’s.', 'about': 'Grotere foto’s'}}),
-                         {'error': server.BUILD_TOOL_WORDS['building'].format(name='reis a')})
-        self.assertEqual(await tool({'prototype': {'name': 'Reis B', 'brief': 'Een fotoboek per dag.'}}),
-                         {'ok': server.BUILD_TOOL_WORDS['started']})
-        await asyncio.sleep(0.05)
-        self.assertEqual(len(asks), 2)
-        gates['Reis A'].set()
-        await asyncio.sleep(0.05)
-        self.call.hand_waits.cancel()
-        await self.call.design.moment()
-        self.call.design.told()
-        for wrong in ({'name': 'Reis A', 'brief': 'x', 'about': 'x' * 300}, {'name': 'Reis A', 'brief': 'x', 'about': 3}):
-            self.assertEqual(await tool({'prototype': wrong}), {'error': server.BUILD_TOOL_WORDS['shape']})
-        round_two = {'name': 'Reis A', 'brief': 'Grotere foto’s, en de kaft eerst.', 'about': 'Grotere  foto’s, de kaft eerst'}
-        self.assertEqual(await tool({'prototype': round_two}), {'ok': server.BUILD_TOOL_WORDS['started']})
-        await asyncio.sleep(0.05)
-        self.assertTrue(asks[2].endswith(page), asks[2])
-        gates['Reis A'].set()  # (still set: this one lands at once)
-        await asyncio.sleep(0.05)
-        saved = [b for _, path, b in self.asked if path == 'prototype']
-        self.assertEqual([(b['name'], b.get('about')) for b in saved], [('Reis A', None), ('Reis A', 'Grotere foto’s, de kaft eerst')])
-        self.call.hand_waits.cancel()
+        self.call.builds.update({41, 42})
+        await self.call.built([{'name': 'Kattengotchi', 'version': 2, 'about': 'Een bakje', 'by': 'Moss',
+                                'line': 'Tik op de kat en hij spint.', 'job': 41}])
+        self.assertEqual(hands(), [{'type': 'hand', 'up': True, 'about': 'Kattengotchi v2'}])
+        self.assertIn('(Kattengotchi v2, built by Moss, landed on their screens.)', self.call.lines)
+        self.call.hand_waits.cancel()  # (its moment, at once)
         await self.call.design.moment()
         told = self.call.design.told()
-        self.assertIn('ready: Reis A v2 (what changed: Grotere foto’s, de kaft eerst): Blader naar de kaft.', told)
-        self.assertIn("Say briefly that it's on their screens, what changed", told)
-        gates['Reis B'].set()
-
-    async def test_a_next_version_builds_on_the_last_whatever_the_names_case(self):
-        """The store takes a prototype's name whatever its case, so a brief under 'reis a' makes v2 of 'Reis A': it
-        builds on the page Reis A has, built or the agent's own, as it would under 'Reis A'. Its case folded as the store
-        folds it: ASCII letters only."""
-        built, own, asks = '<!doctype html><svg><circle r="9"/></svg></html>', '<!doctype html><p>Kaart</p></html>', []
-
-        async def builder(ask):
-            asks.append(ask)
-            return f'{built}\nBlader naar de kaft.'
-
-        self.call.builder = builder
-        await self.call.build('Reis A', 'Een fotoboek.')
-        await self.call.build('reis a', 'Grotere foto’s.', 'Grotere foto’s')
-        self.assertTrue(asks[1].endswith(built), asks[1])
-        self.assertNotIn('error', await self.call.prototype_tool({'prototype': {'name': 'Kaart B', 'html': own}}))
-        await self.call.build('KAART B', 'Een kaart.')
-        self.assertTrue(asks[2].endswith(own), asks[2])
-        # The store folds ASCII letters only (nocase): 'één' is a prototype of its own beside 'Één', its own v1.
-        await self.call.build('Één', 'Een poster.')
-        await self.call.build('één', 'Een poster.')
-        self.assertTrue(asks[4].endswith('Een poster.'), asks[4])
+        self.assertIn('a prototype you had built is ready: Kattengotchi v2 (what changed: Een bakje): Tik op de kat en '
+                      'hij spint.', told)
+        await self.call.built([{'name': 'Poster', 'version': 1, 'by': 'Moss', 'job': 42,
+                                'failed': 'De kring bleef leeg in de schermfoto.'}, 'not one'])
+        self.assertEqual(hands()[-1], {'type': 'hand', 'up': True, 'about': 'Poster v1'})
+        self.call.hand_waits.cancel()
+        await self.call.design.moment()
+        self.assertIn("a prototype you had built didn't come: Poster v1: De kring bleef leeg in de schermfoto. Say "
+                      'briefly', self.call.design.told())
+        self.assertEqual(self.call.builds, set())
 
     async def test_a_built_prototype_is_heard_of_however_its_hand_comes_down(self):
-        """A built prototype's hand shows the version the store gives, not a v-number read from its line (a name with
-        one in it). Its hand down by the agent's reply or replaced by a hand of its own, the agent hears of it with its
-        next message; at its moment, once."""
-        page = '<!doctype html><svg><circle r="9"/></svg></html>'
-
-        async def builder(ask):
-            return f'{page}\nAai de kat.'
-
-        self.call.builder = builder
+        """Its hand down by the agent's reply or replaced by a hand of its own, the agent hears of a built prototype
+        with its next message; at its moment, once."""
         hands = lambda: [e for e in self.events if e.get('type') == 'hand' and e['up']]
-        landed = "(Pet v2 idea v{}: Aai de kat. Its card is on their screens.)"
+        landed = "(Pet v{}: Aai de kat. Its card is on their screens.)"
         for n, down in enumerate((self.call.design.lower, lambda: self.call.design.raise_hand('Een kleur'),
                                   self.call.design.moment), 1):
-            await self.call.build('Pet v2 idea', 'A pet.')
-            self.assertEqual(hands()[-1]['about'], f'Pet v2 idea v{n}')
+            await self.call.built([{'name': 'Pet', 'version': n, 'line': 'Aai de kat.', 'job': n}])
+            self.assertEqual(hands()[-1]['about'], f'Pet v{n}')
             self.call.hand_waits.cancel()
             await down()
             told = self.call.design.told()
-            self.assertEqual(told.count(f'Pet v2 idea v{n}: Aai de kat.'), 1, told)
+            self.assertEqual(told.count(f'Pet v{n}: Aai de kat.'), 1, told)
             if n < 3:
                 self.assertEqual(told, landed.format(n))
             await self.call.design.lower()
@@ -5860,44 +5747,6 @@ class BoardCallNotes(Juno):
                        if line.startswith(('import ', 'from '))]
             self.assertEqual([line for line in imports if 'callnotes' in line], [], engine)
         self.assertIn('from drawing import', (Path(__file__).parent / 'callnotes.py').read_text())
-
-
-def builder_cli(runs, done, answers, events=(), result=None, stderr=b'', code=0):
-    """A builder's CLI (Call.builder) for start_cli: it records its ask, writes events (its stream-json), waits for
-    done (None: at once) and answers with answers' next page as its result (or result), ending with code."""
-    class Builder:
-        returncode = None
-
-        def __init__(self):
-            self.stdout, self.stderr, self.ended = asyncio.StreamReader(), asyncio.StreamReader(), asyncio.Event()
-            self.stdin = unittest.mock.Mock(drain=unittest.mock.AsyncMock(), write=lambda ask: runs.append(ask.decode()))
-            self.task = asyncio.create_task(self.run())
-
-        async def run(self):
-            for event in events:
-                self.stdout.feed_data((json.dumps(event) + '\n').encode())
-            if done is not None:
-                await done.wait()
-            final = result or {'type': 'result', 'is_error': False, 'result': answers.pop(0)}
-            self.stdout.feed_data((json.dumps(final) + '\n').encode())
-            self.stderr.feed_data(stderr)
-            self.end(code)
-
-        def end(self, code):
-            if self.returncode is None:
-                self.returncode = code
-                self.stdout.feed_eof()
-                self.stderr.feed_eof()
-                self.ended.set()
-
-        async def wait(self):
-            await self.ended.wait()
-            return self.returncode
-
-        def kill(self):
-            self.task.cancel()
-            self.end(-9)
-    return Builder
 
 
 # The agent driving a piece of work on the board's screen

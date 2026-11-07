@@ -59,10 +59,13 @@ export function teamMembers() {
 const capitalised = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
 
 // A member's latest step in its lead's job (log.ts), cut to a task's length: what it's doing, for one its lead gave only a
-// name (company.ts). It reads job_log's text, the line agents may read (a job holding a customer's details keeps the step
-// itself in board).
-export const lastStep = (job: number, id: string) => (db.prepare(
-  "select text from job_log where job = ? and agent = ? and text != '' order by id desc limit 1").get(job, id) as { text: string } | undefined)?.text.slice(0, 120);
+// name (company.ts). For the board's own HQ the step itself (board), as its lead's steps read there; for any other read
+// job_log's text, the line agents may read (a job holding a customer's details keeps the step itself in board alone).
+export function lastStep(job: number, id: string, forBoard = false) {
+  const line = forBoard ? 'coalesce(board, text)' : 'text';
+  return (db.prepare(`select ${line} line from job_log where job = ? and agent = ? and ${line} != '' order by id desc limit 1`)
+    .get(job, id) as { line: string } | undefined)?.line.slice(0, 120);
+}
 
 // A member the worker registered for this job (hq --as): the only other name a job's token may speak as.
 export const inTeam = (job: number, id: string) => !!db.prepare('select 1 from team where job = ? and id = ?').get(job, id);

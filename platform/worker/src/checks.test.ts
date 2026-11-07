@@ -71,7 +71,8 @@ test('explicit folder runs keep their command, fallback and original artifact pr
   let bundleNames = '';
   const server = createServer(async (request, response) => {
     if (request.url === '/api/agent/runs/helper')
-      return response.end(JSON.stringify({ kinds: [{ name: 'render', present: true }] }));
+      return response.end(JSON.stringify({ kinds: [{ name: 'render', present: true, lentPresent: true }] }));
+    if (request.url === '/api/agent/runs/base') return response.end(JSON.stringify({ commit: null }));
     if (request.url === '/api/agent/runs') {
       specification = JSON.parse(Buffer.from(String(request.headers['x-run']), 'base64url').toString());
       const chunks = [];

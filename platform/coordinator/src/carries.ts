@@ -8,6 +8,7 @@ import { STANDING } from './jobcodes.ts';
 import { createJob, preview } from './jobs.ts';
 import { made, madeCode } from './made.ts';
 import type { Check } from './review.ts';
+import type { Scope } from './carryscope.ts';
 
 // The newest commit on main HQ has heard of
 const SEEN = 'carries.seen';
@@ -15,7 +16,7 @@ const SHA = /^[0-9a-f]{40}$/;
 // How much of each check's report goes in the fix's brief: the keeper runs the checks again for the rest
 const REPORT_CHARS = 8_000;
 // `code`: whether it changes anything a push's checks run on, as the worker reads it (its mainline.ts)
-type Commit = { sha: string; parents: string[]; code?: boolean };
+type Commit = { sha: string; parents: string[]; code?: boolean; scope?: Scope };
 const CHECKS = ['gates', 'tests'] as const;
 type CheckName = (typeof CHECKS)[number];
 // What the worker's finish of a check job says: the commit and main before it, and each check's outcome
@@ -83,10 +84,21 @@ const lineOf = (commits: unknown) => {
       SHA.test(String(c?.sha)) &&
       Array.isArray(c.parents) &&
       c.parents.every(p => SHA.test(p)) &&
-      (c.code === undefined || typeof c.code === 'boolean'),
+      (c.code === undefined || typeof c.code === 'boolean') &&
+      validScope(c.scope),
   );
   return valid ? line : undefined;
 };
+
+function validScope(scope: Commit['scope']) {
+  return (
+    scope === undefined ||
+    (scope !== null &&
+      typeof scope.typecheck === 'boolean' &&
+      Array.isArray(scope.tests) &&
+      scope.tests.every(area => typeof area === 'string'))
+  );
+}
 
 const mergedByHq = (sha: string) => !!db.prepare('select 1 from prs where merged_as = ?').get(sha);
 
@@ -95,9 +107,14 @@ const hasChecks = (sha: string) => !!db.prepare('select 1 from jobs where carry 
 // What the commit changes, kept before its check is queued and sized (predictions.ts recordQueued), and for any commit
 // on the line with a check already, so that check counts among its kind's. A commit's changes never change: the first
 // word stands.
-const keepKind = (c: Commit) =>
-  c.code !== undefined &&
-  db.prepare('insert or ignore into carry_commits (sha, code) values (?, ?)').run(c.sha, c.code ? 1 : 0);
+function keepKind(c: Commit) {
+  if (c.code === undefined && c.scope === undefined) return;
+  const scope = c.scope && JSON.stringify({ ...c.scope, tests: [...new Set(c.scope.tests)].sort() });
+  db.prepare(
+    `insert into carry_commits (sha, code, scope) values (?, ?, ?)
+    on conflict(sha) do update set scope = coalesce(carry_commits.scope, excluded.scope)`,
+  ).run(c.sha, c.code ? 1 : 0, scope ?? null);
+}
 
 // One check job, the keeper's, which the worker runs with no agent
 function queueChecks(sha: string) {

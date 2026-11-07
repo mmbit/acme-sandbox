@@ -9,7 +9,7 @@ export function lookerOf(chosen: string | null, readers: Read[], assigned: Read[
   const original = readers.find(reader => reader.agent === chosen);
   const retained = assigned.find(reader => reader.agent === chosen);
   if (!original && !retained && chosen !== consolidator) return undefined;
-  if (!assigned.length) return consolidator;
+  if (!assigned.length) return consolidator ?? chosen;
   if (!readers.length && chosen === consolidator) return chosen;
   const scope = original?.files ?? assigned.flatMap(reader => reader.files);
   const shown = visual.visualFor(scope).flatMap(check => check.files);
@@ -30,4 +30,22 @@ export function foundationOf(chosen: string | null, readers: Read[], assigned: R
   return assigned
     .filter(reader => reader.agent === chosen || reader.files.some(file => moved.includes(file)))
     .map(reader => reader.agent);
+}
+
+// An omitted required reader may do the read while ruling. Keep that read if HQ later chooses someone else.
+export function readObligation(
+  required: Read[],
+  assigned: Read[],
+  exceptions: { agent: string; reason: string }[],
+  suggested?: string,
+): Read | string | undefined {
+  const chosen = new Set(assigned.map(reader => reader.agent));
+  const excepted = new Set(exceptions.map(exception => exception.agent));
+  const omitted = required.filter(reader => !chosen.has(reader.agent) && !excepted.has(reader.agent));
+  const unexplained = omitted.find(reader => reader.agent !== suggested);
+  if (unexplained)
+    return unexplained.domain === 'readability'
+      ? 'omitted readability reader needs a reason'
+      : 'omitted finder needs a reason';
+  return omitted.find(reader => reader.agent === suggested);
 }

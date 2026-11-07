@@ -21,17 +21,28 @@ import {
 } from 'node:fs';
 import { createServer, request, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
+import { cpus, tmpdir, totalmem } from 'node:os';
 
 const RUNS_TOKEN = 'runs-secret';
 const CARD_KEY = `helper_${'c'.repeat(43)}`;
 const h = await harness('runs', {
   env: { RUNS_TOKEN },
-  before: () => {
+  before: repo => {
     mkdirSync(process.env.SECRETS_DIR!, { recursive: true });
     writeFileSync(`${process.env.SECRETS_DIR}/RUN_HELPER_KEY`, `${CARD_KEY}\n`);
+    // HQ's checkout, two commits, the runs' bundles stand on the later
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+    git('init', '-q');
+    git('add', '-A');
+    git('commit', '-qm', 'first');
+    writeFileSync(`${repo}/later.txt`, 'later\n');
+    git('add', 'later.txt');
+    git('commit', '-qm', 'later');
   },
 });
+const checkout = (...args: string[]) =>
+  execFileSync('git', ['-C', process.env.REPO_DIR!, ...args], { encoding: 'utf8' }).trim();
 const secrets = await import('./secrets.ts');
 const runs = await import('./runs.ts');
 const storage = await import('./storage.ts');
@@ -125,6 +136,8 @@ async function startHelper(
   how: ({ server: true } | { bootstrap: string; keyCommand?: string; state?: string }) & {
     kind?: string;
     tools?: string;
+    cache?: true;
+    locked?: boolean;
   },
   hqUrl = h.base,
 ) {
@@ -133,6 +146,9 @@ async function startHelper(
   chmodSync(machine, 0o755);
   mkdirSync(`${machine}/work`, { mode: 0o1777 });
   chmodSync(`${machine}/work`, 0o1777);
+  // (a kind with sockets has one, manager.mjs: open to the runs, as /work)
+  if (how.cache) mkdirSync(`${machine}/cache`, { mode: 0o1777 });
+  if (how.cache) chmodSync(`${machine}/cache`, 0o1777);
   const keyFile = `${'state' in how && how.state ? how.state : machine}/key`;
   if ('server' in how) writeFileSync(keyFile, `${RUNS_TOKEN}\n`, { mode: 0o600 });
   else if (how.keyCommand) saveKey(how.keyCommand, keyFile);
@@ -141,9 +157,11 @@ async function startHelper(
       PATH: how.tools ? `${how.tools}:${process.env.PATH}` : process.env.PATH,
       HQ_URL: hqUrl,
       ...(how.kind ? { RUN_KIND: how.kind } : {}),
+      ...(how.locked ? { HELPER_LOCKED: '1' } : {}),
       TMPDIR: machine,
       KEY_FILE: keyFile,
       WORK_DIR: `${machine}/work`,
+      CACHE_DIR: `${machine}/cache`,
       NONET_FILE: `${machine}/nonet.pl`,
       TASK_UID: String(uid),
       TASK_GID: String(uid === process.getuid!() ? process.getgid!() : uid),
@@ -854,6 +872,77 @@ const TWO_KINDS = `
     bad-disk: { diskGb: null }
 `;
 
+// A run's output as its job reads it
+const outputOf = async (id: number, token: string) =>
+  (await h.send(`/api/agent/runs/${id}/output`, { authorization: `Bearer ${token}` })).text;
+// A bundle's refs, and the commits it needs the repo to have already (each "-<commit> <subject>"), from its header
+const headsOf = (bundle: string) => bundle.slice(0, bundle.indexOf('\n\n')).split('\n').slice(1);
+
+test("a run's bundle may stand on HQ's own commit: HQ names it, the helper hears it with the run, and HQ gives it what it lacks of it", async () => {
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const [head, first] = [checkout('rev-parse', 'HEAD'), checkout('rev-parse', 'HEAD~1')];
+  assert.deepEqual((await h.agent('runs/base', job.token)).body, { commit: head });
+  assert.equal((await sendRun(job.token, { command: 'true', base: 'HEAD' })).status, 400, 'a commit by its full name');
+  const plain = await sendRun(job.token, { command: 'true' });
+  const plainTake = (await asHelper('/api/helper/take', {})).json;
+  assert.equal(plainTake.base, undefined, 'a whole bundle stands on nothing');
+  assert.equal((await asHelper(`/api/helper/runs/${plainTake.id}/base`)).status, 404);
+  await h.agent(`runs/${plain.json.id}/stop`, job.token, {});
+
+  await sendRun(job.token, { command: 'true', base: head });
+  const take = (await asHelper('/api/helper/take', {})).json;
+  assert.equal(take.base, head);
+  const whole = await asHelper(`/api/helper/runs/${take.id}/base`);
+  assert.equal(whole.status, 200);
+  assert.deepEqual(headsOf(whole.text), [`${head} HEAD`], 'all of it, for a helper that has none');
+  const unknown = await asHelper(`/api/helper/runs/${take.id}/base?have=${'f'.repeat(40)}`);
+  assert.deepEqual(headsOf(unknown.text), [`${head} HEAD`], 'a commit HQ has never had is no help');
+  const since = await asHelper(`/api/helper/runs/${take.id}/base?have=${first}`);
+  assert.deepEqual(headsOf(since.text), [`-${first} first`, `${head} HEAD`], 'only what came after what it has');
+  assert.equal((await asHelper(`/api/helper/runs/${take.id}/base?have=${head}`)).status, 404, 'nothing new to give');
+  assert.equal((await asKey(RUNS_TOKEN, `/api/helper/runs/${take.id}/base`)).status, 404, "another helper's take");
+  await h.finish(job);
+});
+
+test("the helper keeps the base its runs stand on, fetched from HQ once, and lends its objects to each run's own repo", async t => {
+  await lendNone();
+  const job = await h.start({ agent: 'bolt' });
+  const machine = await startHelper(t, { server: true, cache: true });
+  const head = checkout('rev-parse', 'HEAD');
+  const kept = `${machine}/cache/base.git`;
+  const ran = async (command: string) => {
+    const { id } = (await sendRun(job.token, { command, base: head })).json;
+    await until(async () => (await h.agent(`runs/${id}`, job.token)).body.state === 'done', 'the run ended', 15_000);
+    return { ...(await h.agent(`runs/${id}`, job.token)).body, output: await outputOf(id, job.token) };
+  };
+  const borrowed =
+    'git init -q r && echo "$PWD/../base.git/objects" > r/.git/objects/info/alternates && git -C r log --format=%s ';
+  const first = await ran(`${borrowed}${head}`);
+  assert.equal(first.exitCode, 0, first.output);
+  assert.equal(first.output, 'later\nfirst\n');
+  assert.equal(execFileSync('git', ['-C', kept, 'rev-parse', 'refs/kept/HEAD'], { encoding: 'utf8' }).trim(), head);
+  const packs = readdirSync(`${kept}/objects/pack`);
+  const again = await ran(`${borrowed}${head} && (touch ../base.git/HEAD 2>/dev/null && echo changed || echo kept)`);
+  assert.equal(again.exitCode, 0, again.output);
+  if (ROOT) assert.match(again.output, /kept$/, "a run can't change it for the next");
+  assert.deepEqual(readdirSync(`${kept}/objects/pack`), packs, 'nothing fetched again');
+  await leftNothing(machine);
+  await h.finish(job);
+});
+
+test("a run whose base the helper can't keep ends at once, saying so, its command never run", async t => {
+  await lendNone();
+  const job = await h.start({ agent: 'bolt' });
+  await startHelper(t, { server: true });
+  const { id } = (await sendRun(job.token, { command: 'echo ran', base: checkout('rev-parse', 'HEAD') })).json;
+  await until(async () => (await h.agent(`runs/${id}`, job.token)).body.state === 'done', 'the run ended', 15_000);
+  assert.equal((await h.agent(`runs/${id}`, job.token)).body.exitCode, 2);
+  const output = await outputOf(id, job.token);
+  assert.equal(output, "The run's base isn't on the helper: this helper has no cache to keep it in\n");
+  await h.finish(job);
+});
+
 test("with two kinds declared, each kind's helper takes only its kind's runs, and a run whose kind has no helper there goes to this server's helper of its kind at once", async t => {
   h.declareKinds(t, TWO_KINDS);
   await lendOne();
@@ -924,6 +1013,48 @@ test("with a kind's lent helper away, its run uses that kind's tools on this ser
     /this server's helper, one per kind of run in the kind's image:\n {2}simulation: asking for work.*\n {2}render: asking for work/,
   );
   await leftNothing(machine);
+  await h.finish(job);
+});
+
+test('a socket kind enabled on this server runs loopback checks on its locked helper when no machine is lent', async t => {
+  h.declareKinds(t, '    tests:\n      sockets: true\n      lentOnly: false\n      serverImage: service:worker\n');
+  await lendNone();
+  runs.publishKinds();
+  assert.deepEqual(JSON.parse(readFileSync(`${h.dataDir}/run-kinds.json`, 'utf8')), [
+    { name: 'tests', image: 'node:24.22.1-slim', sockets: true, serverImage: 'service:worker' },
+  ]);
+  const job = await h.start({ agent: 'bolt' });
+  const machine = await startHelper(t, { server: true, kind: 'tests', locked: true });
+  const script =
+    "const h=require('http'); const s=h.createServer((q,r)=>r.end('checked')); " +
+    "s.listen(0,'127.0.0.1',async()=>{console.log(await (await fetch('http://127.0.0.1:'+s.address().port)).text());s.close()})";
+  const checked = await hqIn(`${jobTree()}/sim`, job, 'run', '--kind', 'tests', '--', 'node', '-e', script);
+  assert.equal(checked.code, 0, checked.out);
+  assert.match(checked.out, /checked/);
+  assert.equal(helperOf(lastRun()), 'server');
+  const completed = (await h.agent(`runs/${lastRun()}`, job.token)).body;
+  assert.equal(completed.helper.present, true);
+  assert.equal(completed.helper.lentPresent, false);
+  assert.equal(completed.machine, "this server's helper");
+  await leftNothing(machine);
+  await h.finish(job);
+});
+
+test("a run a lent helper lost has no helper present while this server's is away, even once the lent one asks again", async t => {
+  await lendOne();
+  h.db.prepare('delete from machine_kinds where machine = 0').run(); // (this server's helper, as earlier tests left it)
+  const job = await h.start({ agent: 'bolt' });
+  const sent = await sendRun(job.token, { command: 'true' });
+  assert.equal(sent.status, 200, sent.text);
+  assert.equal((await asHelper('/api/helper/take', {})).json.id, takeOf(sent.json.id));
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 4 * 60_000 });
+  assert.equal((await asHelper('/api/helper/take', {})).status, 204, 'the lent one, back, may not take it');
+  const lost = (await h.agent(`runs/${sent.json.id}`, job.token)).body;
+  assert.equal(lost.state, 'waiting');
+  assert.equal(lost.passed, true);
+  assert.equal(lost.helper.lentPresent, true);
+  assert.equal(lost.helper.present, false);
+  t.mock.timers.reset();
   await h.finish(job);
 });
 
@@ -1296,7 +1427,7 @@ test("two kinds' helpers started on one volume before the machine's key command 
   const state = mkdtempSync(`${tmpdir()}/runs-state-`);
   await Promise.all(['simulation', 'render'].map(kind => startHelper(t, { bootstrap, kind, state })));
   const present = async () =>
-    (await h.agent('runs/helper', job.token)).body.kinds.map((kind: { present: boolean }) => kind.present);
+    (await h.agent('runs/helper', job.token)).body.kinds.map((kind: { lentPresent: boolean }) => kind.lentPresent);
   await new Promise(resolve => setTimeout(resolve, 500));
   assert.deepEqual(await present(), [false, false], 'no key yet');
   saveKey(lent.keyCommand, `${state}/key`);
@@ -1508,6 +1639,83 @@ test("a machine set up with its install command: one command with its key, the m
   await h.finish(job);
 });
 
+test("a lent machine's manager says what the machine has: HQ shows it as the machine's size, apart from its helpers' caps, and sizes a kind's caps given as a share of it there; before it says, no helper of that kind, and why", async t => {
+  h.declareKinds(
+    t,
+    `
+    voice:
+      cpus: 75%
+      memoryGb: 50%
+      lentOnly: true
+    tests:
+      cpus: 8
+      memoryGb: 6
+    bad-share: { cpus: 150% }
+    bad-memory-share: { memoryGb: "0%" }
+`,
+  );
+  await lendNone();
+  const added = await lend('the rig');
+  lentKey = added.key;
+  type Setup = { kinds: { name: string; cpus: number; memoryGb: number }[] };
+  const capsOf = async (said: unknown) =>
+    Object.fromEntries(
+      ((await asHelper('/api/helper/setup', said)).json as Setup).kinds.map(kind => [
+        kind.name,
+        [kind.cpus, kind.memoryGb],
+      ]),
+    );
+  assert.deepEqual(await capsOf({}), { tests: [8, 6] }, "a size it hasn't said: no helper of a share");
+  const unsized =
+    /its manager hasn't said the machine's size, and the kind's caps are a share of it: paste the install command/;
+  const rigOf = async () => (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id);
+  assert.match((await rigOf()).problems.voice, unsized);
+  const handStarted = (await h.board('/api/machines/setup')).body.kinds;
+  assert.match(handStarted.find((kind: { name: string }) => kind.name === 'voice').commands.why, unsized);
+  assert.match(
+    handStarted.find((kind: { name: string }) => kind.name === 'tests').commands.start,
+    / --cpus 8 --memory 6g /,
+  );
+  // a 96 GB machine, as its kernel counts it
+  const host = { cores: 16, threads: 32, memoryMb: 96 * 1024 - 1800 };
+  assert.deepEqual(await capsOf({ host }), { voice: [24, 47], tests: [8, 6] }, 'a share of it, fixed caps as given');
+  assert.equal((await rigOf()).problems.voice, undefined);
+  for (const [odd, why] of [
+    [{ threads: 'many', memoryMb: 2048 }, /host\.threads: a whole number/],
+    [{ cores: 1.5, threads: 32, memoryMb: 2048 }, /host\.cores: a whole number/],
+    [{ cores: 64, threads: 32, memoryMb: 2048 }, /host\.cores: no more than host\.threads/],
+    ['big', /host: \{ cores, threads, memoryMb \}/],
+  ] as const) {
+    const refused = await asHelper('/api/helper/setup', { host: odd });
+    assert.equal(refused.status, 400, JSON.stringify(odd));
+    assert.match(refused.json.error, why);
+  }
+  assert.deepEqual(await capsOf({}), { voice: [24, 47], tests: [8, 6] }, 'the size it said, kept');
+
+  // its helpers say their containers' caps, which stay the most a run gets there
+  await asHelper('/api/helper/take', { kind: 'voice', cpus: 24, memoryGb: 47, bench: 100 });
+  const listed = (await h.board('/api/machines')).body;
+  const rig = listed.find((one: { id: unknown }) => one.id === added.id);
+  assert.deepEqual([rig.host, rig.cpus, rig.memoryGb], [{ cores: 16, threads: 32, memoryGb: 94 }, 24, 47]);
+  const server = listed.find((one: { id: unknown }) => one.id === 'server');
+  assert.equal(server.host.threads, cpus().length, "this server's own, as HQ sees it");
+  assert.equal(server.host.memoryGb, Math.round(Math.round(totalmem() / 2 ** 20) / 1024));
+  await asHelper('/api/helper/setup', { host: { cores: null, threads: 32, memoryMb: 2048 } });
+  assert.deepEqual((await rigOf()).host, { cores: null, threads: 32, memoryGb: 2 }, 'cores not told apart');
+
+  await asHelper('/api/helper/setup', { host });
+  const job = await h.start({ agent: 'bolt' });
+  assert.match(
+    (await hqIn(tmpdir(), job, 'run', 'helper')).out,
+    /the rig: taking, speed 2400, 16 cores, 32 threads and 94 GB, helpers of voice/,
+  );
+  assert.deepEqual((await h.agent('runs/helper', job.token)).body.leftOut, [
+    { name: 'bad-share', why: 'cpus: a whole number above 0, or a share of the machine from 1% to 100%' },
+    { name: 'bad-memory-share', why: 'memoryGb: a whole number above 0, or a share of the machine from 1% to 100%' },
+  ]);
+  await h.finish(job);
+});
+
 // A Docker Engine on a socket for the manager: it has the manager's own image and makes containers, but a kind's image
 // never pulls, in turn refused at once with a 404 and Docker's words (an unknown digest, a refused sign-in), and failing
 // on the way, its error on the stream's last line with a 200 (a full disk). It keeps the containers it's asked to make
@@ -1595,6 +1803,10 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   });
   t.after(() => manager.kill());
   await until(async () => (await managerOf())?.state === 'current', 'the manager calls with its code', 15_000);
+  // what the machine has, as the manager sees it with no caps of its own
+  const { host } = await machine();
+  assert.deepEqual([host.threads, host.memoryGb], [cpus().length, Math.round(Math.round(totalmem() / 2 ** 20) / 1024)]);
+  assert.ok(host.cores === null || (host.cores >= 1 && host.cores <= host.threads), JSON.stringify(host));
   // why its helpers aren't in step, in Docker's own words, at its next call
   await until(async () => Object.keys((await machine()).problems).length === 2, 'its problems', 15_000);
   manager.kill();

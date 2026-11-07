@@ -69,9 +69,9 @@ async function offload(root: string, ref: string, request: object) {
     signal: AbortSignal.timeout(30_000),
   });
   if (!answer.ok) throw new Error(`Render helper discovery failed: HTTP ${answer.status}`);
-  // the kind org.yaml's runs.browser names.
-  const helpers = (await answer.json()) as { browser: string; kinds: { name: string; present: boolean }[] };
-  if (!helpers.kinds.some(kind => kind.name === helpers.browser && kind.present)) return undefined;
+  // the kind org.yaml's runs.browser names, on a lent machine.
+  const helpers = (await answer.json()) as { browser: string; kinds: { name: string; lentPresent: boolean }[] };
+  if (!helpers.kinds.some(kind => kind.name === helpers.browser && kind.lentPresent)) return undefined;
   return onLent(root, {
     what: 'Browser render',
     kind: helpers.browser,

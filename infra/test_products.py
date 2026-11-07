@@ -953,6 +953,21 @@ check("run helpers: each takes its kind's runs, with the server's caps, no GPUs,
           and v['cap_drop'] == ['ALL'] and v['cap_add'] == ['SETUID', 'SETGID'] and v['read_only'] is True
           and v['security_opt'] == ['no-new-privileges:true'] and v['volumes'] == ['/etc/testco/runs-token:/state/key:ro']
           and 'gpu' not in json.dumps(v).lower() for n, v in helpers.items()))
+publish([{'name': 'tests', 'image': 'node:24.22.1-slim', 'sockets': True, 'serverImage': 'service:worker'}])
+services = run()[0]['services']
+checks = services['run-helper-tests']
+check("socket helper: closed network, locked, behind the registry proxy, with the server's share",
+      checks['networks'] == ['runs'] and checks['environment']['HELPER_LOCKED'] == '1'
+      and checks['build']['args']['IMAGE'] == 'run-base'
+      and checks['build']['additional_contexts'] == {'run-base': 'service:worker'}
+      and checks['environment']['HTTPS_PROXY'] == 'http://run-proxy:3128'
+      and (checks['cpus'], checks['mem_limit']) == (4, '3g')
+      and services['run-proxy']['networks'] == ['runs', 'default']
+      and services['run-proxy']['environment']['MANAGER'] == 'proxy'
+      and 'volumes' not in services['run-proxy'])
+publish([{'name': 'tests', 'image': 'node:24.22.1-slim', 'serverImage': path} for path in ['generated/../..', 'https://example.com/x.tar']]
+        + [{'name': 'fine', 'image': 'node:24.22.1-slim'}])
+check("run helpers: none for a published serverImage that isn't a compose service", list(runHelpers(run()[0])) == ['run-helper-fine'])
 publish([{'name': 'Films', 'image': 'node'}, {'name': 'shell', 'image': 'node;rm -rf /'}, {'name': 'no-image', 'image': 10},
          {'name': 'render'}, 'bare', {'name': 'fine', 'image': 'node:24.22.1-slim'}])
 check("run helpers: none for a published name or image outside runs.ts's rules", list(runHelpers(run()[0])) == ['run-helper-fine'])

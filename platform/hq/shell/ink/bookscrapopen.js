@@ -40,6 +40,8 @@ export function mountScrapOpen(book, hooks) {
     sheet: div('bk-sheet'),
     keys: div('bk-sheet-keys'),
   });
+  // (Select's bar and a minimised call keep clear of Klaar and ⋯.)
+  st.keys.setAttribute('data-keep-clear', '');
   st.lift.append(st.shade, st.flyer);
   st.flyer.append(st.sheet);
   const done = onEveryTap(button({ text: word('done'), label: word('done') }), () => close(st));

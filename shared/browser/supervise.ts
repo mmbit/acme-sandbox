@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url';
 // Four Playwright operation budgets (30 s each) without a completed harness step means the render has stalled.
 const IDLE_MS = 4 * 30_000;
 const MINUTES = 30;
+// The machine's one browser slot: an exclusive kernel lock on the shared /run/lock, which only the render's watch holds
+// (libuv closes the lock's descriptor in what it starts). HQ_RENDER_SLOT: a test's lock file of its own, so a test never
+// takes, or leaves held, the slot every job's renders wait for. The worker ends a holder past its bound (its
+// browserslot.ts).
+const slot = () => process.env.HQ_RENDER_SLOT || '/run/lock';
 const SCRIPT = fileURLToPath(import.meta.url);
 const REAPER = fileURLToPath(new URL('reaper.pl', import.meta.url)); // the render's parent, and its subreaper
 
@@ -18,8 +23,8 @@ export async function supervise(entry: string, args: string[], options: Options)
   const minutes = options.minutes ?? MINUTES,
     asked = Date.now();
   const command = [process.execPath, SCRIPT, entry, ...args];
-  const slot = ['flock', '--exclusive', '--no-fork', '--timeout', String(minutes * 60), '--conflict-exit-code', '124'];
-  const argv = options.lock ? [...slot, '/run/lock', ...command] : command;
+  const flock = ['flock', '--exclusive', '--no-fork', '--timeout', String(minutes * 60), '--conflict-exit-code', '124'];
+  const argv = options.lock ? [...flock, slot(), ...command] : command;
   const child = spawn('perl', [REAPER, ...argv], {
     cwd: options.cwd,
     env: {

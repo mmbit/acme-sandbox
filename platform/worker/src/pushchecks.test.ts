@@ -220,6 +220,21 @@ test("each launch asks again whether a lent machine's helper is there: one that 
   rmSync(dir, { recursive: true });
 });
 
+test('a helper that appears during a local turn wait takes the check without launching it locally', async () => {
+  const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+  const tests: CheckSpec = {
+    ...stand(dir, 'tests', 'echo local'),
+    lent: { launch: stand(dir, 'tests-lent', 'echo helper').launch, present: async () => false },
+    here: async (_launch, _fresh, lent) => lent!(),
+  };
+  const checked = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [tests], options(dir, []));
+  assert.deepEqual(checked.tests, { passed: true, report: 'helper' });
+  assert.equal(launches(dir), 'tests-lent\n');
+  rmSync(dir, { recursive: true });
+});
+
 test('a check that lost HQ (exit 3) waits until HQ answers and runs again on the same commit, never counted; three in a row, and the next counts', async () => {
   const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
   // unreached on its first launch, passing on its second

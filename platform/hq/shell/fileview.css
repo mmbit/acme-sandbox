@@ -1,0 +1,114 @@
+/* A file opened in the pinned app (fileview.js): over HQ, its name and keys on a bar below iOS's blurred band
+   (style.css's --sat), the file filling the rest. */
+dialog.fileview {
+  position: fixed;
+  inset: 0;
+  /* the page's width: the top layer is placed by the window, beside the book. */
+  width: calc(100vw - var(--book-room, 0px));
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  background: var(--paper);
+  overscroll-behavior: contain;
+}
+dialog.fileview::backdrop {
+  background: rgb(0 0 0 / 60%);
+}
+.fileview header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(10px, var(--sat)) max(12px, var(--sar)) 10px max(12px, var(--sal));
+  border-bottom: var(--bw) solid var(--line);
+  background: var(--cream);
+}
+.fileview header .fn {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileview-save,
+.fileview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: var(--bw) solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.fileview-save {
+  color: var(--on-accent);
+  background: var(--gold);
+}
+.fileview-close {
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+.fileview-save[hidden] {
+  display: none;
+}
+.fileview-save:active,
+.fileview-close:active {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
+}
+.fileview-save svg {
+  width: 16px;
+  height: 16px;
+  shape-rendering: var(--icons, auto);
+}
+.fileview-said {
+  margin: 0;
+  padding: 8px max(12px, var(--sar)) 8px max(12px, var(--sal));
+}
+.fileview-said:empty {
+  display: none;
+}
+.fileview-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 var(--sar) var(--sab) var(--sal);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.fileview-body img,
+.fileview-body video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.fileview-body iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.fileview-body .listen {
+  width: min(520px, calc(100% - 24px));
+}
+.fileview-note {
+  margin: 24px;
+  max-width: 36em;
+  text-align: center;
+  color: var(--muted);
+}

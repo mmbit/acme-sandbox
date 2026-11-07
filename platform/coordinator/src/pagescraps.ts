@@ -8,6 +8,7 @@ import { DATA_DIR } from './config.ts';
 import { keepFile } from './uploads.ts';
 import { pictureSize } from '../../../shared/pictures/size.ts';
 import type { Refused } from './pagechecks.ts';
+import { layerOk } from '../../hq/shell/ink/booklayers.js';
 
 export const DIR = `${DATA_DIR}/book`;
 // A scrap lies anywhere a page grows to, either side of its heading, and may hang off it a little (SCRAP_XY),
@@ -27,7 +28,8 @@ const SCRAP_XY = { min: -24_000, max: 24_000 },
 
 // An element's own id (a typed line's, a stroke's, a picture's): 12 hex digits
 export const LINE_ID = /^[0-9a-f]{12}$/;
-// drawing: an agent's drawing on a clear ground (drawing.ts), lines straight on what's under it with no tape or edge
+// drawing: an agent's drawing on a clear ground (drawing.ts), lines straight on what's under it with no tape or edge.
+// layer: its place in the stack (booklayers.js layerOk)
 export type Scrap = {
   file: string;
   x: number;
@@ -37,6 +39,7 @@ export type Scrap = {
   tilt: number;
   drawing?: true;
   id?: string;
+  layer?: number;
 };
 export const isScrap = (id: number, file: unknown) =>
   typeof file === 'string' && new RegExp(`^${id}-s-[0-9a-f]{8}\\.(png|jpg)$`).test(file);
@@ -90,7 +93,9 @@ export function scrapsOf(
     if (c.id !== undefined && !(typeof c.id === 'string' && LINE_ID.test(c.id)))
       return [400, 'a picture’s id is 12 hex digits'];
     const id = c.id === undefined ? {} : { id: c.id as string };
-    scraps.push({ file: c.file, ...place, ...(c.drawing === true && { drawing: true }), ...id });
+    if (c.layer !== undefined && !layerOk(c.layer)) return [400, 'a picture’s layer is a whole number from 0'];
+    const layer = c.layer === undefined ? {} : { layer: c.layer as number };
+    scraps.push({ file: c.file, ...place, ...(c.drawing === true && { drawing: true }), ...id, ...layer });
   }
   return scraps;
 }

@@ -242,6 +242,6 @@ async function went(spine, kind, box, layer, v = shown(spine.book)) {
   if (layer) fold(layer.getBoundingClientRect(), layer, box);
   else fold(book.desk.getBoundingClientRect(), picture(book.desk), box);
   const files = spine.files;
-  // (a file downloaded, never the share sheet)
+  // (a file downloaded)
   (kind === 'call' ? callAbout(v.page, files.png) : downloaded(files[kind])).catch(e => said(book, v.page, e.message));
 }

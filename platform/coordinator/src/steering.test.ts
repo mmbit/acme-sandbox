@@ -177,7 +177,7 @@ test('a correction for a paused CEO job stays there while another CEO run reads 
   const chief = await h.start({ agent: ceo(), engine: 'claude' });
   await h.finish(chief, { status: 'interrupted', session: 'kept-ceo-session' });
   const correction = 'Stop the old work: the board replaced the call item';
-  const sent = messages.send({ agent: sender.agent, job: sender.id }, ceo(), correction, chief.id);
+  const sent = messages.send({ agent: sender.agent, job: sender.id }, ceo(), correction, { only: chief.id });
   assert.equal(typeof sent, 'object');
   const id = (sent as { id: number }).id;
   const other = await h.start({ agent: ceo(), kind: 'chat' });

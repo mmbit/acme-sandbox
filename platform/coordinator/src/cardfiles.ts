@@ -1,6 +1,7 @@
 // Files on a desk-phone card: an agent hands the board files it puts in place
 // itself (a site's pages, a config), with hq ask --file <path> (several), instead of pasting each into a block to copy and
-// save by hand. The card shows each as a download by its name, and its steps say where to put it.
+// save by hand. The card shows each as a download by its name (a sound in a player: listen.js), and its steps say where
+// to put it.
 //   - Kept with the card, as the outbox keeps an email's attachments: the bytes in the table, as the agent sent them,
 //     but for keys: a UTF-8 text file goes through the same redaction as every text an agent writes (charter rule 8), so
 //     a key the company holds then is its name. That's at filing only: a key saved later isn't scrubbed from the bytes.
@@ -12,7 +13,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { db, redacted } from './db.ts';
 import { redact } from './events.ts';
-import { attachment } from './files.ts';
+import { attachment, rangeOf } from './files.ts';
+import { typeOf } from './types.ts';
 
 db.exec(`create table if not exists request_files (request integer not null, n integer not null, name text not null,
   size integer not null, bytes blob, primary key (request, n))`);
@@ -115,32 +117,51 @@ export const of = (request: number) =>
 // GET /api/requests/file?id=<request>&n=<n>: one of a card's files, for the board (behind HQ's sign-in), as a download
 export function serve(req: IncomingMessage, res: ServerResponse) {
   const q = new URL(req.url ?? '/', 'http://x').searchParams;
-  if (send(res, Number(q.get('id')), Number(q.get('n')))) return;
+  if (send(req, res, Number(q.get('id')), Number(q.get('n')))) return;
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not found');
 }
 
 // One of a card's files as a download: false when the card has none by that number, or its bytes are gone
-export const send = (res: ServerResponse, request: number, n: number) => download(res, request, n, '');
+export const send = (req: IncomingMessage, res: ServerResponse, request: number, n: number) =>
+  download(req, res, request, n, '');
 // The same, only for a file under a guest checklist item (the guest's page: guests.ts)
-export const sendItemFile = (res: ServerResponse, request: number, n: number) =>
-  download(res, request, n, ' and item is not null');
-function download(res: ServerResponse, request: number, n: number, only: string) {
+export const sendItemFile = (req: IncomingMessage, res: ServerResponse, request: number, n: number) =>
+  download(req, res, request, n, ' and item is not null');
+// A sound, a film or a raster picture goes with its own type and by the byte range asked, so the desk phone's player
+// can play it (Safari plays nothing without a range). Every other file stays plain bytes. Either way it is never a page
+// on HQ's origin: nosniff, the attachment and the sandbox hold for all.
+function download(req: IncomingMessage, res: ServerResponse, request: number, n: number, only: string) {
   const f = db
     .prepare(`select name, bytes from request_files where request = ? and n = ? and bytes is not null${only}`)
     .get(request, n) as { name: string; bytes: Uint8Array } | undefined;
   if (!f) return false;
-  res.writeHead(200, {
-    'content-type': 'application/octet-stream',
-    'content-length': f.bytes.length,
+  const size = f.bytes.length,
+    range = rangeOf(req.headers.range, size);
+  const kept = {
     'content-disposition': attachment(f.name),
     'cache-control': 'private, no-cache',
     'x-content-type-options': 'nosniff',
     'content-security-policy': "default-src 'none'; sandbox",
+  };
+  if (!range) {
+    res.writeHead(416, { ...kept, 'content-range': `bytes */${size}` });
+    res.end();
+    return true;
+  }
+  const { start, end, partial } = range;
+  res.writeHead(partial ? 206 : 200, {
+    ...kept,
+    'content-type': PLAYED.test(f.name) ? typeOf(f.name)! : 'application/octet-stream',
+    'content-length': end - start + 1,
+    'accept-ranges': 'bytes',
+    ...(partial ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
   });
-  res.end(Buffer.from(f.bytes));
+  res.end(Buffer.from(f.bytes.subarray(start, end + 1)));
   return true;
 }
+// (raster pictures only: an SVG may carry script)
+const PLAYED = /\.(?:mp3|m4a|wav|mp4|webm|png|jpe?g|webp|gif)$/i;
 
 // The bytes of cards answered or closed more than KEEP_DAYS ago go; their names stay on the card
 export function sweep(now = Date.now()) {

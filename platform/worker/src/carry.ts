@@ -1,15 +1,15 @@
-// A job on a pull request's branch (a fix round, a touch-up check, the board's notes) goes on in its author's last session
-// there, from the home the worker keeps of that job while the pull request can still merge (worker.ts settle; the
-// coordinator's jobs.ts resumes and ended).
+// A job on a pull request's branch (a touch-up check, the board's notes) goes on in its author's last session there, from
+// the home the worker keeps of that job while the pull request can still merge (worker.ts settle; the coordinator's
+// jobs.ts resumes and ended). A Claude fix round starts fresh, from the closing reports.
 import { existsSync } from 'node:fs';
 import { resumeOn } from './clis.ts';
 import { runAs, type Agent } from './git.ts';
 import { jobDirs, own } from './slots.ts';
 
 // The job whose session it goes on in, and that session as the job saved it: the coordinator sends it only while the
-// session is warm on the claiming seat (its carryover.ts), so it's this seat's account.
+// session is warm on the claiming seat, and never for a Claude fix round (its carryover.ts), so it's this seat's account.
 export type Resumes = { job: number; session: string };
-// Or, once that session has gone cold, the author's done jobs on the branch with their closing reports, oldest first
+// Or the author's done jobs on the branch with their closing reports, oldest first
 // (the coordinator's carryover.ts)
 export type ClosingReports = { reports: { job: number; report: string }[] };
 
@@ -51,13 +51,11 @@ export function carrySession(work: string, job: Carried, cli: string, me: Agent)
   return null;
 }
 
-// A job whose author's session went cold starts a fresh session. Its briefing gets, beside its brief, what the author
-// wrote at the end of each job on the branch, and the branch's own commits (`git log`, one line each).
+// A fresh session gets the author's closing reports and the branch's commits beside its brief.
 export function closingLines(closing: ClosingReports, log: string) {
   const reports = closing.reports.map(r => `Job #${r.job}'s closing report:\n\n${r.report.trim()}`).join('\n\n');
-  return `This job goes on with work already on this branch, in a new session: the session that did that work ended over
-an hour ago. What its author wrote as each job on the branch ended, and the branch's commits, are below. Start from
-them and the code, rather than redoing what's there.
+  return `This job continues work already on this branch in a new session. The author's closing reports and the branch's
+commits are below. Start from them and the code, rather than redoing what's there.
 
 ${reports}
 

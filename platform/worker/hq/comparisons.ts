@@ -1,11 +1,13 @@
 // Past jobs and timing exclusions shown before a queuer judges scope.
 import { costLines, taskCostLine, type FeatureCost } from './costs.ts';
 import type { TaskTime, TaskTimingFlag } from '../../coordinator/src/tasktime.ts';
+import type { Scope } from '../../coordinator/src/carryscope.ts';
 import { duration } from './waits.ts';
 import { minute, plural, print } from './output.ts';
 
 export type Job = {
   origin?: string;
+  check_scope?: { sha: string; required: Scope | null } | null;
   id: number;
   agent: string;
   title: string;
@@ -72,6 +74,7 @@ function jobLines(j: Job) {
     lines.push(
       `  Measured ${workDuration(j.agent_minutes, j.origin)}, now about ${workDuration(j.adjusted.agent_minutes, j.origin)}: ${j.adjusted.why} (${j.adjusted.by}, ${minute(j.adjusted.at)}). Comparisons count the adjusted time.`,
     );
+  if (j.check_scope) lines.push(checkScopeLine(j.check_scope));
   lines.push(wholeLine(j.whole, j.origin));
   if (j.whole.cost) lines.push(taskCostLine('Whole-task tokens', j.whole.cost));
   lines.push(...costLines(j.feature_cost));
@@ -83,6 +86,14 @@ function jobLines(j: Job) {
   if (j.report) lines.push(`  Report: ${j.report}`);
   if (j.timing_quality?.length) lines.push(`  Timing flags: ${j.timing_quality.join(', ')}`);
   return lines;
+}
+
+function checkScopeLine(scope: NonNullable<Job['check_scope']>) {
+  const { required } = scope;
+  const checks = required
+    ? `type check ${required.typecheck ? 'required' : 'not required'}, test areas ${required.tests.join(', ') || 'none'}`
+    : 'required checks unknown';
+  return `  Commit ${scope.sha} against its first parent: ${checks}.`;
 }
 
 function wholeLine(whole: Job['whole'], origin?: string) {

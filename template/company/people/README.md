@@ -6,6 +6,8 @@ and continuity comes from this file, the knowledge base and git history.
 - Every agent has a unique name that is never reused, not even after it retires.
 - The agent that creates a new agent names it, adds it to `org.yaml`, and creates its file here from the template.
 - Agents that finish their work move to `alumni` in `org.yaml`. Their file stays.
+- Keep working memory as the Memory playbook says. For a CEO profile, replace the template's memory text with:
+  "My lessons are on my page (`hq pad`), the one place I keep them true."
 
 ## Template
 

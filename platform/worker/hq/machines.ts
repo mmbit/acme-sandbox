@@ -23,17 +23,22 @@ export type Machine = {
     speed: number | null;
     cpus: number | null;
     memoryGb: number | null;
+    // what it has, as its manager measured it (null: it hasn't said).
+    host: { cores: number | null; threads: number; memoryGb: number } | null;
     gpu: string | null;
     // the kinds whose helpers on it are asking for work or beating
     kinds: string[];
     // its manager while its helpers ask: in step, on code HQ no longer serves, or not heard from for hours (null: none)
     // ('updating')
     manager?: { state: 'current' | 'updating' | 'old' | 'quiet'; seen: string } | null;
-    // why its helpers aren't in step, as its manager last said while it still calls, helpers present or not: { helper's
-    // container: message }
+    // why its helpers aren't in step: its manager's last word while it still calls, helpers present or not, by helper's
+    // container, and HQ's, by kind (a kind it gives no helper there): { container or kind: message }
     problems?: Record<string, string>;
   }[];
   kinds: (Presence & {
+    // present: a helper that may take its runs is asking for work, on a lent machine or this server; lentPresent: on a
+    // lent machine
+    lentPresent: boolean;
     name: string;
     about: string;
     image: string;
@@ -41,6 +46,7 @@ export type Machine = {
     lentOnly: boolean;
     checkout: boolean;
     browsers: boolean;
+    tools: boolean;
     server: Presence;
     serverTakes: boolean;
     // the work this kind holds in the queue until a lent machine has finished a run of it, in a line ('' for none)
@@ -64,9 +70,9 @@ export async function showHelper() {
       : `${machine.name}: no machine yet (the board adds them in HQ's Settings › Machines)`,
     ...machine.machines.flatMap(one => [
       `  ${one.name}: ${one.state}${machineLine(one)}${managerLine(one)}`,
-      ...Object.entries(one.problems ?? {}).map(([helper, why]) => `    ${helper} isn't in step: ${why}`),
+      ...Object.entries(one.problems ?? {}).map(([name, why]) => `    ${name} isn't in step: ${why}`),
     ]),
-    ...machine.kinds.map(kind => `  ${kind.name}: ${asking(kind.present)}${presenceLine(kind)}`),
+    ...machine.kinds.map(kind => `  ${kind.name}: ${asking(kind.lentPresent)}${presenceLine(kind)}`),
     ...machine.leftOut.map(kind => `  ${kind.name}: left out of org.yaml's runs.kinds: ${kind.why}`),
     `${SERVER}, one per kind of run in the kind's image:`,
     ...machine.kinds.map(kind => {
@@ -91,7 +97,7 @@ export async function showHelper() {
   for (const kind of machine.kinds)
     print(
       '',
-      `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''})`,
+      `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''}${kind.tools ? ", the worker's infrastructure tools" : ''})`,
     );
   if (!machine.kinds.length) return;
   print(
@@ -104,9 +110,16 @@ export async function showHelper() {
   );
 }
 
-function machineLine({ speed, cpus, memoryGb, gpu, kinds }: Machine['machines'][number]) {
-  const size = cpus ? `, ${cpus} cores and ${memoryGb} GB${gpu ? `, ${gpu}` : ''}` : '';
+// (each kind's line says what its helpers there get)
+function machineLine({ speed, host, gpu, kinds }: Machine['machines'][number]) {
+  const size = host ? `, ${hostLine(host)}${gpu ? `, ${gpu}` : ''}` : '';
   return `${speed ? `, speed ${speed}` : ''}${size}${kinds.length ? `, helpers of ${kinds.join(', ')}` : ''}`;
+}
+
+function hostLine({ cores, threads, memoryGb }: NonNullable<Machine['machines'][number]['host']>) {
+  const cpus =
+    cores === threads ? `${cores} cores` : cores ? `${cores} cores, ${threads} threads` : `${threads} threads`;
+  return `${cpus} and ${memoryGb} GB`;
 }
 
 function managerLine({ manager }: Machine['machines'][number]) {

@@ -674,3 +674,29 @@ test("an element's own id is kept through a save, and one that isn't 12 hex digi
   assert.equal((await draw(page, [{ ...stroke(10, 10), id: 'not-an-id' }])).status, 400);
   await h.board('/api/notebooks/groups/delete', { id: made.id });
 });
+
+test("a line's place in its scrap's stack is kept through a save, and one that isn't a whole number from 0 is refused", async () => {
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: await myNotebook() })).body.id;
+  const made = (await draw(page, [{ ...stroke(10, 10), layer: 0 }, stroke(40, 10)])).body;
+  assert.deepEqual(
+    made.ink.map((s: { layer?: number }) => s.layer),
+    [0, undefined],
+  );
+  const edited = (
+    await h.board('/api/notebooks/groups/edit', {
+      id: made.id,
+      since: made.updated,
+      ink: [
+        { ...stroke(10, 10), layer: 1 },
+        { ...stroke(40, 10), layer: 0 },
+      ],
+    })
+  ).body;
+  assert.deepEqual(
+    edited.ink.map((s: { layer?: number }) => s.layer),
+    [1, 0],
+    'sent back, it keeps its new place',
+  );
+  for (const layer of [-1, 1.5, '2']) assert.equal((await draw(page, [{ ...stroke(10, 10), layer }])).status, 400);
+  await h.board('/api/notebooks/groups/delete', { id: made.id });
+});

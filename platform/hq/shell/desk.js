@@ -49,6 +49,7 @@ import { askAgain } from '/ask.js';   // a button that asks once more (shared/as
 import { prose, fencedLines, linked, bare, BOLD, covered, jobNameLink, jobsIn, withJobLinks } from './prose.js';   // (job links, covered)
 import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in its steps)
 import { icon } from './icons.js';
+import { isSound, playerHtml } from './listen.js';
 import { SIGNS, alertHtml, tell } from './alert.js';   // (and share)
 import { share } from './share.js';
 import { Tray, shrink } from './tray.js';
@@ -1089,9 +1090,15 @@ function mailFilesHtml(r, m) {
 // the steps that say where it goes; a month after the card closed, its name alone
 const filesHtml = r => fileListHtml((r.files ?? []).map(f => ({ ...f, src: f.kept ? `/api/requests/file?id=${Number(r.id)}&n=${Number(f.n)}` : null })));
 // files to download, each { name, size, src } (src: null once its bytes are gone): a card's, or a guest checklist item's
-const fileListHtml = files => files.length ? `<ul class="files">${files.map(f => `<li>${f.src
-  ? `<a href="${esc(f.src)}" download="${esc(f.name)}">${DOWNLOAD}<span class="fn">${esc(f.name)}</span></a>`
-  : `<span class="fn">${esc(f.name)}</span>`}<span class="size">${bytes(f.size)}</span></li>`).join('')}</ul>` : '';
+const fileListHtml = files => files.length ? `<ul class="files">${files.map(f => `<li>${fileHtml(f)}</li>`).join('')}</ul>` : '';
+// A sound plays on the card in its own player, with a key to save it.
+function fileHtml(f) {
+  const size = `<span class="size">${bytes(f.size)}</span>`, name = esc(f.name);
+  if (!f.src) return `<span class="fn">${name}</span>${size}`;
+  const link = `href="${esc(f.src)}" download="${name}"`;
+  if (isSound(f.name)) return playerHtml(f, `${size}<a class="save" ${link} aria-label="Save ${name}">${DOWNLOAD}</a>`);
+  return `<a ${link}>${DOWNLOAD}<span class="fn">${name}</span></a>${size}`;
+}
 // The board's edits are kept on this device like a card's answers (a redraw, a reload or closing the phone keeps them),
 // until it sends or discards the email
 const mailKey = m => `mail.${m.id}`;
@@ -1697,8 +1704,7 @@ const zipBox = (r, i, z) => `
     </label>`;
 function zipFields(r) {
   if (!r.zips?.length) return '';
-  return `<div class="photos files" role="group" aria-label="Zips">${r.zips.map((z, i) => zipBox(r, i, z)).join('')}
-    <p class="hint">Pick the zip as it is, or a single file. It goes in parts: if the connection drops, it carries on by itself, or pick the same file again. The server unpacks it as it arrives, and leaves out what a computer can rebuild, like node_modules.</p></div>`;
+  return `<div class="photos files" role="group" aria-label="Zips">${r.zips.map((z, i) => zipBox(r, i, z)).join('')}</div>`;
 }
 function wireZips(el, r) {
   const msg = (t, problem = false) => { const m = $('#answer-msg'); if (problem) tell(m, t); else if (m) m.textContent = t; };

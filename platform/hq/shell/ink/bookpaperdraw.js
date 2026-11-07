@@ -2,7 +2,7 @@
 // page as a picture to share (bookshare.js), or a few things on their own, the picture a crumple plays on
 // (bookpaper.js). The same order and look as the page's tiles (bookpage.js) and the store's picture (bookrender.ts).
 import { draw } from '/__review/ink.js';
-import { layered } from '/__review/inkshape.js';
+import { runsOf } from './booklayers.js';
 import { drawScrap } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
 import { pageBox } from './bookrow.js';
@@ -81,10 +81,12 @@ export function thingsPicture(v, things, extent, scale, card = null) {
   return [rect, canvas];
 }
 
-// Pictures under the ink (a highlighter's strokes under the rest, as on paper), the typed words over it
+// Pictures and ink in their stack (booklayers.js: a highlighter's strokes under the rest, as on paper), the typed words
+// over it.
 function paint(g, { ink, scraps, texts }) {
-  for (const s of scraps) drawScrap(g, s);
-  draw(g, layered(ink));
+  for (const run of runsOf(scraps, ink))
+    if (run.ink) draw(g, run.ink);
+    else for (const s of run.pictures) drawScrap(g, s);
   const face = getComputedStyle(document.querySelector('#book .bk-typed-words') ?? document.body).fontFamily,
     line = TEXT.size * TEXT.line;
   g.font = `${TEXT.size}px ${face}`;

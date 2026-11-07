@@ -7,6 +7,7 @@
 // page (its words' own extent) is measured by the caller: boxOfText(t) → { x0, y0, x1, y1 }.
 import { boxOf } from './bookrow.js';
 import { scrapAt } from './bookscrap.js';
+import { stackOf } from './booklayers.js';
 import { LINE } from './bookinkmath.js';
 
 // a drag that strays from the line between its ends by less than this share of that line (or its slop) is a box
@@ -81,16 +82,15 @@ export function picked(poly, { ink, scraps, texts }, boxOfText) {
 const middle = b => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
 
 // The thing on top under a point of the page: { kind: 'ink' | 'scraps' | 'texts', item }, or null. The words are over
-// the ink, a pen's ink over a highlighter's, and those over the pictures (bookpage.js), the last drawn on top. near: how
-// close to a line counts as on it, in page px.
+// the rest, and the pictures and ink lie in their stack (booklayers.js: unmoved, a pen's ink over a highlighter's and
+// those over the pictures), the last drawn on top. near: how close to a line counts as on it, in page px.
 export function topAt(at, { ink, scraps, texts }, boxOfText, near) {
   const text = texts.findLast(t => within(boxOfText(t), at));
   if (text) return { kind: 'texts', item: text };
-  const on = s => onStroke(s, at, near);
-  const stroke = ink.findLast(s => !(s.alpha < 1) && on(s)) ?? ink.findLast(s => s.alpha < 1 && on(s));
-  if (stroke) return { kind: 'ink', item: stroke };
-  const k = scrapAt(scraps, at);
-  return k >= 0 ? { kind: 'scraps', item: scraps[k] } : null;
+  const top = stackOf(scraps, ink).findLast(({ picture, it }) =>
+    picture ? scrapAt([it], at) >= 0 : onStroke(it, at, near),
+  );
+  return top ? { kind: top.picture ? 'scraps' : 'ink', item: top.it } : null;
 }
 export const within = (b, [x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
 // Whether two boxes overlap

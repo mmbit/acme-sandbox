@@ -2,6 +2,7 @@
 // refusals' status and words. Each check throws its refusal, an Error with .status. No DOM.
 import { TEXT_MAX } from './notebookparts.js';
 import { frameOf } from './bookversionframes.js';
+import { layerOk } from './booklayers.js';
 
 // A refusal as the coordinator answers it: a status and its words (a bare status: server.ts's ERRORS word)
 export const refuse = (status, words = status === 404 ? 'not found' : 'refused') => {
@@ -58,10 +59,13 @@ function strokeOf(s) {
   if (s.fill !== undefined && s.fill !== true) return null;
   // (the eraser's pieces of one see-through stroke share a number, as pagechecks.ts keeps it.)
   if (s.cut !== undefined && !(Number.isInteger(s.cut) && s.cut > 0 && s.cut < 2 ** 31)) return null;
+  // (its place in its scrap's stack: booklayers.js layerOk.)
+  if (s.layer !== undefined && !layerOk(s.layer)) return null;
   const alpha = s.alpha === undefined ? {} : { alpha: s.alpha },
     fill = s.fill ? { fill: true } : {},
-    cut = s.cut === undefined ? {} : { cut: s.cut };
-  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, ...cut, points: s.points };
+    cut = s.cut === undefined ? {} : { cut: s.cut },
+    layer = s.layer === undefined ? {} : { layer: s.layer };
+  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, ...cut, points: s.points, ...layer };
 }
 // The words typed on a page: [{ x, y, w, text, color }]
 export function textsOf(v) {
@@ -97,7 +101,13 @@ export function picturesOf(v, ours) {
     if (!within(c.x, SCRAP_XY) || !within(c.y, SCRAP_XY) || !sides || !within(c.tilt, { min: -TILT, max: TILT }))
       refuse(400, 'a picture on the page is { file, x, y, w, h, tilt }, within the page and a half turn');
     const place = { x: round(c.x), y: round(c.y), w: round(c.w), h: round(c.h), tilt: round(c.tilt) };
-    return { file: c.file, ...place, ...(c.drawing === true && { drawing: true }) };
+    if (c.layer !== undefined && !layerOk(c.layer)) refuse(400, 'a picture’s layer is a whole number from 0');
+    return {
+      file: c.file,
+      ...place,
+      ...(c.drawing === true && { drawing: true }),
+      ...(c.layer === undefined ? {} : { layer: c.layer }),
+    };
   });
 }
 // A reply's frame, as notebooksend.ts replyTo refuses one sent unfit (none sent: null).

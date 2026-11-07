@@ -1,6 +1,6 @@
 // Measured review and consolidation durations used by the queue's play.
 import { prepared } from './db.ts';
-import { fitIn, mean } from './arithmetic.ts';
+import { fitIn, mean, wholeSeconds } from './arithmetic.ts';
 
 const MINUTE_MS = 60_000,
   WEEK_MS = 7 * 24 * 60 * MINUTE_MS;
@@ -24,13 +24,26 @@ export function loopSizes(now: number) {
   );
   return (kind: string, pace: Pace) => sizes.get(kind)?.[pace] ?? LOOP_GUESS_MS;
 }
+// The review plan sizes triage, rulings and fixes separately for each engine, excluding unfinished runs.
+export function measuredSizes(now: number) {
+  const measured = weekOfReviews(now).filter(job => !job.running);
+  const groups = Map.groupBy(measured, run => `${run.measuredKind}:${run.engine}`);
+  return new Map(
+    [...groups].map(([key, runs]) => {
+      const times = runs.map(run => run.ms),
+        usualMs = wholeSeconds(mean(times)!);
+      return [key, { usualMs, slowMs: Math.max(usualMs, wholeSeconds(fitIn(times, SLOW_SHARE)!)) }] as const;
+    }),
+  );
+}
+
 // The usual sizes, or the slow ones a time told should hold to.
 export type Pace = 'usual' | 'slow';
 
 // The done review, consolidation and fix jobs with a run that ended in the week before `now`, one row each. `ms` sums
 // those runs' time, and `week_ms` only the ones that also started in the week (null when none did). `measuredKind` is
 // the kind the review plan sizes it by: a triage stage counts as 'triage'. `running` says one of its runs hasn't ended.
-// loopSizes and the review plan's measured sizes (reviewplan.ts records) both read it in every play, so it's kept for
+// loopSizes and measuredSizes both read it in every play, so it's kept for
 // the same `now` while the database is unchanged (total_changes for this connection's writes, data_version for
 // another's).
 // (runs first, by their end, then their jobs; jobs_review_runs covers the jobs columns to skip wide job rows: db.ts.)

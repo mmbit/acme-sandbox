@@ -6,7 +6,7 @@
 // window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page. A box of
 // words' grip starts the same move with any tool (grab).
 import { draw } from '/__review/ink.js';
-import { layered } from '/__review/inkshape.js';
+import { runsOf } from './booklayers.js';
 import { drawScrap } from './bookscrapdraw.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
@@ -113,8 +113,8 @@ function lift(sel, corner) {
   sfx.tick();
   return held;
 }
-// The ink and pictures drawn on a canvas of their own, as the page draws them (pictures, then a highlighter's ink
-// under a pen's), as sharp as the zoom shows them
+// The ink and pictures drawn on a canvas of their own, as the page draws them (in their stack, booklayers.js: a
+// highlighter's ink under a pen's), as sharp as the zoom shows them.
 function canvasFor(book, view, { ink, scraps }, box) {
   const w = box.x1 - box.x0 + 2 * PAD,
     h = box.y1 - box.y0 + 2 * PAD,
@@ -130,8 +130,9 @@ function canvasFor(book, view, { ink, scraps }, box) {
   });
   const g = c.getContext('2d');
   g.setTransform(k, 0, 0, k, (PAD - box.x0) * k, (PAD - box.y0) * k);
-  for (const s of scraps) drawScrap(g, s);
-  draw(g, layered(ink));
+  for (const run of runsOf(scraps, ink))
+    if (run.ink) draw(g, run.ink);
+    else for (const s of run.pictures) drawScrap(g, s);
   view.el.append(c);
   requestAnimationFrame(() => (c.dataset.up = ''));
   return c;

@@ -23,6 +23,8 @@ assert.deepEqual(errors, []);
 - `tap` clicks by script, for scenes whose elements never hold still for Playwright's own click.
 - `until(page, selector, pattern, timeout)` polls on a timer, since a busy scene's frames can hold animation-frame
   polling back for seconds. Without a timeout it takes Playwright's.
+- `withinBudget(running, ms, abandon)` gives a case's run up after `ms`: it calls `abandon()` to close what the case
+  opened and fails with an error whose `stalled` is true, so the next case can run.
 - `listenTo(page)` puts an analyser on the page's `window.sfx` output and returns `level()`, the loudest RMS over the
   next 400 ms in dBFS, to await beside what makes a sound: `const [, on] = await Promise.all([tap(page, s), level()])`.
 
@@ -82,6 +84,10 @@ The kind uses `sockets: true`, so its local page servers run on the manager's cl
 container. If no lent render helper is present, the caller runs on the worker under an exclusive kernel lock on the
 shared `/run/lock` directory. Every job and checkout uses that same inode, across slot users. The supervisor holds the
 lock until its render and all descendants have stopped. No lock file can go stale or be removed by job cleanup.
+Nothing but a render's supervisor takes it: a test gives the supervisor a lock file of its own in `HQ_RENDER_SLOT`
+(`render.test.ts`), so a test never holds the slot every job's renders wait for. Whatever holds it all the same, the
+worker ends once it has held it 40 minutes, well past a render's own bound, and the renders waiting for it go on; the
+worker's log warns what it ended, which HQ's report counts (`platform/worker/src/browserslot.ts`).
 
 
 The supervisor's parent is a small reaper (`reaper.pl`), Linux's child subreaper for the render: detached Chromium

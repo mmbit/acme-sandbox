@@ -791,6 +791,8 @@ test("the mirror's gc keeps what a clone reads after its branch is gone, until n
   await flow.refreshMirror();
   assert.throws(() => mirrorGit('rev-parse', '--verify', 'refs/heads/job/60'));
   assert.ok(!job.ag(originalCloneDir, 'ls-remote', 'origin').includes('refs/kept/'));   // the kept tips are hidden from clones
+  const keptShas = mirrorGit('for-each-ref', '--format=%(objectname)', 'refs/kept/').split('\n');
+  assert.ok(keptShas.includes(sha) && !keptShas.includes(remoteRef('main')!));   // the dropped tip kept on a ref of its own, main's not
   // gc as hard as it goes: a full repack at the next gc (two packs or more), every unreachable object pruned at once
   mirrorGit('config', 'gc.auto', '1'); mirrorGit('config', 'gc.autoPackLimit', '1'); mirrorGit('config', 'gc.pruneExpire', 'now');
   const gc = async (f: typeof flow) => {
@@ -843,7 +845,9 @@ test('a fetch keeps the branch tips before it can drop any, so a worker killed m
   try {
     for (let i = 0; i < 200 && !existsSync(started); i++) await new Promise(ok => setTimeout(ok, 50));
     assert.ok(existsSync(started), 'the fetch never started');
-    assert.ok(mirrorGit('for-each-ref', '--format=%(objectname)', 'refs/kept/').split('\n').includes(sha));   // kept while the fetch runs
+    const keptDuringFetch = mirrorGit('for-each-ref', '--format=%(parent)', 'refs/kept/').split('\n');
+    assert.equal(keptDuringFetch.length, 1);   // every tip kept on one ref while the fetch runs
+    assert.ok(keptDuringFetch[0].split(' ').includes(sha));
     process.kill(-worker.pid!, 'SIGKILL');
     await once(worker, 'exit');
     mirrorGit('config', '--unset', 'remote.origin.uploadpack');
@@ -855,6 +859,37 @@ test('a fetch keeps the branch tips before it can drop any, so a worker killed m
     assert.equal(killedJob.ag(cloneDir, 'show', 'origin/job/62:killed.md'), 'read after the kill');
   } finally {
     if (worker.exitCode === null && worker.signalCode === null) process.kill(-worker.pid!, 'SIGKILL');
+    rmSync(cloneDir, { recursive: true, force: true }); rmSync(mirrorDir, { recursive: true, force: true });
+  }
+});
+
+test("the mirror's gc reads a kept-tip list past Node's 1 MiB default, and releases only expired tips", async () => {
+  const mirrorDir = `${work}/many.git`, mirrorGit = (...a: string[]) => git('--git-dir', mirrorDir, ...a);
+  const cloneDir = `${work}/jobs/63`;
+  const manyFlow = gitFlow({ mirror: mirrorDir, remote: github, base: 'main', clones: () => [cloneDir] });
+  try {
+    manyFlow.ensureMirror(); manyFlow.fetchMirror();
+    mkdirSync(cloneDir, { mode: 0o700 });
+    const bornMs = statSync(cloneDir).birthtimeMs;
+    const tip = mirrorGit('rev-parse', 'main');
+    const lost = mirrorGit('commit-tree', `${tip}^{tree}`, '-p', tip, '-m', 'a branch since dropped');   // on no branch
+    // 64 bytes a name, 1.1 MB in all: a dropped tip kept 17,000 times since the clone was made, 500 times before it,
+    // and main's tip 500 times since, as a fetch whose worker process ended under it leaves it. Written packed: as
+    // loose refs, 18,000 take seconds.
+    const kept = (n: number, sinceMs: (i: number) => number, sha: string) => Array.from({ length: n }, (_, i) => `refs/kept/${sinceMs(i)}/${sha}`);
+    const before = (i: number) => Math.floor(bornMs) - 1 - i, since = (i: number) => Math.ceil(bornMs) + 1 + i;
+    const refs = [...kept(17_000, since, lost), ...kept(500, before, lost), ...kept(500, i => since(17_000 + i), tip)];
+    assert.ok(refs.join('\n').length > 1 << 20);
+    mirrorGit('pack-refs', '--all');
+    const packed = readFileSync(`${mirrorDir}/packed-refs`, 'utf8').split('\n').filter(l => l && !l.startsWith('#'));
+    const lines = [...packed, ...refs.map(ref => `${ref.slice(-40)} ${ref}`)].sort((a, b) => (a.slice(41) < b.slice(41) ? -1 : 1));
+    writeFileSync(`${mirrorDir}/packed-refs`, `# pack-refs with: peeled fully-peeled sorted \n${lines.join('\n')}\n`);
+    await manyFlow.gcMirror();
+    const left = mirrorGit('for-each-ref', '--format=%(objectname)', 'refs/kept/').split('\n');
+    assert.equal(left.length, 17_500);   // all live clone pins, including current branch tips
+    assert.equal(left.filter(sha => sha === lost).length, 17_000);
+    assert.equal(left.filter(sha => sha === tip).length, 500);
+  } finally {
     rmSync(cloneDir, { recursive: true, force: true }); rmSync(mirrorDir, { recursive: true, force: true });
   }
 });
@@ -929,20 +964,23 @@ test("a commit main took outside a pull request is tested against main before it
   flow.ensureMirror(); flow.fetchMirror();
 
   // (each with whether it changes what a push's checks run on: the carry's code against main before it, the direct
-  // commit's note not.)
-  assert.deepEqual(flow.mainLine(2), [
-    { sha: carry, parents: [direct, foundation], code: true },
-    { sha: direct, parents: [before], code: false },
-  ]);
-  assert.deepEqual(flow.mainSince(before), [
-    { sha: direct, parents: [before], code: false },
-    { sha: carry, parents: [direct, foundation], code: true },
-  ]);
+  // commit's note not; and the checks it requires, by scope: the carry's code type-checked, no area with tests.)
+  const carried = { sha: carry, parents: [direct, foundation], code: true, scope: { typecheck: true, tests: [] } };
+  const noted = { sha: direct, parents: [before], code: false, scope: { typecheck: false, tests: [] } };
+  assert.deepEqual(flow.mainLine(2), [carried, noted]);
+  assert.deepEqual(flow.mainSince(before), [noted, carried]);
   assert.deepEqual(flow.mainSince(carry), []);
   assert.equal(flow.mainSince('f'.repeat(40)), undefined, '(a commit the mirror has not)');
   assert.equal(flow.testedCode(carry, 'parent').base, direct);
   assert.equal(flow.testedCode(direct, 'parent').base, before);
   assert.equal(flow.testedCode(carry).base, carry, "(its merge base with main: the commit itself, so nothing to test)");
+
+  // A rename is both its paths, as the checks see it: code renamed to a note still gets the type check
+  git('-C', seed, 'mv', 'tool.ts', 'tool.md'); git('-C', seed, 'commit', '-qm', 'the tool as a note');
+  git('-C', seed, 'push', '-q', 'origin', 'HEAD:main');
+  flow.fetchMirror();
+  assert.equal(flow.mainTip(), at('HEAD'));
+  assert.deepEqual(flow.mainLine(1)[0].scope, { typecheck: true, tests: [] });
 });
 
 test('a re-sync push includes main that landed after the session started, even beyond the mirror', async () => {

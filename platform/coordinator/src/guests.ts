@@ -1317,7 +1317,7 @@ export async function page(req: IncomingMessage, res: ServerResponse) {
   // an item's file, as a download, for its guest's own session; without it, the code page (and nothing of the file)
   if (at && m[5] && req.method === 'GET') {
     if (!verified(req, at.g.name)) return verifyPage(res, `/guest/${m[1]}`, at.g, {}, 401);
-    if (at.r.request && cardFiles.sendItemFile(res, at.r.request, Number(m[5]))) return;
+    if (at.r.request && cardFiles.sendItemFile(req, res, at.r.request, Number(m[5]))) return;
   }
   const d = m && !at && !m[3] && !m[5] ? doorOf(sha256(m[1])) : undefined;
   if (m && d) return onDoor(req, res, m[1], m[2], d);

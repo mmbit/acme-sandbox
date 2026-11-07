@@ -22,7 +22,7 @@ const CARD_USAGE = `[KEY,KEY | live:<slug> | site:<slug>] [--address] [--photo "
 // (several true answers: a pick-many's tick boxes, its "picked")
 export const ask = {
   help: `
-   hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<job>]... [--walk]
+   hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<project>]... [--walk]
                                                      [--note <n> | --page <address> | --book <project | journal | n>]
                                                      [--at <address> --spot <selector>]
                                                      ask the board now; prints the request id (session stays alive).
@@ -129,10 +129,14 @@ export const ask = {
                                                      while, and a job waiting on it waits; hq requests says until when
                                                      The card for a CEO decision or a review-assigned visual decision: --decides
                                                      <id>. Its answer lets go what waits for the decision
-                                                     A card about work that isn't live yet (what this job handed out):
-                                                     --when deployed:<job> (or deployed:pr:<n>; repeat for more) holds it
-                                                     off the desk phone until that work is merged and deployed, then it
-                                                     shows as a new card. From a call's follow-up or a job carrying a
+                                                     A card about work that isn't live yet ("it's ready"): --when
+                                                     deployed:<project> holds it off the desk phone until its whole
+                                                     milestone is merged and deployed: every deliverable of the project,
+                                                     those filed in it later too, but one a pause of its own keeps out.
+                                                     Then it shows as a new card. One deliverable alone:
+                                                     deployed:<project>/<slug>. One piece only: deployed:<job> or
+                                                     deployed:pr:<n> (repeat for more), and work filed later doesn't
+                                                     hold it. From a call's follow-up or a job carrying a
                                                      call's item, it's held for this job's own work too. A held card's
                                                      answer isn't waited for (no hq wait): queue the step that needs it
                                                      with hq job --after request:<id>
@@ -192,6 +196,7 @@ export const ask = {
     if (filed.held)
       return print(
         `Request #${id} is held off the board's desk phone until ${text(filed.held)} is merged and deployed; then it shows as a new card.`,
+        ...leftOutLines(filed.leftOut),
         ...reading,
         `Queue the step that needs the answer: hq job --after request:${id} <agent> "title" <brief>, and finish this job.`,
       );
@@ -259,6 +264,14 @@ export const request = {
     print('Request saved. It is sent when you stop; finish your notes and end your turn now.');
   },
 };
+
+// What a card held on pieces of work leaves out: the milestones whose later work doesn't hold it (the coordinator's
+// later.ts leftOutOf).
+const leftOutLines = (leftOut: { id: string; name: string }[] | undefined) =>
+  (leftOut ?? []).map(
+    m =>
+      `Work filed in ${text(m.name)} later doesn't hold it: --when deployed:${text(m.id)} holds it for the whole milestone.`,
+  );
 
 // Parking a job holds its work, and every job queued after it, until the board answers, though often only a later step
 // needs the answer. So a job whose clone has work that isn't in review yet (changes, or commits its upstream doesn't have)
@@ -433,7 +446,7 @@ const NEEDS = new Map([
   ['--file', "a file's path"],
   ['--visible-from', 'a day (2026-10-13)'],
   ['--decides', 'a decision (hq decision)'],
-  ['--when', 'work going live (deployed:<job>)'],
+  ['--when', 'work going live (deployed:<project>, its whole milestone)'],
   ['--note', "a note's number (from your brief)"], // (--note, --page)
   ['--page', "a page's address (a path on HQ, or a preview's https address)"],
   ['--book', "a project, journal, or a guest's book by its number"],

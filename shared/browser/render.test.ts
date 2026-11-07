@@ -10,6 +10,10 @@ import { clone, playedHq } from '../gates/fixture.ts';
 import { supervise } from './supervise.ts';
 
 const root = resolve(import.meta.dirname, '../..');
+// The browser slot these tests take, hold and wait for is a lock file of their own, never the machine's (supervise.ts):
+// one they left held blocks nothing but themselves. Every supervisor they start, in this process or a child, reads it.
+const slot = join(mkdtempSync(join(tmpdir(), 'render-slot-')), 'lock');
+process.env.HQ_RENDER_SLOT = slot;
 const noHelper = { HQ_URL: '', HQ_TOKEN: '', HQ_RENDER_CHILD: '' };
 const fixture = `
 import '../../platform/hq/harness.mjs';
@@ -128,8 +132,8 @@ test("renders go to the kind org.yaml's runs.browser names, and stay here while 
   const { dir } = repository();
   const kinds = (shots: boolean) =>
     JSON.stringify([
-      { name: 'render', present: true },
-      { name: 'shots', present: shots },
+      { name: 'render', present: true, lentPresent: true },
+      { name: 'shots', present: shots, lentPresent: shots },
     ]);
   for (const [shots, kind] of [
     [true, 'shots'],
@@ -249,12 +253,11 @@ test('a render whose browser keeps dying ends at its bound, says what hung, and 
 test('a render waiting for the browser slot ends at its bound, never sits behind a hung one', async () => {
   const { dir, file } = processFixture('process.exit(0)');
   const held = join(dir, 'held');
-  const holder = spawn('flock', ['--exclusive', '/run/lock', 'sh', '-c', `touch '${held}'; sleep infinity`], {
+  const holder = spawn('flock', ['--exclusive', slot, 'sh', '-c', `touch '${held}'; sleep infinity`], {
     detached: true,
     stdio: 'ignore',
   });
   try {
-    // (the slot is the machine's: the holder may wait for other jobs' renders first)
     while (!existsSync(held) && holder.exitCode === null) await new Promise(resolve => setTimeout(resolve, 25));
     assert.equal(existsSync(held), true);
     const ran = await supervised(file, { lock: true, minutes: 0.02 });

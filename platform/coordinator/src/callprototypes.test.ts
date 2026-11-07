@@ -269,3 +269,137 @@ test("a prototype's picture is its markup and CSS, script off in every frame; on
   // (saved again, it's the next version as if the failed one never was)
   assert.equal(said(await h.voice('prototype', { call, name: 'Red', html: red })).version, 2);
 });
+
+test("a prototype built from a brief is a colleague's try run: a placeholder at once, steered as it builds, landing only with the picture it was looked at in", async () => {
+  const { call, token } = await h.liveCall('juno');
+  const page = said(await h.board('/api/notebooks/call', { call })).page.id as number;
+  const groups = async () => said(await h.board(`/api/notebooks/pages/groups?page=${page}`)).groups as any[];
+  const lines = async () => said(await h.voice('call-lines', { agent: 'juno', token })).built as any[];
+
+  // The brief: a job for the builder named, at once, and its placeholder on the page with their face
+  const built = said(
+    await h.voice('prototype-build', {
+      call,
+      name: 'Poster',
+      brief: 'One still poster of two layers',
+      by: 'moss',
+      lang: 'nl',
+      effort: 'low',
+    }),
+  );
+  assert.match(built.ok, new RegExp(`Moss builds Poster v1 as job #${built.job}`));
+  const row = h.db
+    .prepare('select agent, kind, expedite, effort, thread, prompt from jobs where id = ?')
+    .get(built.job) as any;
+  assert.deepEqual([row.agent, row.kind, row.expedite, row.effort, row.thread], ['moss', 'try', 1, 'low', null]);
+  assert.match(row.prompt, /Its words in Dutch\./);
+  assert.match(row.prompt, /--picture <png>/);
+  assert.ok(h.db.prepare('select 1 from call_jobs where call = ? and job = ?').get(call, built.job));
+  const placeholder = (await groups()).find(g => g.try?.build);
+  assert.ok(placeholder, 'its placeholder is on the page');
+  assert.deepEqual([placeholder.try.state, placeholder.try.by, placeholder.try.build.version], ['coming', 'moss', 1]);
+  assert.equal(placeholder.try.expect, 1, 'one frame coming');
+  assert.deepEqual(await lines(), []);
+  // (only a Claude colleague builds one: what they say while it's built reaches a Claude session alone)
+  const codex = await h.voice('prototype-build', { call, name: 'Other', brief: 'Anything', by: 'nib' });
+  assert.equal(codex.status, 409, JSON.stringify(codex.body));
+
+  // Another brief under its name goes to it: in its brief while it waits, as a message once it runs
+  const early = said(await h.voice('prototype-build', { call, name: 'poster', brief: 'People in the circle' }));
+  assert.equal(early.job, built.job);
+  assert.match(
+    (h.db.prepare('select prompt from jobs where id = ?').get(built.job) as any).prompt,
+    /People in the circle/,
+  );
+  const job = await h.claimJob(built.job);
+  // (a Claude run, as the builder's is: the harness claims on an engine of its own)
+  h.db.prepare("update jobs set engine = 'claude' where id = ?").run(built.job);
+  said(await h.voice('prototype-build', { call, name: 'Poster', brief: 'And the ads round them' }));
+  assert.ok(
+    h.db.prepare("select 1 from messages where job = ? and instr(text, 'And the ads round them') > 0").get(built.job),
+  );
+
+  // It lands only with the picture it was looked at in, under its own name, in its placeholder
+  const files = { 'index.html': Buffer.from('<svg></svg>').toString('base64') };
+  const looked = (
+    await sharp({ create: { width: 1180, height: 820, channels: 3, background: '#e33' } })
+      .png()
+      .toBuffer()
+  ).toString('base64');
+  assert.equal((await h.agent('prototype', job.token, { call, name: 'Poster', files })).status, 400);
+  assert.equal((await h.agent('prototype', job.token, { call, name: 'Other', files, picture: looked })).status, 409);
+  const v1 = said(await h.agent('prototype', job.token, { call, name: 'poster', files, picture: looked }));
+  assert.equal(v1.version, 1);
+  assert.equal((await h.agent('prototype', job.token, { call, name: 'Poster', files, picture: looked })).status, 409);
+  const clip = (await groups()).find(g => g.id === placeholder.id);
+  assert.deepEqual(
+    clip.children.filter((c: any) => c.style === 'version').map((v: any) => v.version),
+    ['v1'],
+  );
+  // (its picture is the one it was looked at in: red, script and all, never HQ's own with script off)
+  const slip = h.db.prepare('select picture from book_slips where id = ?').get(clip.children[0].id) as {
+    picture: string;
+  };
+  const { DIR: BOOK } = await import('./pagescraps.ts');
+  const { dominant } = await sharp(`${BOOK}/${slip.picture}`).stats();
+  assert.deepEqual([dominant.r > 200, dominant.g < 80], [true, true], JSON.stringify(dominant));
+
+  // The line hears it once it ended: its version, and the builder's line on what to try first
+  await h.finish(job, { status: 'done', result: 'Done.\nTik eerst op de kring.' });
+  assert.deepEqual(
+    (await lines()).map(b => [b.name, b.version, b.by, b.line, b.failed]),
+    [['Poster', 1, 'Moss', 'Tik eerst op de kring.', undefined]],
+  );
+  assert.deepEqual(await lines(), []);
+
+  // The next version builds on it, its page in the brief; one that ends with none is heard with why
+  const next = said(await h.voice('prototype-build', { call, name: 'Poster', brief: 'Calmer', about: 'Less text' }));
+  assert.match(next.ok, /Poster v2/);
+  assert.match(
+    (h.db.prepare('select prompt from jobs where id = ?').get(next.job) as any).prompt,
+    /The version before \(v1\)[^]*<svg><\/svg>/,
+  );
+  // (its save command quotes what it's given, as one shell word each)
+  assert.match(
+    (h.db.prepare('select prompt from jobs where id = ?').get(next.job) as any).prompt,
+    /hq prototype --call \d+ 'Poster' <folder> --picture <png> --about 'Less text'/,
+  );
+  // (one frame coming beside v1 in its group: one build is one version)
+  assert.equal((await groups()).find(g => g.id === placeholder.id).try.expect, 2);
+  const second = await h.claimJob(next.job);
+  await h.finish(second, { status: 'done', result: 'De kring bleef leeg in de schermfoto, dus niet opgeslagen.' });
+  assert.deepEqual(
+    (await lines()).map(b => [b.name, b.version, b.failed]),
+    [['Poster', 2, 'De kring bleef leeg in de schermfoto, dus niet opgeslagen.']],
+  );
+  // (its clip gone from the page, the next one starts a group of its own, with one frame coming in it)
+  h.db.prepare('update notebook_groups set deleted = 1 where id = ?').run(placeholder.id);
+  const third = said(
+    await h.voice('prototype-build', { call, name: 'Poster', brief: 'Again', about: `Kid's "poster" $HOME` }),
+  );
+  assert.match(
+    (h.db.prepare('select prompt from jobs where id = ?').get(third.job) as any).prompt,
+    /--about 'Kid'\\''s "poster" \$HOME'/,
+  );
+  const fresh = (await groups()).find(g => g.try?.build?.version === 2);
+  assert.deepEqual([fresh.id !== placeholder.id, fresh.try.expect], [true, 1]);
+  await h.finish(await h.claimJob(third.job), { status: 'done', result: 'Niet opgeslagen.' });
+  await lines();
+
+  // None while the board has left the call to its guest, new or steering one going: a build is a colleague's job
+  const late = said(await h.voice('prototype-build', { call, name: 'Late', brief: 'Anything' }));
+  const prompt = () => (h.db.prepare('select prompt from jobs where id = ?').get(late.job) as any).prompt;
+  const briefed = prompt();
+  said(await h.voice('call-away', { agent: 'juno', token, away: true }));
+  assert.equal((await h.voice('prototype-build', { call, name: 'Guest', brief: 'Anything' })).status, 409);
+  assert.equal((await h.voice('prototype-build', { call, name: 'Late', brief: 'Louder' })).status, 409);
+  assert.equal(prompt(), briefed);
+  said(await h.voice('call-away', { agent: 'juno', token, away: false }));
+  // (back with the board, the same words do reach it)
+  said(await h.voice('prototype-build', { call, name: 'Late', brief: 'Louder' }));
+  assert.match(prompt(), /Louder/);
+
+  // The call's end stops a build still going
+  said(await h.voice('call-end', { agent: 'juno', token, lines: ['Board: bye'] }));
+  assert.equal((h.db.prepare('select status from jobs where id = ?').get(late.job) as any).status, 'cancelled');
+});

@@ -7,9 +7,12 @@
 // land in it where they're let go (bookscrapopen.js).
 // Pictures dropped side by side in an opened scrap stay apart: the Pencil's tap with Select picks the one tapped, and
 // it moves alone.
+// A moodboard in an opened scrap, on a desktop, an iPad mini upright and a phone: a picture dropped over another is
+// sent behind it from Select's bar, and the drawing over them behind the picture, a step at a time; each saved with
+// its place, Undo takes the step back, and Bring forward brings it in front again (bookselectlayer.js).
 import assert from 'node:assert/strict';
 import { onDesk, freePage, inScrap, savedWhere, colourIn, paperBox, pick, GREEN, BLUE } from './mouse.mjs';
-import { closeScrap } from './kit.mjs';
+import { UPRIGHT, closeScrap } from './kit.mjs';
 import { hands } from './hands.mjs';
 
 // a picture on another site (never fetched: the coordinator's /api/book/fetch is played)
@@ -33,6 +36,12 @@ export function pasteStories(c) {
       words(browser, c),
     'two pictures dropped in an opened scrap stay apart: the Pencil taps one with Select, it alone is picked and moves':
       browser => apart(browser, c),
+    'a moodboard in an opened scrap: a picture sent behind another, the drawing behind a picture, Undo, brought forward again, on a desktop':
+      browser => layers(browser, c, {}),
+    'a moodboard in an opened scrap: a picture sent behind another, the drawing behind a picture, Undo, brought forward again, on an iPad mini upright':
+      browser => layers(browser, c, { viewport: UPRIGHT, hasTouch: true }),
+    'a moodboard in an opened scrap: a picture sent behind another, the drawing behind a picture, Undo, brought forward again, on a phone':
+      browser => layers(browser, c, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }),
   };
 }
 
@@ -113,6 +122,83 @@ async function apart(browser, c) {
     c.pages.splice(c.pages.indexOf(free), 1);
   }
 }
+
+async function layers(browser, c, device) {
+  const free = freePage(c);
+  const { page, errors, done } = await onDesk(browser, c, device);
+  try {
+    const { pen } = await hands(page),
+      green = await pictureBehind(page, c, free, pen, device);
+    await drawingBehind(page, c, free, pen, green);
+    c.noErrorsIn(errors);
+  } finally {
+    await done();
+    c.pages.splice(c.pages.indexOf(free), 1);
+  }
+}
+// The green one, then the blue one dropped half over it, on top; the blue one sent behind it, and Undo. The green
+// one's pixels as it lies whole
+async function pictureBehind(page, c, free, pen, device) {
+  const sheet = await inScrap(page, c, free, pen.tap);
+  await dropOn(
+    page,
+    { x: sheet.x + sheet.width * 0.35, y: sheet.y + sheet.height * 0.4 },
+    {},
+    await png(page, '#1d9a5b'),
+  );
+  await savedWhere(c, free.id, p => p.scraps.length === 1);
+  const whole = await colourIn(page, GREEN);
+  await dropOn(page, { x: whole.x + 40, y: whole.y + 30 }, {}, await png(page, '#2f6bdc'));
+  const [green, blue] = (await savedWhere(c, free.id, p => p.scraps.length === 2)).scraps.map(s => s.file);
+  await page.waitForTimeout(c.settle);
+  const over = await colourIn(page, GREEN);
+  assert.ok(over.n < whole.n * 0.8, `the blue one over the green (${over.n} of ${whole.n} green px show)`);
+  // the blue one picked, Send backward: the green one whole in front of it, saved so
+  await pick(page, 'Select');
+  const b = await colourIn(page, BLUE);
+  await pen.tap([b.x, b.y]);
+  await bar(page, 'Send backward').click();
+  await savedWhere(c, free.id, p => layerOf(p, blue) < layerOf(p, green));
+  await page.waitForTimeout(c.settle);
+  assert.ok((await colourIn(page, GREEN)).n > whole.n * 0.95, 'the green one in front, whole');
+  await c.shot(`book-layers-back-${device.viewport?.width ?? 'desktop'}`, page);
+  // Undo takes it back
+  await undo(page);
+  await savedWhere(c, free.id, p => !(layerOf(p, blue) < layerOf(p, green)));
+  await page.waitForTimeout(c.settle);
+  assert.ok((await colourIn(page, GREEN)).n < whole.n * 0.8, 'Undo: the blue one over the green again');
+  await page.keyboard.press('Escape');
+  return whole;
+}
+// A pen line across both pictures, sent behind the blue one on top: its ink there hidden; brought forward again, a
+// step at a time, it shows whole
+async function drawingBehind(page, c, free, pen, green) {
+  await pick(page, 'Pen');
+  await pen.stroke([
+    [green.x - 90, green.y],
+    [green.x + 120, green.y + 10],
+  ]);
+  const drawn = await savedWhere(c, free.id, p => p.ink.length === 1),
+    blue = drawn.scraps[1].file;
+  await page.waitForTimeout(c.settle);
+  const inked = (await colourIn(page, INK)).n;
+  await pick(page, 'Select');
+  await pen.tap([green.x - 60, green.y + 3]);
+  await bar(page, 'Send backward').click();
+  await savedWhere(c, free.id, p => p.ink[0].layer < layerOf(p, blue));
+  await page.waitForTimeout(c.settle);
+  const hidden = (await colourIn(page, INK)).n;
+  assert.ok(hidden < inked * 0.75, `the line behind the blue one (${hidden} of ${inked} ink px show)`);
+  await bar(page, 'Bring forward').click();
+  await savedWhere(c, free.id, p => p.ink[0].layer > Math.max(...p.scraps.map(s => s.layer)));
+  await page.waitForTimeout(c.settle);
+  assert.ok((await colourIn(page, INK)).n > inked * 0.9, 'the line in front of both again');
+}
+const layerOf = (p, file) => p.scraps.find(s => s.file === file).layer;
+// A key on Select's bar by its name
+const bar = (page, name) => page.locator('#book .bk-sel-bar').getByRole('button', { name, exact: true });
+// (the pen's ink: notebookpicture.js's ink colour, the book's)
+const INK = [42, 35, 82];
 
 async function words(browser, c) {
   const free = freePage(c);

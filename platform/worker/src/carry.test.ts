@@ -18,7 +18,7 @@ const kept = (id: number, file: string) => {
 const claudeSession = (id: number, session: string) =>
   `.claude/projects/${project(jobDirs(work, id).dir)}/${session}.jsonl`;
 
-test("a fix round goes on in its author's Claude session, under its own clone's project", () => {
+test("a follow-up goes on in its author's Claude session, under its own clone's project", () => {
   kept(10, claudeSession(10, 'abc-1'));
   assert.equal(
     carrySession(work, { id: 11, engine: 'claude', resumes: { job: 10, session: 'abc-1' } }, 'claude', me),
@@ -51,7 +51,7 @@ test('a session of another CLI, or one whose home is gone, starts afresh', () =>
   );
 });
 
-test("a fix after the author's session went cold is briefed with each closing report and the branch's commits", () => {
+test("a fresh start is briefed with each closing report and the branch's commits", () => {
   const closing = {
     reports: [
       { job: 40, report: 'Built the checkout.\n' },

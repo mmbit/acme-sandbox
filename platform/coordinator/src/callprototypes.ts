@@ -11,6 +11,7 @@ import { publish } from './events.ts';
 import * as feedback from './feedback.ts';
 import * as guests from './guests.ts';
 import { queuedHere } from './call.ts';
+import { buildOf } from './callbuildrows.ts';
 import { exclude } from './latency.ts';
 import { boardOn, cookie } from './preview.ts';
 import * as shares from './shares.ts';
@@ -49,8 +50,8 @@ const NAME_MOST = 60,
 // A page and its files, at most: an agent's throwaway, not a site
 export const FILES_MOST = 8 << 20,
   HTML_MOST = 1_000_000;
-// (a job's files come in its JSON, as base64: server.ts)
-export const JSON_MAX = Math.ceil((FILES_MOST * 4) / 3) + 1_000_000;
+// (a job's files come in its JSON, as base64, with the picture it was looked at in, as large at most: server.ts)
+export const JSON_MAX = Math.ceil((2 * FILES_MOST * 4) / 3) + 1_000_000;
 // (the line's page comes as JSON text, each character at most 12 bytes: one outside Unicode's basic plane as two \u
 // escapes, as the voice line's ASK_BYTES.)
 export const PAGE_JSON_MAX = 12 * HTML_MOST + (1 << 16);
@@ -92,8 +93,11 @@ export async function fromVoice(b: any) {
   if (isRefused(at)) return at;
   return save(Number(b.call), at.agent, b, new Map([['index.html', Buffer.from(b.html)]]), true);
 }
-// POST /api/agent/prototype {call, name, about?, files: {path: base64}}: a colleague's job's (hq prototype), a folder
-// whose index.html is the page. Only a job the call queued: no other puts an unreviewed page on their screens
+// POST /api/agent/prototype {call, name, about?, files: {path: base64}, picture?: base64}: a colleague's job's (hq
+// prototype), a folder whose index.html is the page, and the picture its maker looked at it in (script on, as their
+// screens show it), which is its clip's. Only a job the call queued: no other puts an unreviewed page on their screens.
+// A build the call asked for (callbuilds.ts) saves its own version only, under its name, with the picture it looked at:
+// nothing it hasn't seen lands.
 export async function fromJob(b: any, me: { id: number; agent: string }) {
   if (!liveCall(Number(b?.call)))
     return [404, `no live call #${b?.call}: a call's prototype is made while it's on`] as Refused;
@@ -102,8 +106,40 @@ export async function fromJob(b: any, me: { id: number; agent: string }) {
       403,
       `job #${me.id} wasn't queued on call #${b.call}: only the call's own jobs save its prototypes`,
     ] as Refused;
+  const built = buildOf(me.id);
+  if (built && oneLine(b.name).toLowerCase() !== built.name.toLowerCase())
+    return [409, `you're building ${built.name}: save it under that name`] as Refused;
+  if (
+    built &&
+    db
+      .prepare('select 1 from call_prototypes where call = ? and name = ? and version = ?')
+      .get(built.call, built.name, built.version)
+  )
+    return [
+      409,
+      `${built.name} v${built.version} is saved already: a next version is the call's next brief`,
+    ] as Refused;
+  if (built && typeof b.picture !== 'string')
+    return [
+      400,
+      'picture: the screenshot you looked at it in (--picture <png>): only a version you looked at lands',
+    ] as Refused;
   const files = filesOf(b.files);
-  return isRefused(files) ? files : save(Number(b.call), me.agent, b, files, false);
+  if (isRefused(files)) return files;
+  const looked = typeof b.picture === 'string' ? await lookedAt(b.picture) : undefined;
+  if (isRefused(looked)) return looked;
+  return save(Number(b.call), me.agent, { ...b, ...(built && { name: built.name }) }, files, false, looked, built?.grp);
+}
+// The picture its maker looked at, as a PNG at the iPad's width at most, or why not
+async function lookedAt(data: string) {
+  try {
+    return await sharp(Buffer.from(data, 'base64'))
+      .resize({ width: SEEN.width, withoutEnlargement: true })
+      .png()
+      .toBuffer();
+  } catch {
+    return [400, "picture: a PNG or JPEG screenshot, and this one isn't one"] as Refused;
+  }
 }
 function filesOf(given: unknown) {
   if (!given || typeof given !== 'object') return [400, 'files: {path: base64}, index.html among them'] as Refused;
@@ -120,7 +156,15 @@ function filesOf(given: unknown) {
   return files.has('index.html') ? files : ([400, 'files: index.html is the page'] as Refused);
 }
 
-async function save(call: number, by: string, b: any, files: Map<string, Buffer>, seen: boolean) {
+async function save(
+  call: number,
+  by: string,
+  b: any,
+  files: Map<string, Buffer>,
+  seen: boolean,
+  looked?: Buffer,
+  grp?: number,
+) {
   const name = oneLine(b.name),
     about = oneLine(b.about ?? '');
   if (!name || [...name].length > NAME_MOST)
@@ -129,7 +173,7 @@ async function save(call: number, by: string, b: any, files: Map<string, Buffer>
   // (taken outside HQ's thread, before anything is kept: one that fails saves nothing and says why)
   let picture: Buffer;
   try {
-    picture = await exclude(pictureOf(files));
+    picture = looked ?? (await exclude(pictureOf(files)));
   } catch (err) {
     return [409, `its picture couldn't be taken, so it isn't saved: ${(err as Error).message}`] as Refused;
   }
@@ -146,7 +190,7 @@ async function save(call: number, by: string, b: any, files: Map<string, Buffer>
   );
   for (const [path, bytes] of files) keepFile(`${DIR}/${id}/${path}`, bytes);
   const p = byId(id)!;
-  const clip = clipOn(at, p, picture);
+  const clip = clipOn(at, p, picture, grp);
   const ok = `${p.name} v${p.version} is up on their screens: a card slides in, and it's a clip in the call's notes (#${clip.grp}) \
 beside its other versions. Its address: ${linkOf(p) ?? '(none: no domain)'}`;
   if (!seen) return { ok, id, version: p.version, link: linkOf(p) };
@@ -166,13 +210,17 @@ beside its other versions. Its address: ${linkOf(p) ?? '(none: no domain)'}`;
 // version's frame under it; and its card on every screen. The group has nothing on it and no height: the clip is its
 // versions alone, no card over them (HQ's bookunits.js, the page's picture), and the next unit stands apart (masonry.js
 // GAP). Its name is call_prototypes' (listFor), not words on the page.
-function clipOn(at: { agent: string; page: NotebookPage }, p: Prototype, picture: Buffer) {
+// A build's version goes in its placeholder's group (grp: callbuilds.ts).
+function clipOn(at: { agent: string; page: NotebookPage }, p: Prototype, picture: Buffer, grp?: number) {
   // (the newest version with a clip: one whose clip couldn't be made has none.)
-  const had = db
-    .prepare(
-      'select grp from call_prototypes where call = ? and name = ? and grp is not null order by version desc limit 1',
-    )
-    .get(p.call, p.name) as { grp: number } | undefined;
+  const had =
+    grp !== undefined
+      ? { grp }
+      : (db
+          .prepare(
+            'select grp from call_prototypes where call = ? and name = ? and grp is not null order by version desc limit 1',
+          )
+          .get(p.call, p.name) as { grp: number } | undefined);
   const kept = had && row(had.grp);
   const g =
     kept && kept.page === at.page.id && kept.deleted === null

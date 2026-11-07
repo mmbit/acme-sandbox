@@ -1,7 +1,7 @@
 // node --test src/drawing.test.ts
 // An agent's drawing with its words fitted to their shapes (drawing.ts, drawingfit.ts): a word wider than its box ends
 // up inside it, a long sentence wraps beside a sketch, a drawing that fits is left as drawn, and words drawn over each
-// other are named for the agent.
+// other are named for the agent; a heading stays above its sentence when the sentence wraps and is stacked.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -93,4 +93,28 @@ test('a drawing whose words fit is left as drawn, and words drawn over each othe
     '<svg viewBox="0 0 640 200"><text x="40" y="100">Kaart</text><text x="60" y="110">Overlap</text></svg>',
   );
   assert.deepEqual(over.overlap, ['"Kaart" and "Overlap"']);
+});
+
+test('a heading stays above its sentence when the sentence wraps into the box', async () => {
+  const got = await drawing(
+    '<svg viewBox="0 0 640 400"><rect x="400" y="300" width="200" height="80"/>' +
+      '<text x="410" y="330">Kopij</text><text x="410" y="360">Teksten verzamelen bij iedereen</text></svg>',
+  );
+  assert.deepEqual(got.overlap, []);
+  // (the ink's rows inside the box's own columns: its top line, then one run of rows per line of words; the heading
+  // "Kopij" is the narrowest run and "iedereen", the sentence's last line, is wider, so heading first reads on)
+  const { data, info } = await sharp(got.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const [from, to] = [Math.round(((16 + 440) / 672) * info.width), Math.round(((16 + 560) / 672) * info.width)];
+  const rows: { last: number; width: number }[] = [];
+  for (let y = 0; y < info.height; y++) {
+    const ink: number[] = [];
+    for (let x = from; x < to; x++) if (data[(y * info.width + x) * 4 + 3] > 40) ink.push(x);
+    if (!ink.length || ink.length > (to - from) * 0.9) continue;
+    const width = ink.at(-1)! - ink[0] + 1;
+    const line = rows.at(-1);
+    if (line && line.last === y - 1) [line.last, line.width] = [y, Math.max(line.width, width)];
+    else rows.push({ last: y, width });
+  }
+  assert.ok(rows.length >= 4, JSON.stringify(rows));
+  assert.ok(rows[0].width < rows.at(-1)!.width, `the heading first: ${JSON.stringify(rows)}`);
 });

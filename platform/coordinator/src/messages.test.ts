@@ -15,6 +15,7 @@ const messages = await import('./messages.ts');
 const { status: agentStatus } = await import('./events.ts');
 const proposals = await import('./proposals.ts');
 const { ceo } = await import('./company.ts');
+const projects = await import('./projects.ts');
 
 const say = (j: Running, to: string, text: string, as?: string) => h.agent('message', j.token, { to, text, ...(as ? { as } : {}) });
 // hq sent: where the sender's message went (its job, offered, delivered, the job it became or joined, lapsed)
@@ -124,7 +125,7 @@ test('a team member speaks as itself; the answer goes to its lead', async () => 
   const bolt = await sender();
   await h.worker('team', { job: bolt.id, lead: 'bolt', id: 'cobble', name: 'Cobble' });
   const r = await say(bolt, 'rivet', 'Ping', 'cobble');
-  assert.match(brief(r.body.job), /\(Message from cobble, on bolt's team, .*hq say bolt "\.\.\."\)$/);
+  assert.match(brief(r.body.job), new RegExp(`\\(Message from cobble, on bolt's team, .*hq say bolt --job ${bolt.id} "\\.\\.\\."\\)$`));
   assert.equal((await say(bolt, 'rivet', 'Ping', 'juno')).status, 403);   // not a member of this job
   assert.equal((await h.agent('sent?as=cobble', bolt.token)).body[0].id, r.body.id);
   await end(bolt);
@@ -430,4 +431,103 @@ test('a job fetches a render the server put back in its checkout: only a file wi
   for (const path of ['products/x/ads/loose.mp4', 'products/x/ads/../ads/ad.mp4.render.json', '../etc/passwd'])
     assert.equal((await h.agent(`render?path=${encodeURIComponent(path)}`, kit.token)).status, 404, path);
   await end(kit);
+});
+
+// A message names the work it's about: the job reaches that session alone; only
+// a deliverable, or an agent with several live sessions, reaches every live one, each copy saying who it went to.
+const ack = (j: Running, ids: unknown) => h.agent('inbox-ack', j.token, { ids });
+const sayAbout = (j: Running, body: Record<string, unknown>) => h.agent('message', j.token, body);
+// A deliverable of the office project's, for the jobs a test puts on it (createJob thread)
+let deliverables = 0;
+function deliverable() {
+  const t = projects.createThread({ project: 'office', name: `Phone logs ${++deliverables}`, goal: 'Logs read', slug: `phone-logs-${deliverables}` });
+  if (typeof t === 'string') assert.fail(t);
+  return t.id;
+}
+
+test('a message naming a job reaches that session, not the one that started last; a number not theirs is refused', async () => {
+  const bolt = await sender(), older = await running('moss'), newer = await running('moss');
+  const r = await sayAbout(bolt, { to: 'moss', job: older.id, text: 'For the older one' });
+  assert.equal(r.status, 200);
+  assert.deepEqual({ ...r.body, id: 0 }, { id: 0, state: 'queued', job: older.id });
+  assert.deepEqual(await inbox(newer), []);
+  assert.deepEqual((await inbox(older)).map((m: any) => [m.text, m.copied_to]), [['For the older one', undefined]]);
+  const wrong = await sayAbout(bolt, { to: 'wren', job: older.id, text: 'Misnumbered' });
+  assert.equal(wrong.status, 422); assert.match(wrong.body.error, /is moss's .*not wren's/);
+  assert.equal((await sayAbout(bolt, { to: 'moss', job: older.id, deliverable: 'shop/x', text: 'Both' })).status, 422);
+  // a job that hasn't started: its session reads it when it does
+  const later = h.queue({ agent: 'moss', engine: 'claude' });
+  const waiting = await sayAbout(bolt, { to: 'moss', job: later, text: 'When you start' });
+  assert.deepEqual([waiting.body.state, waiting.body.job, waiting.body.waiting], ['queued', later, true]);
+  for (const j of [bolt, older, newer]) await end(j);
+});
+
+test("only an agent with several live sessions: a copy each, saying who it went to; one read, the others lapse unread, no job", async () => {
+  const bolt = await sender(), one = await running('moss'), two = await running('moss');
+  const r = await say(bolt, 'moss', 'Whoever has the phone logs');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.named, 'moss, naming no job');
+  assert.deepEqual(r.body.sessions.map((s: any) => [s.job, s.agent]), [[one.id, 'moss'], [two.id, 'moss']]);
+  const [first, second] = [await inbox(one), await inbox(two)];
+  for (const got of [first, second]) {
+    assert.equal(got.length, 1); assert.equal(got[0].text, 'Whoever has the phone logs'); assert.equal(got[0].from, 'bolt');
+    assert.equal(got[0].copied_to, `moss, naming no job: HQ gave it to every session live on that (moss's job #${one.id}, moss's job #${two.id}). `
+      + "If it applies to your work, do what it says; if it doesn't, ignore it.");
+  }
+  assert.deepEqual((await ack(one, [first[0].message])).body, { delivered: [first[0].message] });
+  await end(two);   // offered, never acknowledged: another copy was read, so no job
+  const lapsed = await sent(bolt, second[0].message);
+  assert.equal(lapsed.became, null); assert.ok(lapsed.lapsed); assert.equal(lapsed.fan, first[0].message);
+  // one live session: no copies
+  const alone = await say(bolt, 'moss', 'Just you');
+  assert.deepEqual({ ...alone.body, id: 0 }, { id: 0, state: 'queued', job: one.id });
+  for (const j of [bolt, one]) await end(j);
+});
+
+test('copies count towards the sending job\'s hour together: refused whole when they would fill it', async () => {
+  const bolt = await sender(), one = await running('moss'), two = await running('moss'), wren = await running('wren');
+  for (let i = 0; i < messages.PER_HOUR - 1; i++) assert.equal((await say(bolt, 'wren', `Note ${i}`)).status, 200);
+  assert.equal((await say(bolt, 'moss', 'Two copies, one left')).status, 429);
+  assert.equal((await say(bolt, 'wren', 'The last one')).status, 200);
+  for (const j of [bolt, one, two, wren]) await end(j);
+});
+
+test('only a deliverable: every live session on it, whoever runs it; when none reads it, one copy becomes a job on it', async () => {
+  const id = deliverable();
+  const bolt = await sender(), moss = await h.start({ agent: 'moss', engine: 'claude', thread: id });
+  const wren = await running('wren');   // a deliverable's tasks start one at a time: wren's moves onto it while it runs
+  assert.equal((await h.agent('jobs/move', wren.token, { id: wren.id, thread: id })).status, 200);
+  const elsewhere = await running('moss');   // moss's, but not on it
+  const r = await sayAbout(bolt, { deliverable: id, text: 'The logs moved' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.sessions.map((s: any) => [s.job, s.agent]), [[moss.id, 'moss'], [wren.id, 'wren']]);
+  assert.deepEqual(await inbox(elsewhere), []);
+  assert.match((await inbox(wren))[0].copied_to, new RegExp(`^the deliverable ${id}: .*moss's job #${moss.id}, wren's job #${wren.id}`));
+  // named with an agent: only that agent's
+  const only = await sayAbout(bolt, { to: 'wren', deliverable: id, text: 'Wren only' });
+  assert.deepEqual(only.body.sessions.map((s: any) => s.job), [wren.id]);
+  await end(moss); await end(wren);   // none read the first: moss's copy lapses (wren's waits), wren's becomes a job on it
+  const [mossCopy, wrenCopy] = await Promise.all(r.body.sessions.map((s: any) => sent(bolt, s.message)));
+  assert.deepEqual([mossCopy.became, !!mossCopy.lapsed], [null, true]);
+  assert.equal(jobs.threadOf(wrenCopy.became), id);
+  assert.equal((await sayAbout(bolt, { deliverable: 'office/none-such', text: 'x' })).status, 422);
+  for (const j of [bolt, elsewhere]) await end(j);
+});
+
+test('a deliverable nobody is live on: a job on it for the colleague named, never their session on other work', async () => {
+  const id = deliverable();
+  const bolt = await sender(), busy = await running('moss');   // moss's, on other work
+  const r = await sayAbout(bolt, { to: 'moss', deliverable: id, text: 'The logs moved' });
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.state, r.body.why, r.body.sessions], ['job', 'deliverable', undefined]);
+  assert.deepEqual(await inbox(busy), []);
+  assert.deepEqual([(await sent(bolt, r.body.id)).to, jobs.threadOf(r.body.job)], ['moss', id]);
+  assert.match(brief(r.body.job), new RegExp(`hq say --deliverable ${id} as message #${r.body.id}`));
+  // naming nobody: a job on it for the deliverable's owner (here the CEO's), not kept for the CEO's next run
+  const owned = await sayAbout(bolt, { deliverable: id, text: 'Nobody on it' });
+  assert.deepEqual([owned.body.state, owned.body.why], ['job', 'deliverable']);
+  const mine = await sent(bolt, owned.body.id);
+  assert.deepEqual([mine.to, mine.became], [projects.ownerOf({ project: 'office' }), owned.body.job]);
+  assert.equal(jobs.threadOf(owned.body.job), id);
+  for (const j of [bolt, busy]) await end(j);
 });

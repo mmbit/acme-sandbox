@@ -6,6 +6,11 @@
     "speed": 4416,
     "cpus": 24,
     "memoryGb": 40,
+    "host": {
+      "cores": 16,
+      "threads": 32,
+      "memoryGb": 94
+    },
     "gpu": "NVIDIA GeForce RTX 4090",
     "gpuCount": 1,
     "body": null,
@@ -260,6 +265,7 @@
     "speed": 512,
     "cpus": 4,
     "memoryGb": 8,
+    "host": null,
     "gpu": null,
     "gpuCount": 0,
     "body": null,
@@ -437,6 +443,11 @@
     "speed": 896,
     "cpus": 8,
     "memoryGb": 16,
+    "host": {
+      "cores": 8,
+      "threads": 8,
+      "memoryGb": 32
+    },
     "gpu": null,
     "gpuCount": 0,
     "body": null,
@@ -453,6 +464,11 @@
     "speed": 640,
     "cpus": 4,
     "memoryGb": 16,
+    "host": {
+      "cores": null,
+      "threads": 4,
+      "memoryGb": 16
+    },
     "gpu": null,
     "gpuCount": 0,
     "body": null,
@@ -469,6 +485,11 @@
     "speed": 528,
     "cpus": 4,
     "memoryGb": 3,
+    "host": {
+      "cores": 8,
+      "threads": 16,
+      "memoryGb": 64
+    },
     "gpu": null,
     "gpuCount": 0,
     "body": null,

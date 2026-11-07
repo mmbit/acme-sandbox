@@ -542,8 +542,9 @@ db.exec('create index if not exists deploys_finished on deploys (finished)');
 // The Codex seat each share went to (a job, or a normal review round's Codex review its seat was out for), so the next
 // goes to the seat with fewer (jobs.ts codexShare).
 db.exec('create table if not exists codex_shares (id integer primary key, seat text not null, at integer not null, job integer)');
-// What an open card waits for off the desk phone: work until it's merged and deployed (later.ts holdsFor), a deployed:
-// wake's arg, '<job>' or 'pr:<n>' (wakes.ts), or 'read:<job>', the card reader's read (cardread.ts)
+// What an open card waits for off the desk phone: work until it's merged and deployed (later.ts holdsFor), a whole
+// milestone's or deliverable's ('<project>', '<project>/<slug>'), a deployed: wake's arg, '<job>' or 'pr:<n>' (wakes.ts),
+// or 'read:<job>', the card reader's read (cardread.ts)
 db.exec('create table if not exists request_holds (request integer not null, work text not null, primary key (request, work))');
 
 // A live call's agent token (call.ts): only its sha256, the agent it speaks as, until when, and its call. listed: the
@@ -885,7 +886,10 @@ once('2026-10-27-jobs-carry', () => lacks('jobs', 'carry') && db.exec('alter tab
 db.exec('create index if not exists jobs_carry on jobs (carry) where carry is not null');
 // What a carry's commit changes, as the worker read it in its mirror (carries.ts): code: 1 when it changes anything a
 // push's checks run on, 0 when nothing (company files only). Its check is sized from carries of the same kind (matching.ts).
-db.exec('create table if not exists carry_commits (sha text primary key, code integer not null)');
+db.exec('create table if not exists carry_commits (sha text primary key, code integer not null, scope text)');
+once('2026-11-06-carry-scope', () =>
+  lacks('carry_commits', 'scope') && db.exec('alter table carry_commits add column scope text'),
+);
 // Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
 // job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
 // names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.

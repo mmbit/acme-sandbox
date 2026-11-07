@@ -81,6 +81,40 @@ test('hq ask --file: the card lists each file by its name, the board downloads i
   assert.equal((await download(card.id, 0)).status, 404);
 });
 
+test('a sound on a card plays: its own type, by the byte range asked', async () => {
+  const MP3 = Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00stem', 'latin1');
+  const job = { ...(await h.start({ agent: 'dowser', title: 'Voices' })), dir };
+  const asked = await h.hq(
+    job,
+    'ask',
+    'decision',
+    'today',
+    'Which voice',
+    write('voices.md', 'Listen to both.\n'),
+    '--file',
+    write('stem-a.mp3', MP3),
+    '--topic',
+    'voice',
+  );
+  assert.equal(asked.code, 0, asked.out);
+  const card = ((await h.board('/api/requests')).body as any[]).find(c => c.title === 'Which voice');
+  const whole = await download(card.id, 0);
+  assert.equal(whole.headers.get('content-type'), 'audio/mpeg');
+  assert.equal(whole.headers.get('accept-ranges'), 'bytes');
+  assert.match(whole.headers.get('content-disposition')!, /^attachment; filename="stem-a\.mp3"/);
+  assert.deepEqual(Buffer.from(await whole.arrayBuffer()), MP3);
+  const part = await fetch(`${h.base}/api/requests/file?id=${card.id}&n=0`, {
+    headers: { cookie: h.boardCookie, range: 'bytes=0-1' },
+  });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('content-range'), `bytes 0-1/${MP3.length}`);
+  assert.equal(await part.text(), 'ID');
+  const past = await fetch(`${h.base}/api/requests/file?id=${card.id}&n=0`, {
+    headers: { cookie: h.boardCookie, range: `bytes=${MP3.length}-` },
+  });
+  assert.equal(past.status, 416);
+});
+
 test('files the coordinator refuses: none on a card for keys, no folder in a name, not over the size, nor two of a name', async () => {
   const job = await h.start({ agent: 'dowser', title: 'More pages' });
   const file = (more: object) =>

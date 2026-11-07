@@ -7,7 +7,7 @@ export const PAUSE_MS = 6 * 60_000;
 // Deadline preemption stops on the next heartbeat, without waiting for a tool boundary.
 export const DEADLINE_PAUSE_MS = 60_000;
 export const ROOM_AFTER_MS = 30_000;
-export type Dependency = { job: number; until: 'done' | 'merged'; lag?: number };
+export type Dependency = { job: number; until: 'done' | 'merged'; lag?: number; internal?: true };
 // missed: every window the job serves had passed when the pass ran (backward), so its latest start is a missed one's.
 export type Order = {
   id: number;
@@ -18,11 +18,13 @@ export type Order = {
   followThrough?: number | boolean; // the CEO's hourly check (jobs.ts FOLLOW_THROUGH), first in the lane (compare)
   latestStart: number | null;
   missed?: boolean;
+  unblocks?: boolean;
 };
 export type Timing = Order & { latestFinish: number | null; duration: number };
 
 // The lane, then work with a window still open, then work whose windows have all passed, then work with none; within
-// each, the earliest latest start, then the oldest. A passed window keeps its work ahead of undated work, but no longer
+// overdue work, prerequisites that free other work lead, then the earliest latest start and the oldest. A passed window
+// keeps its work ahead of undated work, but no longer
 // ahead of work that can still be on time: the further it's missed, the earlier its latest start, so it would otherwise
 // go before every window still to come. The CEO's hourly check leads the lane: a few minutes' read of the board's work,
 // it waited behind that work past its start alarm (followthrough.ts START_MS).
@@ -32,6 +34,7 @@ export function compare(a: Order, b: Order) {
   if (!!a.followThrough !== !!b.followThrough) return a.followThrough ? -1 : 1;
   if (!!a.urgent !== !!b.urgent) return a.urgent ? -1 : 1;
   if (tier(a) !== tier(b)) return tier(a) - tier(b);
+  if (a.missed && b.missed && !!a.unblocks !== !!b.unblocks) return a.unblocks ? -1 : 1;
   const x = a.latestStart ?? Infinity,
     y = b.latestStart ?? Infinity;
   return x === y ? (a.orderId ?? a.id) - (b.orderId ?? b.id) : x < y ? -1 : 1;
@@ -39,7 +42,7 @@ export function compare(a: Order, b: Order) {
 
 export const spareOnly = (row: { downtime: number }, order: Order) =>
   !!row.downtime && !order.board && order.latestStart === null;
-// Only explicit urgency bypasses seat pacing. Windows order work within the pace.
+// Explicit urgency, including that inherited from waiting work, bypasses seat pacing. Windows stay within the pace.
 export const pacedTakes = (order: Order, until: number | undefined) => until === undefined || !!order.urgent;
 
 // A room pause stops work. Deadline pressure also stops reviews and rulings, but never the board's or CEO's follow-through
@@ -130,26 +133,18 @@ export function backward(
     const own = row.due === null ? Infinity : row.due - snapshot.deployLagMs,
       release = releases.has(id) ? snapshot.now : Infinity;
     let open = Math.min(release, row.due !== null && row.due >= snapshot.now ? own : Infinity),
-      any = Math.min(release, own);
+      any = Math.min(release, own),
+      urgent = !!row.urgent,
+      unblocks = false;
     for (const follower of followers.get(id) ?? []) {
       const next = visit(follower.id);
+      urgent ||= !!next.urgent;
+      unblocks ||= !follower.internal || !!next.unblocks;
       if (!next.missed) open = Math.min(open, (next.latestStart ?? Infinity) - follower.lag);
       any = Math.min(any, everyWindow.get(follower.id)! - follower.lag);
     }
     const duration = row.status === 'done' || row.kind === 'resolution' ? 0 : remaining(row, sizes.get(id)!) + PAUSE_MS;
-    const finish = open === Infinity ? any : open;
-    const timing = {
-      id,
-      orderId: row.orderId,
-      created: row.created,
-      board: row.board,
-      ...(row.urgent && { urgent: true }),
-      ...(row.followThrough && { followThrough: true }),
-      latestStart: finish === Infinity ? null : finish - duration,
-      latestFinish: finish === Infinity ? null : finish,
-      duration,
-      ...(open === Infinity && any !== Infinity && { missed: true }),
-    };
+    const timing = timingOf(row, { open, any, urgent, unblocks }, duration);
     visiting.delete(id);
     everyWindow.set(id, any === Infinity ? Infinity : any - duration);
     timings.set(id, timing);
@@ -164,13 +159,38 @@ function backwardGraph(snapshot: OrderingSnapshot, terminals: ReadonlyMap<number
   // A pause's release gets an immediate window floor at its merge endpoint, including the review rounds.
   // Open windows still propagate their earlier latest starts through the same dependency graph. Passed ones do not.
   const releases = new Set((snapshot.pauseUntil ?? []).map(id => terminals.get(id) ?? id));
-  const followers = new Map<number, { id: number; lag: number }[]>();
+  const followers = new Map<number, { id: number; lag: number; internal?: true }[]>();
   for (const row of rows.values())
     for (const edge of precedence(row, snapshot.deployLagMs).jobs) {
       const prior = dependencyRun(edge, terminals);
-      followers.set(prior, [...(followers.get(prior) ?? []), { id: row.id, lag: edge.lag ?? 0 }]);
+      followers.set(prior, [
+        ...(followers.get(prior) ?? []),
+        { id: row.id, lag: edge.lag ?? 0, internal: edge.internal },
+      ]);
     }
   return { rows, releases, followers };
+}
+
+function timingOf(
+  row: QueuedJob,
+  standing: { open: number; any: number; urgent: boolean; unblocks: boolean },
+  duration: number,
+): Timing {
+  const { open, any, urgent, unblocks } = standing;
+  const finish = open === Infinity ? any : open;
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    created: row.created,
+    board: row.board,
+    ...(urgent && { urgent: true }),
+    unblocks,
+    ...(row.followThrough && { followThrough: true }),
+    latestStart: finish === Infinity ? null : finish - duration,
+    latestFinish: finish === Infinity ? null : finish,
+    duration,
+    ...(open === Infinity && any !== Infinity && { missed: true }),
+  };
 }
 
 // The running job ready work `waiting` pauses, if any (jobs.ts makesRoom, and the play: simulation.ts). Spare downtime

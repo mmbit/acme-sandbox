@@ -131,13 +131,14 @@ export function onPublish(heard: (e: Event, by: Source) => void) {
   return () => listeners.delete(heard);
 }
 
-export function subscribe(res: ServerResponse) {
+// statuses: who's at work now, as the board reads it (company.ts boardStatuses).
+export function subscribe(res: ServerResponse, statuses: Record<string, Status>) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
   const recent = db.prepare(`select id, ts, type, agent, "to", text, state from events order by id desc limit ${REPLAY}`).all() as (Stored & { id: number })[];
   // (history: what was, for the logs; the statuses after it are who's at work now, whole: the stored rows keep no jobs,
   // clocks or lines.)
   for (const { id, ...e } of recent.reverse()) res.write(`data: ${JSON.stringify({ ...e, text: redact(boardLines.get(id) ?? e.text) ?? null, history: true })}\n\n`);
-  res.write(`data: ${JSON.stringify({ type: 'statuses', statuses: Object.fromEntries(status) })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'statuses', statuses })}\n\n`);
   clients.add(res);
   const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
   res.on('close', () => { clients.delete(res); clearInterval(ping); });

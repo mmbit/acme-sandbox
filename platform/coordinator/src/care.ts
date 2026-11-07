@@ -260,7 +260,7 @@ export const holidaysOf = (year: number) => (calendarOf()?.(year) ?? []).map(iso
 // The org chart for HQ, with the company's clock as the coordinator reads it (company.timeZone) and the public holidays
 // of this year and next (company.holidays): the desk phone counts its working days with them
 export function getOrg() {
-  const chart = withPicks(org());
+  const chart = withPicks(org(true));
   const year = new Date().getUTCFullYear();
   const holidays = [year, year + 1].flatMap(holidaysOf);
   return { ...chart, company: { ...chart.company, timeZone: timeZone(), holidays } };

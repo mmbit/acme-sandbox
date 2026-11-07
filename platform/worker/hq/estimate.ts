@@ -4,6 +4,8 @@
 import { TOKEN_ESTIMATE_GUIDANCE } from './estimating.ts';
 import { seatStatusWords } from './seatwords.ts';
 import { budgetLine, confidenceLine } from './costs.ts';
+import type { Basis } from '../../coordinator/src/matching.ts';
+export type { Basis } from '../../coordinator/src/matching.ts';
 import type { Confidence } from '../../coordinator/src/confidence.ts';
 import type { TokenBudget } from '../../coordinator/src/tokenbudget.ts';
 import { writeFileSync } from 'node:fs';
@@ -122,14 +124,6 @@ type Engine = {
   unmeasured_seats: number;
   next_reset: number | null;
 };
-export type Basis = {
-  kind: string | null;
-  agent: string | null;
-  words: string[];
-  entry?: string;
-  routine?: string;
-  code?: boolean;
-};
 type Outlook = {
   unpricedSeats?: string[];
   start: number | null;
@@ -198,7 +192,11 @@ export const comparedWords = (n: number, b: Basis) =>
       : `${plural(n, 'done job')} like it: ${basisWords(b)}`;
 
 const carryKind = (b: Basis) =>
-  b.code === undefined ? '' : ` of commits ${b.code ? 'that change what' : 'with nothing'} the checks run on`;
+  b.scope
+    ? ` requiring type check ${b.scope.typecheck ? 'yes' : 'no'}, test areas ${b.scope.tests.join(', ') || 'none'}`
+    : b.code === undefined
+      ? ''
+      : ` of commits ${b.code ? 'that change what' : 'with nothing'} the checks run on`;
 const basisWords = (b: Basis) =>
   b.kind === 'carry'
     ? `mechanical carry checks${carryKind(b)}, by measured worker occupancy`

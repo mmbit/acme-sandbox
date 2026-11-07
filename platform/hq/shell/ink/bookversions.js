@@ -1,13 +1,16 @@
 // A try's versions under the board's scrap, on the scrap's own page: one answer scrap, "<Name> · on staging", with a
 // frame per version (A, B, C…: its screenshot, its two-word name, what's different, its live preview), a frame of
-// pencil dots for each still coming, or, once a try ended with none, why, in their place.
+// pencil dots for each still coming (a call's prototype being built: its pencil sketching), or, once a try ended with
+// none, why, in their place.
 // The board's pen anywhere on the frames (a circle, a tick, a cross, words) goes, once it rests, as a reply on the
 // version it's on (frameUnder: where it is, never its shape), with the box that version's picture shows in, so the
 // coordinator's judge reads it over the frame: a circle or a tick chooses it (stamped CHOSEN), a cross crosses it out.
 //
 // versionsEl(g, parts, was) → the block's <section>, or null when g has neither a try nor a version
-//   g: a group as HQ reads it: its try ({ state: 'coming' | 'made' | 'empty', expect, by, name, reason } or null) and
-//     its children, the versions among them (answers of style 'version', in order: A, B, C…) with the board's replies.
+//   g: a group as HQ reads it: its try ({ state: 'coming' | 'made' | 'empty', expect, by, name, reason, build? } or
+//     null; build: { version, minutes }, a call's prototype being built, the coordinator's callbuildrows.ts
+//     placeholderOf) and its children, the versions among them (answers of style 'version', in order: A, B, C…) with
+//     the board's replies.
 //   parts: { root, faceHtml, wirePen }. root: the element whose px are the page's, that the block is in (a reply's ink
 //     and frame are in its px). faceHtml({ by, name }): an agent's face. wirePen(el, { origin, to }): the board's pen
 //     on el (bookanswers.js, over bookanswerreply.js wireReply), to(ink) naming the version it goes to ({ answer,
@@ -35,9 +38,12 @@ export function versionsEl(g, parts, was = null) {
   el.setAttribute('aria-label', `${who.name}’s versions of “${g.words ?? ''}”`);
   const frames = [
     ...versions.map(({ v, letter, fate }) => versionHtml(v, letter, fate)),
-    ...Array.from({ length: coming }, (_, i) => comingHtml(LETTERS[versions.length + i])),
+    ...Array.from({ length: coming }, (_, i) =>
+      g.try?.build ? buildingHtml(LETTERS[versions.length + i], g.try) : comingHtml(LETTERS[versions.length + i]),
+    ),
   ];
-  el.innerHTML = `<header class="bk-versions-head">${parts.faceHtml(who)}<b>${esc(who.name)}</b><span>· ${prototypes(versions) ? 'prototype' : 'on staging'}</span></header>${
+  const kind = prototypes(versions) || g.try?.build ? 'prototype' : 'on staging';
+  el.innerHTML = `<header class="bk-versions-head">${parts.faceHtml(who)}<b>${esc(who.name)}</b><span>· ${kind}</span></header>${
     read.ended
       ? `<p class="bk-versions-ended" role="status">${esc(read.ended)}</p>`
       : `<div class="bk-versions-frames">${frames.join('')}${inkHtml(versions.flatMap(({ replies }) => replies))}</div>`
@@ -85,6 +91,19 @@ const footHtml = (v, fate) =>
 // CHOSEN, a rubber stamp pressed a little crooked across the chosen one's picture
 const STAMP =
   '<svg class="bk-version-stamp" viewBox="0 0 200 56" role="img" aria-label="Chosen"><rect x="3" y="3" width="194" height="50" rx="7"/><rect x="9" y="9" width="182" height="38" rx="4"/><text x="100" y="39" text-anchor="middle">CHOSEN</text></svg>';
+// A call's prototype being built (the coordinator's callbuilds.ts): its builder's pencil sketching on the empty frame
+// while they work, its version, and how long builds usually take.
+const buildingHtml = (letter, { name, build }) =>
+  `<figure class="bk-version" data-empty data-building aria-label="${esc(`${letter}, v${build.version}, ${name} is building it`)}"><div class="bk-version-paper">${SKETCHING}</div><figcaption><b class="bk-version-letter">${letter}</b><span class="bk-version-name">v${build.version}</span></figcaption><p class="bk-version-text">${esc(
+    build.minutes ? `${name} is building it · usually about ${build.minutes} min` : `${name} is building it`,
+  )}</p></figure>`;
+// (a wavy line, a circle and a box sketched in turn, the pencil riding the line: bookversions.css)
+const SKETCHING = `<svg class="bk-sketching" viewBox="0 0 120 90" aria-hidden="true">
+  <path class="bk-sketching-line" pathLength="1" d="M16 66c8-12 16-12 22 0s14 12 22 0 14-12 22 0 12 10 20 2"/>
+  <circle class="bk-sketching-dot" pathLength="1" cx="36" cy="32" r="10"/>
+  <rect class="bk-sketching-box" pathLength="1" x="62" y="22" width="30" height="20" rx="3"/>
+  <g class="bk-sketching-pencil"><path d="M-2 -1l5-15 6 2-5 15z"/><path class="bk-sketching-tip" d="M-2 -1l3 1 0 0z"/></g>
+</svg>`;
 const comingHtml = letter =>
   `<figure class="bk-version" data-empty aria-label="${letter}, still coming"><div class="bk-version-paper">${DOTS}</div><figcaption><b class="bk-version-letter">${letter}</b></figcaption></figure>`;
 

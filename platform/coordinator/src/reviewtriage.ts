@@ -13,7 +13,7 @@ import { TRUST_RULE } from './trust.ts';
 import * as lenses from './reviewlenses.ts';
 import * as light from './reviewlight.ts';
 import * as floor from './reviewfloor.ts';
-import { lookerOf, foundationOf } from './reviewseats.ts';
+import { lookerOf, foundationOf, readObligation } from './reviewseats.ts';
 
 export type Read = { agent: string; reason: string; files: string[]; domain: string; security: boolean };
 export type Selection = {
@@ -21,6 +21,7 @@ export type Selection = {
   reason: string;
   consolidator: string;
   reviewers: Read[];
+  consolidatorRead?: Read;
   looker: string | null;
   foundation: string[];
   throwaway?: boolean;
@@ -39,7 +40,7 @@ Thread context: ${JSON.stringify(context)}.
 Eligible staff (sole author excluded, co-authors eligible): ${JSON.stringify(candidates)}.
 A sole author cannot review or rule on their own work. Co-authors may review and rule on work they wrote together.
 General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidators: ${JSON.stringify(panel.consolidators(pr))}.
-HQ assigns the ruling's consolidator. You may suggest an eligible candidate. HQ resolves an unavailable suggestion by seats.
+HQ assigns the ruling's engine from projected starts. You may suggest an eligible candidate on that engine.
 ${base ? `Eligible original finders: ${JSON.stringify(finders(pr, files).map(reader => reader.agent))}.` : ''}
 ${earlier}
 ${capacity.brief(pr, panel.consolidators(pr))}
@@ -148,25 +149,18 @@ export function read(job: number, output?: string): Selection | string {
     return 'missing decision or reason';
   const eligible = eligibleFor(row.pr);
   const suggested = panel.consolidators(row.pr).includes(report.consolidator) ? report.consolidator : undefined;
-  const consolidator = suggested ?? panel.consolidator(row.pr, 'ruling');
-  if (report.decision === 'escalate')
-    return {
-      decision: report.decision,
-      reason: report.reason,
-      consolidator,
-      reviewers: [],
-      looker: null,
-      foundation: [],
-    };
+  const consolidator = panel.consolidator(row.pr, 'ruling', suggested);
+  if (report.decision === 'escalate') return escalation(report.reason, consolidator);
   const files = JSON.parse(row.judges) as string[];
   const reviewers = readersOf(row.pr, report, eligible, files);
   if (typeof reviewers === 'string') return reviewers;
   const throwaway = report.throwaway === true;
   const assigned = seated(row.pr, reviewers, files, throwaway, eligible);
   if (typeof assigned === 'string') return assigned;
-  const omission = omissionProblem(row.pr, report, assigned, files, suggested);
-  if (omission) return omission;
-  const looker = lookerOf(report.looker ?? null, reviewers, assigned, throwaway ? consolidator : suggested);
+  const required = requiredReads(row.pr, files, throwaway);
+  const consolidatorRead = readObligation(required, assigned, report.exceptions ?? [], suggested);
+  if (typeof consolidatorRead === 'string') return consolidatorRead;
+  const looker = lookerOf(report.looker ?? null, reviewers, assigned, suggested);
   if (looker === undefined) return 'the looker must be a reader of files that show';
   const foundation = foundationOf(report.foundation ?? null, reviewers, assigned);
   if (foundation === undefined) return 'the foundation question goes to one of the readers';
@@ -175,10 +169,22 @@ export function read(job: number, output?: string): Selection | string {
     reason: report.reason,
     consolidator,
     reviewers: assigned,
+    consolidatorRead,
     looker,
     foundation,
     throwaway,
     exceptions: report.exceptions ?? [],
+  };
+}
+
+function escalation(reason: string, consolidator: string): Selection {
+  return {
+    decision: 'escalate',
+    reason,
+    consolidator,
+    reviewers: [],
+    looker: null,
+    foundation: [],
   };
 }
 
@@ -231,17 +237,19 @@ function readersOf(pr: number, report: any, eligible: (agent: unknown) => boolea
   return scoped;
 }
 
-function omissionProblem(pr: number, report: any, assigned: Read[], files: string[], consolidator?: string) {
-  const chosen = new Set([...assigned.map(reader => reader.agent), consolidator]);
-  const excepted = (agent: string) =>
-    Array.isArray(report.exceptions) &&
-    report.exceptions.some((exception: any) => exception?.agent === agent && words(exception.reason));
+function requiredReads(pr: number, files: string[], throwaway: boolean) {
   // Throwaway work keeps only its security finders and no readability read.
-  const kept = finders(pr, files).filter(reader => report.throwaway !== true || reader.security);
-  if (kept.some(reader => !chosen.has(reader.agent) && !excepted(reader.agent))) return 'omitted finder needs a reason';
-  const readability = report.throwaway !== true && readabilityReader(pr);
-  if (readability && !chosen.has(readability) && !excepted(readability))
-    return 'omitted readability reader needs a reason';
+  const required = finders(pr, files).filter(reader => !throwaway || reader.security);
+  const readability = !throwaway && readabilityReader(pr);
+  if (readability)
+    required.push({
+      agent: readability,
+      reason: 'Read lasting code for readability and structure',
+      files: [...files],
+      domain: 'readability',
+      security: false,
+    });
+  return required;
 }
 
 // The readability reader a first read chooses unless excepted: none on a re-review, or when they may not read
@@ -307,6 +315,16 @@ export function record(
       .prepare(`insert or ignore into review_triage (job, pr, round, sha, base, selection) values (?, ?, ?, ?, ?, ?)`)
       .run(job.id, job.pr, job.round, job.sha, base, JSON.stringify(selection)).changes > 0
   );
+}
+
+// A displaced consolidator's independent read joins the recorded panel and its projected work.
+export function addReader(job: { pr: number; round: number; sha: string | null }, selection: Selection, reader: Read) {
+  selection.reviewers.push(reader);
+  db.prepare(
+    `update review_triage set selection = ? where job = (
+    select job from review_triage where pr = ? and round = ? and sha is ? order by job desc limit 1
+  )`,
+  ).run(JSON.stringify(selection), job.pr, job.round, job.sha);
 }
 
 // What a round reads: a fix round only the fixes, against every finding still open, nonblocking ones included

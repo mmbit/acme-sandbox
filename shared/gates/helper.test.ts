@@ -28,60 +28,102 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
   assert.deepEqual(passed('lent.json'), { passed: 1 });
 });
 
-test('a push whose tests helper is briefly absent waits on and runs there, never here', async () => {
+test("a run stands on HQ's commit when the repo has it, its bundle carrying only what came after, on nothing when not, and fails when HQ can't say", async () => {
+  const kits = {
+    'kits/adds/sum.ts': sum('a + b'),
+    'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+    'shared/gates/tests-on-helper.sh': ON_HELPER,
+  };
+  const { dir, run } = clone(kits, { 'kits/adds/notes.md': 'touched\n' });
+  const main = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+  const seen = join(mkdtempSync(join(tmpdir(), 'tests-seen-')), 'seen.jsonl');
+  const runs = () =>
+    readFileSync(seen, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+  const played = await playedHq(undefined, {
+    PLAYED_BASE: main,
+    PLAYED_BASE_GIT: join(dir, '.git'),
+    PLAYED_SEEN: seen,
+  });
+  const thin = run(played, 'tests.ts', ['--helper']);
+  assert.equal(thin.status, 0, thin.out);
+  assert.match(thin.out, /^- kits\/adds \(node --test, 1 file\): 1 passed/m);
+  assert.match(thin.out, /bundle [\d.]+ MB, made in/);
+  const [{ base, heads }] = runs();
+  assert.equal(base, main);
+  assert.equal(heads[0].split(' ')[0], `-${main}`, "the bundle needs HQ's commit, and carries none of it");
+  const unknown = run(await playedHq(undefined, { PLAYED_BASE: 'f'.repeat(40), PLAYED_SEEN: seen }), 'tests.ts', [
+    '--helper',
+  ]);
+  assert.equal(unknown.status, 0, unknown.out);
+  assert.match(unknown.out, /, the whole repo, made in/);
+  assert.deepEqual(runs()[1].base, null, 'a commit this repo has never fetched: the whole repo goes');
+  const none = run(await playedHq(undefined, { PLAYED_SEEN: seen }), 'tests.ts', ['--helper']);
+  assert.equal(none.status, 0, none.out);
+  assert.deepEqual(runs()[2].base, null, 'HQ names none: the whole repo goes');
+  const failed = run(await playedHq(undefined, { PLAYED_BASE_STATUS: '500', PLAYED_SEEN: seen }), 'tests.ts', [
+    '--helper',
+  ]);
+  assert.equal(failed.status, 2, failed.out);
+  assert.match(failed.out, /HQ named no base for the run \(HTTP 500\)/);
+  assert.equal(runs().length, 3, "HQ failing to name one sends no run, the whole repo's least of all");
+});
+
+test('a push whose tests helper is briefly absent, within the take window, waits on and runs there, never here', async () => {
   const { run } = absentHelperCase();
   const env = await playedHq(
     [
       { state: 'waiting', machine: 'attic', helperPresent: false },
       { state: 'done', machine: 'attic' },
     ],
-    { HELPER_TAKE_MINUTES: '0.001' },
+    { HELPER_TAKE_MINUTES: '1' },
   );
   const ran = run(env, 'tests.ts', ['--helper']);
   assert.equal(ran.status, 0, ran.out);
   assert.match(ran.out, /1 passed/);
   assert.match(ran.out, /on attic/);
-  assert.doesNotMatch(ran.out, /They run here instead/);
+  assert.doesNotMatch(ran.out, /incomplete/);
 });
 
+// (a machine taken away while a push's tests wait for it: they end at the take window, and the worker runs them here at
+// once, pushchecks.ts.)
 for (const state of ['withdrawn', 'waiting']) {
-  test(`a ${state} helper run with no helper there leaves an incomplete report by its deadline, without local tests`, async () => {
+  test(`a ${state} helper run with no helper there leaves an incomplete report at the take window, without local tests`, async () => {
     const { dir, run } = absentHelperCase();
     const outcomes = join(dir, 'outcomes.json');
-    const env = await playedHq([{ state, machine: 'attic', helperPresent: false }], {
-      TESTS_HELPER_ABSENT_MS: '1',
-      HELPER_TAKE_MINUTES: '0.001',
-    });
+    const env = await playedHq([{ state, machine: 'attic', helperPresent: false }], { HELPER_TAKE_MINUTES: '0.001' });
     const ran = run(env, 'tests.ts', ['--helper', '--outcomes', outcomes]);
     assert.equal(ran.status, 2, ran.out);
-    assert.match(
-      ran.out,
-      state === 'withdrawn' ? /no helper ran them/ : /no tests helper was there to take it in time/,
-    );
+    assert.match(ran.out, /no helper ran them \(withdrawn\)\. The check is incomplete/);
     assert.doesNotMatch(ran.out, /Tests passed:|They run here instead/);
     assert.equal(existsSync(outcomes), false);
     const response = await fetch(`${env.HQ_URL}/api/agent/runs/1`, {
       headers: { authorization: `Bearer ${env.HQ_TOKEN}` },
     });
-    assert.equal((await response.json()).state, state === 'withdrawn' ? state : 'stopped');
+    assert.equal((await response.json()).state, 'withdrawn');
   });
 }
 
-test('past the deadline, a run waits for a present busy helper and runs on to its result', async () => {
-  const { run } = absentHelperCase();
-  const env = await playedHq(
-    [
-      { state: 'waiting', machine: 'attic', helperPresent: true },
-      { state: 'running', machine: 'attic' },
-      { state: 'done', machine: 'attic' },
-    ],
-    { TESTS_HELPER_ABSENT_MS: '1', HELPER_TAKE_MINUTES: '0.001' },
-  );
-  const ran = run(env, 'tests.ts', ['--helper']);
-  assert.equal(ran.status, 0, ran.out);
-  assert.match(ran.out, /1 passed/);
-  assert.match(ran.out, /on attic/);
-});
+for (const server of [false, true]) {
+  test(`past the take window, a run waits for a busy ${server ? 'server' : 'lent'} helper and returns its result`, async () => {
+    const { run } = absentHelperCase();
+    const machine = server ? 'server' : 'attic';
+    const env = await playedHq(
+      [
+        { state: 'waiting', machine, helperPresent: true },
+        { state: 'running', machine },
+        { state: 'done', machine },
+      ],
+      { HELPER_TAKE_MINUTES: '0.001' },
+    );
+    const ran = run(env, 'tests.ts', ['--helper']);
+    assert.equal(ran.status, 0, ran.out);
+    assert.match(ran.out, /1 passed/);
+    assert.ok(ran.out.includes(`on ${machine}`), ran.out);
+  });
+}
 
 function absentHelperCase() {
   return clone(

@@ -114,10 +114,10 @@ for (const look of RENDERERS)
 
     // each row: its state in a word, what it has and its speed next to this server's; this server isn't one of them
     const reads = {
-      1: /The rig Running one › 24 cores · 40 GB · NVIDIA GeForce RTX 4090 · 8\.4× this server/,
-      2: /The study’s laptop Taking runs › 4 cores · 8 GB · 1\.0× this server · Manager out of date/,
-      3: /Old tower Away › 8 cores · 16 GB · 1\.7× this server/,
-      4: /Spare mini PC Paused ›/,
+      1: /The rig Running one › 16 cores · 32 threads · 94 GB · NVIDIA GeForce RTX 4090 · 8\.4× this server/,
+      2: /The study’s laptop Taking runs › 1\.0× this server · Manager out of date/,
+      3: /Old tower Away › 8 cores · 32 GB · 1\.7× this server/,
+      4: /Spare mini PC Paused › 4 threads · 16 GB ·/,
       5: /The attic PC Taking runs › .* · Manager stopped/,
     };
     assert.equal(await page.$$eval('.machines li[data-machine]', l => l.length), 5, at);

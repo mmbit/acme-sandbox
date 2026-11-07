@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { lookNames } from './looks.mjs';
+import { cssChannels } from '../../shared/contrast/contrast.js';
 
 const { chromium, devices } = playwright();
 const args = process.argv.slice(2),
@@ -29,14 +30,9 @@ const card = {
 };
 const browser = await chromium.launch();
 
-// A colour as [r, g, b], and whether it reads red: red well above both green and blue
-const rgb = c =>
-  c
-    .match(/[\d.]+/g)
-    .slice(0, 3)
-    .map(Number);
+// Whether a colour reads red: red well above both green and blue
 const red = c => {
-  const [r, g, b] = rgb(c);
+  const [r, g, b] = cssChannels(c);
   return r - Math.max(g, b) > 60;
 };
 // The alert in a line: its sign, its words, and how it's drawn

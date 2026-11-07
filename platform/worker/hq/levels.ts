@@ -19,7 +19,8 @@ export const ONE_DEADLINE =
   'deliverable. A task in no deliverable takes --by <when>, --by <project>/<slug> or --by none. Outside a live call, ' +
   'an unfiled board ask without --by asks the CEO for its time, and the CEO’s own ask is refused. Filing is judgment. ' +
   'A deadline orders work within seat pacing. Only work the board marks urgent bypasses pacing ' +
-  '(hq urgent milestone|job|task <id> on|off). The plan and pacing are algorithms.';
+  '(hq urgent <milestone> on|off, the whole milestone and all work filed under it later). The plan and pacing are ' +
+  'algorithms.';
 
 // How related work is drawn, the planner's judgment and never a count or a refusal (board, call 152): the levels' deliverable line, the CEO's hourly check and a meeting's review of the plans
 export const RELATED_WORK =
@@ -43,7 +44,7 @@ export const SIDE_BY_SIDE =
 // (worker/hq/pauses.ts), and the voice manage tool's description (platform/voice/hq_tools.py).
 export const WINDOW_FIRST =
   'A window orders work within seat pacing. Only work the board marks urgent bypasses pacing ' +
-  '(hq urgent milestone|job|task <id> on|off).';
+  '(hq urgent <milestone> on|off, the whole milestone and all work filed under it later).';
 export const PAUSE_FOR =
   'A pause is only for work that must wait on a condition (something from the board, a decision it has to make, a ' +
   'hold it asked for), never to put other work first.';

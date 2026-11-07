@@ -25,6 +25,8 @@ export function reviewSettings() {
   const r = yamlFile('company/org.yaml').review ?? {};
   return {
     rounds: { ...ROUNDS, ...r.rounds } as typeof ROUNDS,
+    // Prefer this engine for triage and rulings when its projected start adds no wait.
+    consolidatorEngine: r.consolidatorEngine as string | undefined,
     visual: (r.visual ?? []) as VisualCheck[],
     screens: r.screens as ScreensCheck | undefined,
     // A description for reviewer judgment, never a path rule.

@@ -57,8 +57,14 @@ export function createScene({ canvas: screen, world: w, brand: b, settings, shel
   if (w.dev) for (const m of w.mascots) if (!ART[m.kind]) console.warn(`[hq] the brownstone has no art for a ${m.kind}, so ${m.name} isn't in the building`);
   return {
     update: step, draw, hit, focus, resize, prepare, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase,
-    // its signals stop, and its sky and its pixel touches leave the page
-    dispose() { for (const off of offs) off(); unfold(); document.body.style.background = ''; document.body.classList.remove('brownstone'); },
+    // its signals stop, its buildings and frame let go unless a new brownstone already has them (the stage makes the
+    // next scene first; another look's page kept their pixels), and its sky and
+    // its pixel touches leave the page
+    dispose() {
+      for (const off of offs) off(); unfold();
+      if (R?.fb === screen) { buildings.forget(); R = view.L = null; }
+      document.body.style.background = ''; document.body.classList.remove('brownstone');
+    },
     controls: [{ id: 'walls', title: 'Outside walls', pressed: () => walls.on, toggle: () => setWalls(!walls.on) }],
     dev: {
       R, cam, fx,

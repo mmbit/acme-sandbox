@@ -540,6 +540,19 @@ test("a run HQ handed back to this server's helper is taken once, as that helper
   assert.doesNotMatch(lost.out, /\(on attic\)|Type 'string'/);
 });
 
+test('gates wait past the take window for a busy server helper and return its verdict', async () => {
+  const waiting = await lent(
+    [
+      { state: 'waiting', machine: 'server', helperPresent: true },
+      { state: 'done', machine: 'server' },
+    ],
+    { HELPER_TAKE_MINUTES: '0.001' },
+  );
+  const checked = gates(onHelper, typeError, waiting);
+  assert.equal(checked.status, 1, checked.out);
+  assert.match(checked.out, /\(on server\)$/m);
+});
+
 test("--helper stopped at the worker's time limit stops its run on HQ, however late HQ answers, and gives no verdict", async () => {
   const runOf = async (hq: NodeJS.ProcessEnv) => {
     const run = await fetch(`${hq.HQ_URL}/api/agent/runs/1`, { headers: { authorization: 'Bearer job-token' } });

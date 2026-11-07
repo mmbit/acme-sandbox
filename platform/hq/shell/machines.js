@@ -153,15 +153,24 @@ function listPage(list, server) {
     <p class="seat-foot">The fastest free machine takes each run. This server takes those no machine takes in time.</p>`;
 }
 const stateWord = m => `<span class="seat-now is-${esc(m.state)}">${esc(STATE[m.state] ?? m.state)}</span>`;
-// What a machine has, and its speed next to this server's where that's known
+// What a machine has, as its manager measured it (never its helpers' caps), and its speed next to this server's where
+// that's known
 function sizeLine(m, server) {
   const speed = !m.speed
     ? ''
     : server?.speed
       ? `${(m.speed / server.speed).toFixed(1)}× this server`
       : `speed ${m.speed}`;
-  const parts = [m.cpus && `${m.cpus} cores`, m.memoryGb && `${m.memoryGb} GB`, m.gpu, speed].filter(Boolean);
+  const parts = [hostLine(m.host), m.gpu, speed].filter(Boolean);
   return parts.length ? parts.join(' · ') : 'Not heard from yet';
+}
+// Its cores and threads apart where it has more threads, its threads alone where its cores aren't told apart
+function hostLine(host) {
+  if (!host) return '';
+  const { cores, threads, memoryGb } = host;
+  const cpus =
+    cores === threads ? `${cores} cores` : cores ? `${cores} cores · ${threads} threads` : `${threads} threads`;
+  return `${cpus} · ${memoryGb} GB`;
 }
 // A machine's page: its name and state, the key command once, it live, then its settings
 function machinePage(m, server) {

@@ -415,7 +415,7 @@ test('a project handed on is all or nothing: a notice refused part way publishes
   assert.deepEqual([planning.agent, none], ['wren', []]);
   const messages = await import('./messages.ts');
   for (let i = 1; i < messages.PER_HOUR; i++)
-    messages.send({ agent: 'juno', job: juno.id }, 'bolt', `Note ${i}`, bolt.id);
+    messages.send({ agent: 'juno', job: juno.id }, 'bolt', `Note ${i}`, { only: bolt.id });
   const events = await import('./events.ts');
   const heard: { type: string; to?: string }[] = [];
   const stop = events.onPublish(e => heard.push(e));

@@ -17,18 +17,27 @@ export type SeatRow = {
   credits: number | null;
 };
 
-export function seatStatusesOf(rows: SeatRow[], pacing: boolean, running: Map<string, number>, now = Date.now()) {
-  const seats: PacedSeat[] = rows.map(row => ({
-    id: row.id,
-    engine: row.engine,
-    state: row.state,
-    until: row.until,
+// A seat row's windows as pace.ts reads them, with its stop level (seat_list's percent) and credits.
+export function windowsOf(
+  row: Pick<SeatRow, 'util' | 'resets' | 'week' | 'week_resets' | 'stop' | 'credits'>,
+): Windows {
+  return {
     util: row.util ?? undefined,
     resets: row.resets ?? 0,
     week: row.week ?? undefined,
     weekResets: row.week_resets ?? 0,
     drainAt: row.stop === null ? undefined : row.stop / 100,
     credits: !!row.credits,
+  };
+}
+
+export function seatStatusesOf(rows: SeatRow[], pacing: boolean, running: Map<string, number>, now = Date.now()) {
+  const seats: PacedSeat[] = rows.map(row => ({
+    id: row.id,
+    engine: row.engine,
+    state: row.state,
+    until: row.until,
+    ...windowsOf(row),
   }));
   return new Map(seats.map(seat => [seat.id, seatStatus(seat, seats, pacing, running.get(seat.id) ?? 0, now)]));
 }

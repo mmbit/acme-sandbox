@@ -110,7 +110,8 @@ export async function unitsPage(page: number): Promise<Drawn> {
     cards: on.flatMap(u => (u.card ? [{ x: u.at.x, y: u.at.y, w: UNIT_W, h: u.h }] : [])),
     // (each stroke with its unit, painted as the book paints it: bookrender.ts.)
     ink: on.flatMap(u => (u.parts.ink as Stroke[]).map(s => ({ ...s, unit: u.id }))),
-    scraps: on.flatMap(u => u.parts.pictures),
+    // (each picture with its unit too, stacked with its ink.)
+    scraps: on.flatMap(u => (u.parts.pictures as Drawn['scraps']).map(s => ({ ...s, unit: u.id }))),
     texts: on.flatMap(u => u.parts.texts) as Typed[],
     under: on.flatMap(u => [
       ...(u.words ? [{ ...u.words, x: u.at.x, y: u.at.y + u.words.y, onCard: true }] : []),

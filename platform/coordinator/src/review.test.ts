@@ -131,7 +131,6 @@ const heads = new Map<number, string>();
 // Synthetic PR branches use their own namespace, separate from the worker's job/<id> branches.
 // The author's job on PR n ends with a push (the worker's hand-off): `by`, or its job queued on the branch, or a new one.
 // `push`: what the worker reports of it (its files against main, its head commit...).
-// (on the seat that claims its fix rounds, so a warm session goes on: carryover.ts.)
 async function submit(n: number, push: Record<string, unknown> = {}, by?: Running) {
   const [own] = by ? [] : queued(n).filter(j => j.kind === 'work' && j.ready);
   const job = by ?? (own ? (await claim(n, j => j.id === own.id))[0] : await h.start({ agent: 'bolt', branch: `review/${n}` }, { seat: 'claude-1' }));
@@ -489,19 +488,19 @@ test("every reader and the ruling ask first whether the change rebuilds what we 
   assert.ok(first > 0 && first < quill.prompt.indexOf('Merge duplicates'), 'the ruling settles it before the findings');
 });
 
-test("a fix round goes on in its author's last session on the branch, whose folders the worker keeps until the pull request is settled", async () => {
+test("a Claude fix round starts from its author's closing report, and the worker keeps their folders until the pull request is settled", async () => {
   const n = 119, files = ['products/pebblet/app/src/server.ts'];
   // (its model's last reply a moment ago: a warm session, carryover.ts)
   const usage = { models: { 'claude-opus-5-5': { input: 1, output: 1 } }, lastTurn: Date.now() };
-  await submit(n, { files, session: 'bolt-1', usage });
+  await submit(n, { files, session: 'bolt-1', usage, result: 'Built the server.' });
   const { id: work } = db.prepare("select id from jobs where branch = ? and kind = 'work'").get(`review/${n}`) as { id: number };
   const ended = async (ids: number[]) => ((await worker('ended', { ids })).body as { id: number }[]).map(j => j.id);
   assert.deepEqual(await ended([work]), [], 'kept while the pull request can merge');
   await decide(n, 'changes');
   const [fix] = await claim(n);
-  // (no seat in resumes: the claim's seat decides, carryover.ts.)
-  assert.deepEqual(fix.resumes, { job: work, session: 'bolt-1' });
-  await submit(n, { files, session: 'bolt-1' }, fix);
+  assert.equal(fix.resumes, undefined);
+  assert.deepEqual(fix.closingReports, { reports: [{ job: work, report: 'Built the server.' }] });
+  await submit(n, { files, session: 'bolt-fix' }, fix);
   await decide(n, 'merge');
   assert.deepEqual(prs(n), { round: 2, status: 'merged' });
   assert.deepEqual(await ended([work, fix.id]), [work, fix.id], 'merged: their folders can go');
@@ -2848,6 +2847,50 @@ test('a closed pull request reopened on GitHub can settle without waiting for it
     Object.assign(github.pr(n), { state: 'closed', merged: true });
     await review.settleIdle();
     assert.equal(prs(n).status, 'merged', 'the check before closing does not delay the reopened pull request');
+  }
+});
+
+// A paused project's review waits with its pause, so nobody here is on its pull request: its work landing another way
+// (merged or closed on GitHub) is still heard, and the queued review ends with it.
+test("a review a pause holds doesn't hide its pull request merging or closing on GitHub, and ends with it", async () => {
+  const pauses = await import('./pauses.ts');
+  for (const [n, state] of [[22111, 'merged'], [22112, 'closed']] as const) {
+    const thread = h.dueThread(), head = newSha();
+    const work = h.ended({ agent: 'bolt', title: 'Finished work', sha: head, thread });
+    h.storedPr(n, work, 'open', FILES, { round: 1, sha: head, since: work });
+    const held = h.queue({ agent: 'rook', kind: 'review', pr: n, round: 1, sha: head, thread, branch: `job/${work}` });
+    assert.equal(typeof pauses.pause({ thread, why: 'Not yet', byHand: true }, 'juno'), 'object');
+    longAgo(n);
+    Object.assign(github.pr(n), { state: 'closed', merged: state === 'merged' });
+    try {
+      await review.settleIdle();
+      assert.equal(prs(n).status, state);
+      assert.equal((db.prepare('select status from jobs where id = ?').get(held) as { status: string }).status, 'cancelled');
+    } finally {
+      pauses.resume({ thread }, 'juno');
+    }
+  }
+});
+
+// An expedited merge is merged on GitHub before its review: a pause holding that review leaves it pending, as only its
+// ruling settles the pull request (reviewedAfter).
+test('a review a pause holds after an expedited merge stays pending through the idle sweep', async () => {
+  const n = 22113;
+  const pauses = await import('./pauses.ts');
+  const author = await h.start({ agent: 'bolt', branch: `review/${n}`, expedite: true });
+  await submit(n, { files: ['products/site/page.css'], ...passed }, author);
+  assert.equal(github.pr(n).merged, true, 'expedited work merges before its review');
+  const [held] = queued(n).filter(j => j.kind !== 'work');
+  assert.ok(held, 'its review is queued');
+  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'Not yet', byHand: true }, 'juno'), 'object');
+  try {
+    assert.ok(h.jobs.pausedOn(held.id), 'the pause holds its review');
+    longAgo(n);
+    await review.settleIdle();
+    assert.equal(prs(n).status, 'open', 'its review is still pending');
+    assert.equal(h.job(held.id).status, 'queued');
+  } finally {
+    pauses.resume({ project: 'unsorted' }, 'juno');
   }
 });
 

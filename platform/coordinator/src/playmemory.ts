@@ -7,6 +7,7 @@ const budgets = new WeakMap<Snapshot, { recoverableMb: number; externalSlots: nu
 export type Room = { snapshot: Snapshot; slots: number; occupiedMb: number; startingMb: number };
 export function room(snapshot: Snapshot, running: QueuedJob[], now: number): Room {
   const memory = snapshot.memory;
+  running = running.filter(row => !memory?.checks?.includes(row.id));
   return {
     snapshot,
     slots: running.length,

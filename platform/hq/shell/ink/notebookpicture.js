@@ -2,7 +2,7 @@
 // (bookpicture.ts); dev mode has no store, so the page's groups are drawn here, its ink, typed words and pictures on the
 // paper, kept till the page changes. An address for an <img>.
 import { draw as ink } from '/__review/ink.js';
-import { layered } from '/__review/inkshape.js';
+import { runsOf } from './booklayers.js';
 
 const PICTURE_PX = 360, // (its width; at most 1.5 as tall: a grown page shows its top, as the grid does)
   TEXT_PX = 18,
@@ -31,15 +31,22 @@ async function drawn(page, groups) {
   g.fillStyle = '#fffaf0';
   g.fillRect(0, 0, canvas.width, canvas.height);
   g.setTransform(s, 0, 0, s, -page.x * s, -page.y * s);
+  // (its pictures and ink in their stack, as on the page: booklayers.js; the first unit lies on top, as bookpage.js
+  // made lays it, so the last is drawn first.)
+  const images = new Map();
   for (const c of groups.flatMap(gr => gr.pictures ?? [])) {
     const img = new Image();
     img.src = c.url;
     await img.decode().catch(() => {});
-    if (img.naturalWidth) g.drawImage(img, c.x, c.y, c.w, c.h);
+    images.set(c, img);
   }
-  // (a highlighter's strokes under the ink, as on the page)
-  const strokes = groups.flatMap(gr => gr.ink ?? []);
-  ink(g, layered(strokes));
+  for (const run of groups.toReversed().flatMap(gr => runsOf(gr.pictures ?? [], gr.ink ?? [])))
+    if (run.ink) ink(g, run.ink);
+    else
+      for (const c of run.pictures) {
+        const img = images.get(c);
+        if (img.naturalWidth) g.drawImage(img, c.x, c.y, c.w, c.h);
+      }
   for (const t of groups.flatMap(gr => gr.texts ?? [])) typed(g, t);
   const blob = await new Promise(res => canvas.toBlob(res));
   return blob ? URL.createObjectURL(blob) : '';

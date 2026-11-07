@@ -2,13 +2,23 @@
 // Ink played in a browser as the board lives it, on HQ's mock data: the Pencil on HQ's own page here, then the stories
 // in book/ (Ink's README, "The book check")
 //   node platform/hq/book-check.mjs [--shots dir] [--workers n] [--stories 'words[|more words]' [--webkit] | --first]
+//     [--out dir [--again | --touched]] [--stall seconds]
+// --out keeps what each story ran in Chromium there (touched.json, shared/browser/touched.mjs), and --again runs only
+// the stories a change since then touches, the others kept with the result they had; --touched only lists those
+// stories, here in a second with no browser, so a change that touches none needs no render. A part past --stall's
+// seconds (300 by default), a story or one of the main flow's parts alike, fails as stalled, the pages it opened are
+// closed, and the next one runs: on a slow machine, raise it rather than read a long part as stuck. On the render
+// helper the record goes along with --with, from the second run on (git can't add a file that isn't there yet):
+//   hq run --kind render --bring .data/book-check -- node platform/hq/book-check.mjs --stories '…' --out .data/book-check
+//   hq run --kind render --with .data/book-check/touched.json --bring .data/book-check -- node platform/hq/book-check.mjs --stories '…' --out .data/book-check --again
 import assert from 'node:assert/strict';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { crc32, deflateSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { serve } from './serve.mjs';
-import { playwright, errorsOf, until, openPage } from '../../shared/browser/browser.mjs';
+import { serve, servedFiles } from './serve.mjs';
+import { playwright, errorsOf, until, openPage, withinBudget } from '../../shared/browser/browser.mjs';
+import { listTouched, recordIn, watch } from '../../shared/browser/touched.mjs';
 import { scriptForHq, fulfilPart } from '../../shared/review/parts.mjs';
 import { wetDry, STILL } from '../../shared/review/inkcheck.mjs';
 // (the stories in a folder of their own)
@@ -155,6 +165,23 @@ if (only === 'guest notebooks') {
 }
 // (--webkit with --stories: those stories in WebKit, the iPad's engine, where it's installed.)
 const inWebKit = process.argv.includes('--webkit');
+// (--out, --again and --stall)
+const out = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : null;
+const again = process.argv.includes('--again');
+if (again && !out) throw new Error('book-check: --again reads the record in --out, so give it one');
+// (the slowest story seen passing on the render helper took 194 s: the bookmarks')
+const STALL_S = Number(process.argv.includes('--stall') ? process.argv[process.argv.indexOf('--stall') + 1] : 300);
+// (kept by the check itself: a worker of it only sends back what its parts used)
+const record = out && !process.argv.includes('--worker') && recordIn(out, import.meta.url);
+// --touched: the recorded stories a change since touches, read here in a second, with no server or browser: none, and
+// there's nothing to run again (a new story comes with a change to this check's code, which touches every story)
+if (process.argv.includes('--touched')) {
+  if (!record) throw new Error('book-check: --touched reads the record in --out, so give it one');
+  const chosen = record.names().filter(key => !only || only.split('|').some(w => key.includes(w)));
+  listTouched(record, chosen, { check: 'book-check', noun: ['story', 'stories'], out, only });
+  process.exit(0);
+}
+const watchers = new Map(); // a browser → what its stories open and run (touched.mjs)
 if (shots) await mkdir(shots, { recursive: true });
 const shot = async (name, page) => shots && page.screenshot({ path: `${shots}/${name}.png` });
 const server = await serve(),
@@ -1711,35 +1738,57 @@ const took = from => `${((performance.now() - from) / 1000).toFixed(1)} s`;
 // Every part of the check in an engine: the main flow's parts (below) and the book's stories, made once per engine
 const made = {};
 const partsOf = engine => (made[engine] ??= { ...FLOWS[engine], ...STORIES() });
-// One part played in its engine's browser, its line for the log (a part may return a note to add to it)
+// One part played in its engine's browser, its line for the log (a part may return a note to add to it), and with
+// --out the files it used (touched.mjs). A part past --stall's seconds fails as stalled.
 async function playPart({ engine, name }) {
   const browser = await browserOf(engine),
+    watcher = watchers.get(browser),
     from = performance.now(),
     asleep = slept,
     time = () => `${took(from)}, ${((slept - asleep) / 1000).toFixed(1)} s of it in timed waits`;
+  let result;
+  watcher.begin();
   try {
-    const note = await partsOf(engine)[name](browser);
-    return { ok: true, line: `ok   ${engine}: ${name} (${time()}${note ? `; ${note}` : ''})` };
+    const note = await withinBudget(partsOf(engine)[name](browser), STALL_S * 1000, () => watcher.abandon());
+    result = { ok: true, line: `ok   ${engine}: ${name} (${time()}${note ? `; ${note}` : ''})` };
   } catch (e) {
-    return {
-      ok: false,
-      line: `FAIL ${engine}: ${name} (${time()})\n     ${e.message.split('\n').join('\n     ')}`,
-    };
-  } finally {
-    // (what it left open closed, a failed one's too: the next part starts on a browser holding nothing)
-    for (const c of browser.contexts()) await c.close().catch(() => {});
+    result = { ok: false, line: `FAIL ${engine}: ${name} (${time()})\n     ${e.message.split('\n').join('\n     ')}` };
   }
+  // (what it left open closed, a failed one's too: the next part starts on a browser holding nothing)
+  for (const c of browser.contexts()) await c.close().catch(() => {});
+  return { ...result, files: await watcher.end() };
 }
+// --again: of parts, those a change since the record touches, to play; the others logged with the result they had then,
+// their failures counted
+function toPlay(parts) {
+  let failed = 0;
+  const touched = parts.filter(({ engine, name }) => {
+    const key = `${engine}: ${name}`;
+    if (!again || record.touches(key)) return true;
+    const kept = record.kept(key),
+      [first, ...more] = kept.line.split('\n');
+    console.log([`${first} (kept, untouched since the last run)`, ...more].join('\n'));
+    if (kept.failed) failed++;
+    return false;
+  });
+  return { parts: touched, failed };
+}
+// --out: a part's run noted in the record, with the files it used
+const noted = ({ engine, name }, { ok, line, files }) =>
+  files && record.save(`${engine}: ${name}`, { failed: !ok, line }, files);
 // The names among names holding words (or any of words|words)
 const matching = (names, words) => names.filter(n => words.split('|').some(w => n.includes(w)));
 // The parts of those names played one after another here, the failures counted
 async function playHere(engine, names) {
-  let failed = 0;
-  for (const name of names) {
-    const { ok, line } = await playPart({ engine, name });
-    console.log(line);
-    if (!ok) failed++;
+  const chosen = toPlay(names.map(name => ({ engine, name })));
+  let failed = chosen.failed;
+  for (const part of chosen.parts) {
+    const result = await playPart(part);
+    console.log(result.line);
+    noted(part, result);
+    if (!result.ok) failed++;
   }
+  record?.write();
   return failed;
 }
 
@@ -1752,7 +1801,14 @@ const browserOf = engine =>
     engine === 'webkit'
       ? playwright().webkit.launch()
       : playwright().chromium.launch({ args: ['--disable-dev-shm-usage', ...FAKE_MIC] })
-  ).then(countSleeps));
+  )
+    .then(countSleeps)
+    .then(watched));
+// A browser just launched, what its stories open and run followed from before their first page (touched.mjs)
+function watched(browser) {
+  watchers.set(browser, watch(browser, out ? servedFiles : null));
+  return browser;
+}
 // The timed waits the parts sleep through (waitForTimeout: fixed ones, and polls that check between them), summed: each
 // part's line gives its own beside its time
 let slept = 0;
@@ -2132,13 +2188,13 @@ if (process.argv.includes('--worker')) {
     const names = Object.keys(partsOf(engine));
     return (only ? matching(names, only) : names).map(name => ({ engine, name }));
   });
-  const { failed, count, peak, own, waitedMs } = await sharedOut(
-    fileURLToPath(import.meta.url),
-    process.argv.slice(2),
-    parts,
-    workers,
-  );
-  const played = `${parts.length} parts in ${took(from)} on ${count} workers, ${(peak / 1e9).toFixed(1)} GB in use at most (${(own / 1e9).toFixed(1)} GB of it the check's), ${(waitedMs / 1000).toFixed(0)} s of parts waiting for memory`;
+  const chosen = toPlay(parts);
+  const shared = await sharedOut(fileURLToPath(import.meta.url), process.argv.slice(2), chosen.parts, workers, noted);
+  record?.write();
+  const { count, peak, own, waitedMs } = shared,
+    failed = shared.failed + chosen.failed,
+    kept = parts.length - chosen.parts.length;
+  const played = `${parts.length} parts${kept ? ` (${kept} kept)` : ''} in ${took(from)} on ${count} workers, ${(peak / 1e9).toFixed(1)} GB in use at most (${(own / 1e9).toFixed(1)} GB of it the check's), ${(waitedMs / 1000).toFixed(0)} s of parts waiting for memory`;
   if (only) console.log(`book-check: ${played}${failed ? `, ${failed} failing` : ''}`);
   // (Search; handwriting; a morning, a picture dragged in, every width)
   else

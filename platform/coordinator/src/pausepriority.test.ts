@@ -255,3 +255,85 @@ for (const started of [false, true])
         assert.equal(pacedPlay.get(owner)!.merged, expected.merged, 'projected stages add no pacing wait');
       }
     });
+
+for (const kind of ['review', 'work'] as const)
+  test(`an overdue ${kind === 'work' ? 'fix' : 'review'} freeing ten tests waiters claims before older overdue work`, async () => {
+    h.cancelQueued();
+    assert.equal((await h.board('/api/seats/pacing', { on: false })).status, 200);
+    const { author, round, build } = await review(kind === 'work' ? 910 : 911, kind);
+    const older = thread();
+    const window = await import('./windows.ts');
+    const setWindow = (id: string, ago: number) =>
+      window.set(projects.findThread(id)!, { deadline: Date.now() - ago, aim: Date.now() - ago }, 'juno');
+    setWindow(older, 5 * HOUR);
+    setWindow(build, HOUR);
+    const ordinary = h.queue({ agent: 'moss', engine: 'codex', thread: older });
+    const holder = await h.start({ agent: 'kit', thread: thread() });
+    const waiters: Awaited<ReturnType<typeof h.start>>[] = [];
+    for (let i = 0; i < 10; i++) {
+      const held = thread();
+      setWindow(held, HOUR / 2);
+      waiters.push(await h.start({ agent: 'kit', thread: held }));
+    }
+    const giver = await h.start({ agent: 'juno', kind: 'chat' });
+    const tied = await h.agent('waits', giver.token, {
+      id: holder.id,
+      to: author.id,
+      why: 'This merge frees the tests resource',
+    });
+    assert.equal(tied.status, 200, JSON.stringify(tied.body));
+    await h.capacity({ codex: 1, claude: 1 });
+    const { plannerCapacity } = await import('./room.ts');
+    const resourceWaits = waiters.map(job => ({ job: job.id, on: holder.id, resource: 'tests' }));
+    assert.equal((await h.worker('room', { capacity: { ...plannerCapacity()!, resourceWaits } })).status, 200);
+    const now = Date.now();
+    const { orderingSnapshot } = await import('./backlog.ts');
+    const queue = orderingSnapshot(now);
+    assert.ok(queue.jobs.find(job => job.id === waiters[0].id)!.dependencies!.some(edge => edge.job === holder.id));
+    assert.equal(
+      orderingSnapshot(now + 4 * 60_000)
+        .jobs.find(job => job.id === waiters[0].id)!
+        .dependencies?.some(edge => edge.job === holder.id) ?? false,
+      false,
+      'a stale resource report grants no standing',
+    );
+    const { snapshot: full, sizes } = forecast.play(now);
+    const { inspect } = await import('./eta.ts');
+    const relevant = {
+      ...full,
+      jobs: full.jobs.filter(
+        job =>
+          job.id === author.id ||
+          job.id === round ||
+          job.id === ordinary ||
+          job.id === holder.id ||
+          waiters.some(waiting => waiting.id === job.id),
+      ),
+    };
+    for (const pace of ['usual', 'slow'] as const) {
+      const { starts } = inspect(relevant, sizes[pace], { pace });
+      assert.notEqual(starts.get(round), null);
+      assert.ok(starts.get(round)! < starts.get(ordinary)!, 'the plan starts the unblocking round first');
+    }
+    const claimed = await h.claim('codex', { seat: 'capacity-codex' });
+    assert.equal(claimed?.id, round, 'the live claim agrees with the plan');
+    await h.finish(claimed!);
+    for (const waiting of [holder, ...waiters, giver]) await h.finish(waiting);
+  });
+
+test('urgent waiting work carries its standing through needs and after to a paced review claim', async () => {
+  h.cancelQueued();
+  const { author, round, build } = await review(912);
+  const comparison = thread(),
+    release = thread();
+  const compared = h.queue({ agent: 'kit', thread: comparison });
+  assert.deepEqual(plan.need(comparison, build, 'moss'), { ok: true });
+  h.queue({ agent: 'kit', thread: release, after: compared });
+  const seat = await paced();
+  assert.equal(await h.claim('codex', seat), null);
+  urgent(release);
+  const claimed = await h.claim('codex', seat);
+  assert.equal(claimed?.id, round);
+  await h.finish(claimed!);
+  assert.equal(h.job(author.id).status, 'done');
+});

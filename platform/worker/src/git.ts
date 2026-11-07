@@ -6,21 +6,17 @@
 import * as threads from './threads.ts';
 import { pushProcess } from './pushprocess.ts';
 import { assertOwned, ownershipSignal } from './ownership.ts';
-import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { closeSync, lstatSync, mkdtempSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { JOB_BRANCH, PROFILE_BRANCH, SHA, redact } from './safety.ts';
 import { MARKS, countedLines, markedPaths, numstatRow, type FileLines } from './countedlines.ts';
-import { checkedChange, testedAreas } from './mainline.ts';
+import { checkedChange, checkScope, testedAreas } from './mainline.ts';
 
-const execFileAsync = promisify(execFile);
-
-// The most output a buffered command read keeps (git's file and patch reads, and runAs's commands): 64 MiB, raised
-// from Node's 1 MiB default, caps the worker memory each of these reads may hold.
-const COMMAND_OUTPUT_MAX_BYTES = 64 * 1024 * 1024;
+// Repository ref listings grow with the mirror and read names rather than agent-supplied content.
+// Content reads use the adapters' worker memory budget.
+import { execFileSync, spawnSync, execFileAsync, OUTPUT_BYTES, GitOutputLimitError } from './gitoutput.ts';
 
 export type Agent = { uid?: number; gid?: number; env: Record<string, string> };
 
@@ -107,7 +103,6 @@ export async function branchLines(agent: Agent, dir: string, base: string) {
         env,
         uid: agent.uid,
         gid: agent.gid,
-        maxBuffer: 16 << 20,
       })
     ).stdout.trim();
   // A merge of main not yet committed counts as made, or main's own files would count as the branch's.
@@ -152,7 +147,7 @@ export const pinnedGitEnv = Object.fromEntries([
 ]);
 
 // Runs a command as an agent's uid with its env (its hooks may run; they get nothing that uid doesn't have).
-// Its output may be a file read whole (threads.ts reads a profile's archive, past Node's 1 MiB default).
+// Its output may be a file read whole (threads.ts reads a profile's archive).
 export const runAs = (agent: Agent, cmd: string, args: string[], input?: string) => {
   assertOwned();
   return execFileSync(cmd, args, {
@@ -162,7 +157,6 @@ export const runAs = (agent: Agent, cmd: string, args: string[], input?: string)
     gid: agent.gid,
     input,
     stdio: ['pipe', 'pipe', 'pipe'],
-    maxBuffer: COMMAND_OUTPUT_MAX_BYTES,
   });
 };
 
@@ -239,7 +233,12 @@ export function gitFlow(o: {
   const inMirror = (args: string[]) => ['--git-dir', mirror, '-c', 'core.hooksPath=/dev/null', ...args];
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   const root = (...args: string[]) =>
-    execFileSync('git', inMirror(args), { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    execFileSync('git', inMirror(args), {
+      encoding: 'utf8',
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(args[0] === 'for-each-ref' ? { maxBuffer: Infinity } : {}),
+    }).trim();
 
   function ensureMirror() {
     const me = process.getuid!();
@@ -285,7 +284,7 @@ export function gitFlow(o: {
   // First it lets go of the kept tips no clone can read any more (keepCommits below).
   async function gcMirror() {
     releaseExpiredKeptTips();
-    await execFileAsync('git', inMirror(['gc', '--auto', '--quiet']), { env });
+    await execFileAsync('git', inMirror(['gc', '--auto', '--quiet']), { encoding: 'utf8', env });
   }
 
   const fetchMirror = () => {
@@ -303,29 +302,31 @@ export function gitFlow(o: {
     releaseKeptTips(fetchError);
   };
   // The same in the background, given up after a minute: the worker carries on meanwhile, and a stalled GitHub can't hang it
-  const refreshMirror = () =>
-    new Promise<void>((ok, fail) => {
-      const releaseKeptTips = keepTipsDuringFetch();
-      execFile('git', inMirror(['fetch', '-q', '--prune', 'origin']), { env, timeout: 60_000 }, fetchError => {
-        try {
-          releaseKeptTips(fetchError);
-          ok();
-        } catch (err) {
-          fail(err);
-        }
+  const refreshMirror = async () => {
+    const releaseKeptTips = keepTipsDuringFetch();
+    let fetchError: unknown;
+    try {
+      await execFileAsync('git', inMirror(['fetch', '-q', '--prune', 'origin']), {
+        encoding: 'utf8',
+        env,
+        timeout: 60_000,
       });
-    });
+    } catch (err) {
+      fetchError = err;
+    }
+    releaseKeptTips(fetchError);
+  };
 
   // Keeps every branch tip before a fetch: git fetch --prune deletes a gone branch before it transfers anything, so a
-  // worker killed mid-fetch still leaves the tips kept. The function it returns, called once the fetch is done (failed
-  // or not), lets go of the tips their branch still reaches, then throws the fetch's own error if it had one.
+  // worker killed mid-fetch still leaves the tips kept. They're kept on one ref, refs/kept/<ms>/<sha> of a commit
+  // whose parents are the tips: with thousands of branches, a ref each took seconds to write and delete. The function
+  // it returns, called once the fetch is done (failed or not), keeps the tips their branch no longer reaches on refs
+  // of their own and lets go of the one ref in the same transaction, then throws the fetch's own error if it had one.
   function keepTipsDuringFetch() {
     const fetchStartMs = Date.now();
     const tipsBefore = branchTips();
-    keepCommits(
-      fetchStartMs,
-      tipsBefore.map(tip => tip.sha),
-    );
+    const tipsCommit = tipsBefore.length ? commitOfTips(fetchStartMs, tipsBefore) : undefined;
+    if (tipsCommit) updateRefs([`create refs/kept/${fetchStartMs}/${tipsCommit} ${tipsCommit}`]);
     return function releaseKeptTips(fetchError: unknown) {
       try {
         const shaAfter = new Map(branchTips().map(tip => [tip.ref, tip.sha]));
@@ -338,8 +339,9 @@ export function gitFlow(o: {
           );
         };
         const lostShas = new Set(tipsBefore.filter(tip => !stillReached(tip)).map(tip => tip.sha));
-        const reachedShas = new Set(tipsBefore.map(tip => tip.sha).filter(sha => !lostShas.has(sha)));
-        updateRefs([...reachedShas].map(sha => `delete refs/kept/${fetchStartMs}/${sha} ${sha}`));
+        const keepLost = [...lostShas].map(sha => `update refs/kept/${fetchStartMs}/${sha} ${sha}`);
+        const releaseTips = tipsCommit ? [`delete refs/kept/${fetchStartMs}/${tipsCommit} ${tipsCommit}`] : [];
+        updateRefs([...keepLost, ...releaseTips]);
       } catch (keepError) {
         if (!fetchError) throw keepError;
         const message = 'The mirror fetch failed, and letting go of the tips it kept failed too';
@@ -357,6 +359,22 @@ export function gitFlow(o: {
     });
   }
 
+  // A commit whose parents are the tips, on the empty tree. The tree is written each time: between fetches nothing
+  // reaches it, so the mirror's gc may have pruned it.
+  function commitOfTips(sinceMs: number, tips: { sha: string }[]) {
+    const writeObject = (type: 'tree' | 'commit', text: string) =>
+      execFileSync('git', inMirror(['hash-object', '-w', '-t', type, '--stdin']), {
+        encoding: 'utf8',
+        env,
+        input: text,
+      });
+    const emptyTree = writeObject('tree', '').trim();
+    const parents = [...new Set(tips.map(tip => tip.sha))].map(sha => `parent ${sha}\n`).join('');
+    const signature = `worker <worker@mirror.invalid> ${Math.floor(sinceMs / 1000)} +0000`;
+    const text = `tree ${emptyTree}\n${parents}author ${signature}\ncommitter ${signature}\n\nBranch tips kept during a fetch\n`;
+    return writeObject('commit', text).trim();
+  }
+
   // A clone's refs don't keep the objects it reads from the mirror alive there, and gc prunes an unreachable object
   // by its age, not by how long ago its branch went. So every tip a fetch drops or moves past stays on a ref,
   // refs/kept/<ms>/<sha> (ms: when the fetch started; hidden from clones), as long as a clone made before then is
@@ -366,13 +384,15 @@ export function gitFlow(o: {
     updateRefs([...new Set(shas)].map(sha => `update refs/kept/${sinceMs}/${sha} ${sha}`));
   }
 
-  // Lets go of the kept tips no clone can read any more: those kept since before the oldest clone was made.
+  // Lets go of tips kept before the oldest live clone was made. Clone pins also stay until then: a branch
+  // can be withdrawn or replaced directly, without a fetch retaining its old tip. Interrupted fetch refs
+  // follow the same clone lifetime.
   function releaseExpiredKeptTips() {
     const cloneBirthsMs = o.clones().map(dir => stat(dir)?.birthtimeMs ?? Infinity);
     const oldestCloneBirthMs = Math.floor(Math.min(...cloneBirthsMs));
     const keptRefs = root('for-each-ref', '--format=%(refname)', 'refs/kept/').split('\n').filter(Boolean);
-    const expiredRefs = keptRefs.filter(ref => Number(ref.split('/')[2]) < oldestCloneBirthMs);
-    updateRefs(expiredRefs.map(ref => `delete ${ref}`));
+    const releasedRefs = keptRefs.filter(ref => Number(ref.split('/')[2]) < oldestCloneBirthMs);
+    updateRefs(releasedRefs.map(ref => `delete ${ref}`));
   }
 
   // One update-ref transaction in the mirror, a command per line (git update-ref --stdin)
@@ -392,7 +412,7 @@ export function gitFlow(o: {
   const triggers = (sha: string, branch: string) =>
     root('ls-tree', '--name-only', sha, '.github/workflows/')
       .split('\n')
-      .filter(wf => wf && setsOff(root('show', `${sha}:${wf}`), branch));
+      .filter(wf => wf && setsOff(readBlob(`${sha}:${wf}`), branch));
 
   // GitHub merges a pull request without .gitattributes' merge drivers, so it refuses one that git merges cleanly (the
   // coordinator's review.ts mergeMain). Root merges base into `head` here, the branch's head as the panel passed it, and
@@ -422,8 +442,9 @@ export function gitFlow(o: {
       const attributes = join(tmp, 'gitattributes');
       let text = '';
       try {
-        text = root('cat-file', 'blob', `${main}:.gitattributes`);
-      } catch {
+        text = readBlob(`${main}:.gitattributes`);
+      } catch (error) {
+        if (error instanceof GitOutputLimitError) throw error;
         /* base has none */
       }
       writeFileSync(attributes, text);
@@ -440,7 +461,7 @@ export function gitFlow(o: {
           main,
           head,
         ]),
-        { encoding: 'utf8', env, maxBuffer: COMMAND_OUTPUT_MAX_BYTES },
+        { encoding: 'utf8', env },
       );
       // -z: the tree, then each file that conflicts (exit 1)
       const [tree, ...conflicts] = r.stdout.split('\0').filter(Boolean);
@@ -529,6 +550,17 @@ export function gitFlow(o: {
         await sleep(pause, undefined, { signal: ownershipSignal() });
       }
     }
+  }
+
+  // Check the uncompressed size before git allocates and prints a blob imported from an agent's bundle.
+  function readBlob(blob: string) {
+    const bytes = Number(root('cat-file', '-s', blob));
+    if (bytes > OUTPUT_BYTES) throw new GitOutputLimitError(OUTPUT_BYTES);
+    return execFileSync('git', inMirror(['cat-file', 'blob', blob]), {
+      encoding: 'utf8',
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
   }
 
   // A job's side of the flow, as the uid of the slot that runs it.
@@ -706,7 +738,7 @@ export function gitFlow(o: {
         '-U0',
         `refs/heads/${base}...${sha}`,
       ];
-      const r = spawnSync('git', inMirror(diff), { encoding: 'utf8', env, maxBuffer: COMMAND_OUTPUT_MAX_BYTES });
+      const r = spawnSync('git', inMirror(diff), { encoding: 'utf8', env });
       if (r.status !== 0)
         throw new Error(
           `Couldn't read the diff's lines: ${redact(String(r.stderr || r.error))
@@ -843,12 +875,7 @@ export function gitFlow(o: {
         docs: { path: string; text: string }[] = [];
       let total = 0,
         whole = 0;
-      const read = (blob: string) =>
-        execFileSync('git', ['--git-dir', mirror, 'cat-file', 'blob', blob], {
-          encoding: 'utf8',
-          maxBuffer: COMMAND_OUTPUT_MAX_BYTES,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+      const read = readBlob;
       const take = (path: string, src: string) => {
         if (path.startsWith('knowledge/') && src.length <= 65_536 && (whole += src.length) <= 131_072)
           docs.push({ path, text: src });
@@ -859,7 +886,8 @@ export function gitFlow(o: {
         let src: string;
         try {
           src = read(blob);
-        } catch {
+        } catch (error) {
+          if (error instanceof GitOutputLimitError) throw error;
           continue;
         }
         take(path, src);
@@ -884,7 +912,8 @@ export function gitFlow(o: {
         let hits: string[] = [];
         try {
           hits = root('grep', '-l', '-z', '-F', ...gone.flatMap(n => ['-e', n]), sha, '--', 'knowledge').split('\0');
-        } catch {
+        } catch (error) {
+          if (error instanceof GitOutputLimitError) throw error;
           /* none: git grep exits 1 */
         }
         for (const hit of hits) {
@@ -892,7 +921,8 @@ export function gitFlow(o: {
           if (!SHELVES.test(path) || docs.some(d => d.path === path)) continue;
           try {
             take(path, read(`${sha}:${path}`));
-          } catch {
+          } catch (error) {
+            if (error instanceof GitOutputLimitError) throw error;
             /* not a file */
           }
         }
@@ -901,8 +931,9 @@ export function gitFlow(o: {
       try {
         if (docs.length)
           files = root('ls-tree', '-r', '-z', '--name-only', sha, '--', 'knowledge').split('\0').filter(Boolean);
-      } catch {
-        /* over 1 MB of names: unchecked, like over 200 KB */
+      } catch (error) {
+        if (error instanceof GitOutputLimitError) throw error;
+        /* no knowledge tree */
       }
       const small = files.reduce((n, f) => n + f.length + 3, 0) <= 200_000;
       return { frontmatter: out, knowledge: small && files.length ? { docs, files } : { docs: [], files: [] } };
@@ -917,13 +948,10 @@ export function gitFlow(o: {
       const text = (mode: string, blob: string) => {
         if (!/^100(644|755)$/.test(mode) || !SHA.test(blob)) return null;
         try {
-          const src = execFileSync('git', ['--git-dir', mirror, 'cat-file', 'blob', blob], {
-            encoding: 'utf8',
-            maxBuffer: COMMAND_OUTPUT_MAX_BYTES,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
+          const src = readBlob(blob);
           return src.length > 65_536 || (total += src.length) > 131_072 ? null : src;
-        } catch {
+        } catch (error) {
+          if (error instanceof GitOutputLimitError) throw error;
           return null;
         }
       };
@@ -1012,6 +1040,7 @@ export function gitFlow(o: {
   function mainLine(count: number) {
     return lineOf(`--max-count=${count}`, `refs/heads/${base}`);
   }
+  const mainTip = () => root('rev-parse', '--verify', `refs/heads/${base}^{commit}`);
 
   // The commits main took after `seen` along its first parents, oldest first, as mainLine has them: all on its line that
   // `seen` doesn't reach (main's history replaced since: its new commits back to where the two part). Undefined when the
@@ -1022,29 +1051,48 @@ export function gitFlow(o: {
   }
 
   // git log's first-parent line, each commit with the paths it changes against its first parent (-z: unquoted, each
-  // commit's header after a \x01), checked against the areas holding tests at main's tip
+  // commit's header after a \x01, a rename as both its paths), checked against the areas holding tests in the commit's
+  // own tree, as shared/gates suites.ts changeAt lists them. A commit's tree never changes, so its areas are read once.
+  const testedAt = new Map<string, Set<string>>();
   function lineOf(...range: string[]) {
-    const read = (...args: string[]) =>
-      execFileSync('git', inMirror(args), { encoding: 'utf8', env, maxBuffer: COMMAND_OUTPUT_MAX_BYTES });
+    const read = (...args: string[]) => execFileSync('git', inMirror(args), { encoding: 'utf8', env });
     const log = read(
       'log',
       '--first-parent',
       '--diff-merges=first-parent',
       '--name-only',
+      '--no-renames',
       '-z',
       '--format=%x01%H %P',
       ...range,
     );
-    const tested = testedAreas(read('ls-tree', '-r', '--name-only', '-z', `refs/heads/${base}`).split('\0'));
+    const testedIn = (sha: string) => {
+      if (!testedAt.has(sha))
+        testedAt.set(sha, testedAreas(read('ls-tree', '-r', '--name-only', '-z', sha).split('\0')));
+      return testedAt.get(sha)!;
+    };
     return log
       .split('\x01')
       .slice(1)
       .map(entry => {
         const [header, ...paths] = entry.split('\0');
         const [sha, ...parents] = header.trim().split(' ').filter(Boolean);
-        return { sha, parents, code: checkedChange(paths.map(p => p.replace(/^\n/, '')).filter(Boolean), tested) };
+        const tested = testedIn(sha);
+        const changed = paths.map(p => p.replace(/^\n/, '')).filter(Boolean);
+        return { sha, parents, code: checkedChange(changed, tested), scope: checkScope(changed, tested) };
       });
   }
 
-  return { ensureMirror, gcMirror, fetchMirror, refreshMirror, mergeBase, forAgent, testedCode, mainLine, mainSince }; // (testedCode)
+  return {
+    ensureMirror,
+    gcMirror,
+    fetchMirror,
+    refreshMirror,
+    mergeBase,
+    forAgent,
+    testedCode,
+    mainTip,
+    mainLine,
+    mainSince,
+  }; // (testedCode)
 }

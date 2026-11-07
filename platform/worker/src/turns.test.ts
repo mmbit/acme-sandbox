@@ -1,7 +1,7 @@
 // node --test src/turns.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fewAtOnce, roomInTurn } from './turns.ts';
+import { fewAtOnce, oneAtATime, roomInTurn } from './turns.ts';
 
 // a run that ends when its test says so
 function held() {
@@ -116,4 +116,51 @@ test("while urgent work's check waits for room the others leave it the room, and
   ticks.shift()!();
   await ordinary;
   assert.deepEqual(back, ['urgent', 'ordinary']);
+});
+
+test('resource waits name the active holders, follow the handover and end with the queue', async () => {
+  const turn = fewAtOnce(1),
+    first = held(),
+    second = held();
+  const one = turn(first.run, undefined, undefined, 10);
+  const two = turn(second.run, undefined, undefined, 20);
+  const three = turn(async () => 'done', undefined, undefined, 30);
+  assert.deepEqual(turn.waits(), [
+    { job: 20, on: 10 },
+    { job: 30, on: 10 },
+  ]);
+  first.end();
+  await one;
+  assert.deepEqual(turn.waits(), [{ job: 30, on: 20 }]);
+  second.end();
+  await Promise.all([two, three]);
+  assert.deepEqual(turn.waits(), []);
+});
+
+test('one read at a time: a tick while one is under way leaves it be, and the last waits for it before reading again', async () => {
+  const reads = [held(), held()],
+    ended: number[] = [];
+  let n = 0;
+  const lines = oneAtATime(async () => {
+    const i = n++;
+    await reads[i].run();
+    ended.push(i);
+  });
+  lines.tick();
+  lines.tick();
+  await settle();
+  assert.equal(n, 1);
+  // the session ends while the timer's read is under way: the last read starts only once that one has ended
+  let last = false;
+  const ending = lines.last().then(() => (last = true));
+  await settle();
+  assert.equal(n, 1);
+  reads[0].end();
+  await settle();
+  assert.deepEqual(ended, [0]);
+  assert.equal(n, 2);
+  assert.equal(last, false);
+  reads[1].end();
+  await ending;
+  assert.deepEqual(ended, [0, 1]);
 });

@@ -212,24 +212,33 @@ function replay(since: string, until: string) {
   const bySchedule = replayBySchedule(tried, all, before);
   return { ways: found, byThread, bySchedule, carries: replayCarries(since, until) };
 }
-// The carry checks done since, each sized from the carry checks done before it was queued: on its own kind, the way HQ
-// matches now (matching.ts carriesLike), and on the latest of every kind, as before. Worker occupancy, so no floor.
+// The clean carry checks done since, each sized from the clean carry checks done before it was queued: on the checks
+// its commit requires, the way HQ matches now (carryscope.ts), and on the latest PICKS of every kind, FEWEST or more,
+// as before. Worker occupancy, so no floor.
 function replayCarries(since: string, until: string) {
   const all = pastJobs()
-    .filter(j => j.origin === 'carry' && !isPrivate(j))
+    .filter(j => j.origin === 'carry' && !isPrivate(j) && !j.timing_flags?.length)
     .map(j => (j.adjusted ? { ...j, adjusted: null } : j))
     .sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
-  const tried = all.filter(j => j.finished >= since && j.finished < until).slice(-REPLAYED);
+  const tried = all.filter(j => j.finished >= since && j.finished < until);
   const now: [number, number][] = [],
     mixed: [number, number][] = [];
   for (const j of tried) {
     const before = all.filter(p => p.finished < j.created);
-    const own = sizeOf(picksFor(j, before).picks),
-      any = sizeOf(picksFor({ ...j, carry_code: null }, before).picks);
-    if (own) now.push([own.agent_ms, j.agent_ms]);
-    if (any) mixed.push([any.agent_ms, j.agent_ms]);
+    const own = sizeOf(picksFor(j, before).picks);
+    const latest = before.sort((a, b) => b.id - a.id).slice(0, PICKS);
+    const any = latest.length >= FEWEST ? sizeOf(latest) : null;
+    if (own && any) {
+      now.push([own.agent_ms, j.agent_ms]);
+      mixed.push([any.agent_ms, j.agent_ms]);
+    }
   }
-  return { jobs: tried.length, now: spread(now, 0), mixed: spread(mixed, 0) };
+  return {
+    jobs: tried.length,
+    scoped: tried.filter(j => j.carry_scope).length,
+    now: spread(now, 0),
+    mixed: spread(mixed, 0),
+  };
 }
 function replayByThread(tried: PastJob[], beforeOf: Map<PastJob, PastJob[]>) {
   // The work done in a thread with FEWEST or more of its jobs done before it was queued: sized the way HQ matches now,

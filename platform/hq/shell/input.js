@@ -46,6 +46,9 @@ export function press(x, y) { audio.unlock(); stopTour(); tap(x, y, false); }
 
 export function bindInput() {
   bindCanvas(cv);
+  // (once for the page, for the canvas on stage: one a swap replaced, held by the window's listeners, kept its pixels.
+  addEventListener('blur', () => letGo());
+  document.addEventListener('visibilitychange', () => document.hidden && letGo());
   let resizeT;
   // (the book's slide resizes the page every frame: the canvas follows once it rests)
   onPageResize(() => { clearTimeout(resizeT); resizeT = setTimeout(() => resize(), 150); });
@@ -60,6 +63,8 @@ export function bindInput() {
     if (e.key === '-') scene.camera.zoom(-1);
   });
 }
+// every finger on the scene's canvas lifted
+let letGo;
 // the gestures on the scene's canvas (the stage binds each new one)
 export function bindCanvas(cv) {
   const ptrs = new Map();
@@ -108,7 +113,7 @@ export function bindCanvas(cv) {
     if (!ptrs.size) { scene.camera.release(!tapped && performance.now() - lastMove <= 80); tapInfo = null; cv.classList.remove('drag'); }
   };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  const letGo = lostFingers(cv, ptrs, up);
+  letGo = lostFingers(cv, ptrs, up);
   wheelZoom(cv);
 }
 // The wheel on the scene's canvas (out of bindCanvas, as it was)
@@ -122,12 +127,9 @@ function wheelZoom(cv) {
     if (Math.abs(wheel) > 50) { scene.camera.zoom(-Math.sign(wheel), e.clientX, e.clientY); audio.sfx.blip(); wheel = 0; }
   }, { passive: false });
 }
-// Only the fingers the browser says are down: a lift it never sent (a lost capture, the window left or hidden) can't
-// leave the pinch counting a ghost finger. Returns letGo: every finger lifted.
+// Only the fingers the browser says are down: a lift it never sent (a lost capture, the window left or hidden:
+// bindInput) can't leave the pinch counting a ghost finger. Returns letGo: every finger lifted.
 function lostFingers(cv, ptrs, up) {
-  const letGo = () => { for (const id of [...ptrs.keys()]) up({ pointerId: id, type: 'pointercancel' }); };
   cv.addEventListener('lostpointercapture', up);
-  addEventListener('blur', letGo);
-  document.addEventListener('visibilitychange', () => document.hidden && letGo());
-  return letGo;
+  return () => { for (const id of [...ptrs.keys()]) up({ pointerId: id, type: 'pointercancel' }); };
 }

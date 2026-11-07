@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { CHAT_SLOT, KEEPER, SLOT_IDS, TEST_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep } from './slots.ts';
+import { CHAT_SLOT, CHECK_SLOTS, KEEPER, SLOT_IDS, TEST_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep } from './slots.ts';
 
 const ROOT = process.getuid!() === 0;
 const needsRoot = ROOT ? false : 'needs root to switch uids (run it in the worker container)';
@@ -21,11 +21,15 @@ const made: string[] = [];
 const scratch = (name: string) => { const d = mkdtempSync(`${tmpdir()}/${name}-`); made.push(d); return d; };
 after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 
-test('every slot has its own uid and gid, none of them the keeper, root or the test users, the intercom\'s last', () => {
+test('every session and checks user has its own uid and gid, separate from the keeper, root and test users', () => {
   assert.deepEqual(WORK_SLOTS, ['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6', 'slot7', 'slot8', 'slot9', 'slot10', 'slot11', 'slot12', 'slot13', 'slot14', 'slot15']);
-  const uids = [...SLOT_IDS.values()].map(i => i.uid);
+  const users = [...SLOT_IDS.values()];
+  const uids = users.slice(0, 16).map(i => i.uid);
   assert.deepEqual(uids, [1501, 1502, 1503, 1504, 1505, 1506, 1507, 1508, 1509, 1510, 1511, 1512, 1513, 1514, 1515, 1516]);
-  assert.deepEqual([...SLOT_IDS.values()].map(i => i.gid), uids);
+  assert.deepEqual(users.map(i => i.gid), users.map(i => i.uid));
+  assert.equal(new Set(users.map(i => i.uid)).size, users.length);
+  assert.equal(CHECK_SLOTS.length, WORK_SLOTS.length);
+  assert.ok(CHECK_SLOTS.every(slot => SLOT_IDS.get(slot)!.uid > TEST_IDS[1].uid));
   assert.deepEqual(SLOT_IDS.get(CHAT_SLOT), { uid: 1516, gid: 1516, name: 'slot16' });
   assert.ok(!uids.includes(KEEPER) && !uids.includes(0) && !TEST_IDS.some(t => uids.includes(t.uid)));
 });

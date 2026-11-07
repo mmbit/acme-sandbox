@@ -1,16 +1,16 @@
 // A check on a lent machine's helper of the `tests` kind instead of here (tests.ts and gates.ts --helper), as a run of
 // the job (the coordinator's runs.ts, with the job's HQ_URL and HQ_TOKEN): the repo at the base and as it is now go in a
-// git bundle, and tests-on-helper.sh runs the check's own script there, against that base. HQ takes a run back from a
+// git bundle (standing on HQ's checkout's commit where this repo has it, which the helper keeps: only what came after
+// it travels), and tests-on-helper.sh runs the check's own script there, against that base. HQ takes a run back from a
 // lent helper that went quiet, for another take, and refuses what that one sends after. The run's report, exit code and
 // the files it brings back are the check's, taken once it's done. Run here instead (undefined), or left incomplete for a
 // check that can't move here (fallback: false), when no helper takes it in time, it's lost, or it couldn't run there.
-// In time is within the helper's take window, or by its deadline for a check with one (absentUntilMs). Either way, with
-// waitWhilePresent a helper of the kind that's there is waited for past it. The command has the end of the helper's
-// limit in LENT_UNTIL (seconds on the helper's clock), for a check that stops itself in time to say how far it got. A
-// run the helper stopped at the limit is that check's result (limitIsResult), never one to run again here, where
-// nothing would stop it.
-import { execFile, execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+// In time is within the helper's take window, and with waitWhilePresent a helper of the kind that's there is waited for
+// past it. The command has the end of the helper's limit in LENT_UNTIL (seconds on the helper's clock), for a check that
+// stops itself in time to say how far it got. A run the helper stopped at the limit is that check's result
+// (limitIsResult), never one to run again here, where nothing would stop it.
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -54,7 +54,6 @@ export type LentCheck = {
   binary?: string[];
   exitIsResult?: true;
   waitWhilePresent?: true;
-  absentUntilMs?: number; // replaces the take window: a run still waiting then, with no helper there, stops
   base: string;
   tree: string;
   script: string;
@@ -104,12 +103,14 @@ export async function onLent(root: string, check: LentCheck): Promise<LentRun | 
     stopAsked = true;
   };
   const onStop = () => {
+    // (what stops it may no longer read its output: a write there mustn't end it before the run on HQ is stopped,
+    process.stdout.on('error', () => {});
     console.log(`${check.what} on the helper: stopped at the time limit`);
     stop();
   };
   process.once('SIGTERM', onStop);
   try {
-    const sent = await sendRun(root, check);
+    const sent = await sendRun(root, check, call);
     if (typeof sent === 'string') return said(`the helper refused the run: ${sent}`);
     stop = () => void stopAndExit(call, sent);
     if (stopAsked) await stopAndExit(call, sent);
@@ -136,12 +137,7 @@ async function outcomeOf(call: Call, sent: number, check: LentCheck, said: (why:
     const run = (await reaching(() => call(`/api/agent/runs/${sent}`).then(answer => answer.json()))) as RunState;
     if (run.state === 'running') waitingSince = Date.now();
     const unattended = run.state === 'waiting' && !(check.waitWhilePresent && run.helper.present);
-    if (unattended && check.absentUntilMs !== undefined) {
-      if (Date.now() >= check.absentUntilMs) {
-        await reaching(() => call(`/api/agent/runs/${sent}/stop`, { method: 'POST' }));
-        return said(`no ${check.kind ?? 'tests'} helper was there to take it in time`);
-      }
-    } else if (unattended && Date.now() - waitingSince > run.helper.takeMinutes * 60_000) {
+    if (unattended && Date.now() - waitingSince > run.helper.takeMinutes * 60_000) {
       await reaching(() => call(`/api/agent/runs/${sent}/withdraw`, { method: 'POST' }));
       continue;
     }
@@ -174,19 +170,23 @@ async function outcomeOf(call: Call, sent: number, check: LentCheck, said: (why:
 }
 
 // The run asked of the helper: its id, or HQ's words when it refused it
-async function sendRun(root: string, check: LentCheck): Promise<number | string> {
+async function sendRun(root: string, check: LentCheck, call: Call): Promise<number | string> {
   // The worker can reclaim this staging directory after killing its owner, including a SIGKILL.
   const stat = readFileSync('/proc/self/stat', 'utf8');
   const start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
   const dir = mkdtempSync(join(tmpdir(), `lent-bundle-${process.pid}-${start}-`));
   const command =
     `export LENT_UNTIL=$(($(date +%s) + ${Math.round(check.minutes * 60)})) && ` +
-    `git init -q repo && git -C repo fetch -q ../${BUNDLE} refs/tests/change:refs/heads/change && cd repo && ` +
+    // (the helper's kept base, base.git, lends the repo the objects the bundle stands on)
+    'git init -q repo && { [ ! -e base.git ] || echo "$PWD/base.git/objects" > repo/.git/objects/info/alternates; } && ' +
+    `git -C repo fetch -q ../${BUNDLE} refs/tests/change:refs/heads/change && cd repo && ` +
     'git checkout -q change && git update-ref refs/remotes/origin/main change~1 && ' +
     'export PATH="$PWD/../tools:$PATH" && ' +
     `sh ${quoted(check.bootstrap ?? 'shared/gates/tests-on-helper.sh')} ${[check.script, ...check.args].map(quoted).join(' ')}`;
+  const base = await thinBase(call, root);
   const spec = {
     command,
+    ...(base ? { base } : {}),
     kind: check.kind ?? 'tests',
     cwd: '',
     bring: [...check.bring, ...(check.binary ?? [])],
@@ -194,11 +194,17 @@ async function sendRun(root: string, check: LentCheck): Promise<number | string>
   };
   try {
     const header = Buffer.from(JSON.stringify(spec)).toString('base64url');
-    const bundle = await bundleOf(root, check, dir).catch((err: Error) => {
+    const began = performance.now();
+    const bundle = await bundleOf(root, check, base, dir).catch((err: Error) => {
       throw bundleFailure(err);
     });
+    const made = performance.now();
     // (lentsend.ts sends it)
     const { stdout } = await execute(process.execPath, [SEND, bundle, header]);
+    const size = `${(statSync(bundle).size / 2 ** 20).toFixed(1)} MB${base ? '' : ', the whole repo'}`;
+    console.log(
+      `${check.what}: bundle ${size}, made in ${seconds(made - began)}, sent in ${seconds(performance.now() - made)}`,
+    );
     const said = JSON.parse(stdout) as { id?: number; refused?: string; unreached?: string };
     if (said.unreached !== undefined) throw new HqUnreachable(said.unreached);
     return said.id ?? said.refused!;
@@ -207,10 +213,11 @@ async function sendRun(root: string, check: LentCheck): Promise<number | string>
   }
 }
 
-// The bundle a run carries: the base and the tree, each a commit of its own on refs/tests/change (the base its parent,
-// with none before it), in a git bundle, and the tools and inputs when there are any. It returns the gzipped tar
+// The bundle a run carries: the base and the tree, each a commit of its own on refs/tests/change (the base its parent),
+// in a git bundle, and the tools and inputs when there are any. The base stands on `on`, HQ's commit the helper keeps,
+// and the bundle leaves out all that has (none before it, and the whole repo, without one). It returns the gzipped tar
 // they're packed in.
-async function bundleOf(root: string, check: LentCheck, dir: string) {
+async function bundleOf(root: string, check: LentCheck, on: string, dir: string) {
   const env = {
     ...process.env,
     ...Object.fromEntries(
@@ -223,10 +230,11 @@ async function bundleOf(root: string, check: LentCheck, dir: string) {
   const commit = (...args: string[]) =>
     execFileSync('git', ['commit-tree', ...args, '-m', 'tests'], { cwd: root, env, encoding: 'utf8' }).trim();
   const ref = 'refs/tests/change';
-  git(root, 'update-ref', ref, commit(check.tree, '-p', commit(`${check.base}^{tree}`)));
+  const base = commit(`${check.base}^{tree}`, ...(on ? ['-p', on] : []));
+  git(root, 'update-ref', ref, commit(check.tree, '-p', base));
   try {
     // The event loop must observe closed HQ connections while the archive is made.
-    await execute('git', ['bundle', 'create', '-q', join(dir, BUNDLE), ref], { cwd: root });
+    await execute('git', ['bundle', 'create', '-q', join(dir, BUNDLE), ref, ...(on ? [`^${on}`] : [])], { cwd: root });
   } finally {
     git(root, 'update-ref', '-d', ref);
   }
@@ -243,6 +251,21 @@ async function bundleOf(root: string, check: LentCheck, dir: string) {
   await execute('tar', ['-I', 'gzip -1', '-cf', archive, ...exclude, '-C', dir, ...packed, ...directories]);
   return archive;
 }
+
+// The commit of HQ's checkout a run's bundle may stand on (the coordinator's runs.ts thinBase), or '' when HQ names none
+// (its checkout shallow) or this repo hasn't fetched it.
+async function thinBase(call: Call, root: string) {
+  const { commit } = await reaching(async () => {
+    const answer = await call('/api/agent/runs/base');
+    if (!answer.ok) throw new Error(`HQ named no base for the run (HTTP ${answer.status})`);
+    return (await answer.json()) as { commit: string | null };
+  });
+  if (commit === null) return '';
+  const here = spawnSync('git', ['cat-file', '-e', `${commit}^{commit}`], { cwd: root, stdio: 'ignore' });
+  return here.status === 0 ? commit : '';
+}
+
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
 // The files a run brought back, by name
 async function broughtBack(call: Call, id: number, names: string[]) {

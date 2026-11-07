@@ -24,6 +24,7 @@
 // --outcomes <file>: the tests that passed go there too, for the worker to count on the day as it keeps the push's
 // result in HQ (the coordinator's testresults.ts).
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -31,16 +32,10 @@ import { compareBase } from './comparison.ts';
 import { HqUnreachable, NO_ROOM_EXIT, NoRoom, onLent, UNREACHED_EXIT } from './lent.ts';
 import { areaOf, git, gitFiles, plural, TOOLS_HOME, workingTree } from './repo.ts';
 import { browsersOf, helperBundle } from './bundle.ts';
+import { endMarked, MARK } from './leftovers.ts';
 import { changeAt, noTests, SUITES, type Run } from './suites.ts';
 import type { FileEnd } from './timings.ts';
 
-// How long after it starts a --helper run, still waiting with no helper of the kind there to take it, stops. The tests
-// are left incomplete in about a review round's time, the board's aim of roughly 15 minutes (knowledge/notes/
-// engineering/test-speed.md), instead of waiting on for a helper that's gone (lent.ts absentUntilMs). A helper that's
-// there, busy or not, is waited for, and a run it took ends at its own limit (HELPER_MINUTES). TESTS_HELPER_ABSENT_MS:
-// this file's tests' shorter one.
-const HELPER_ABSENT_MS = Number(process.env.TESTS_HELPER_ABSENT_MS ?? 15 * 60_000);
-const absentUntilMs = Date.now() + HELPER_ABSENT_MS;
 const REPORT_LINES = 25; // of each failure's own output
 const INSTALL_LINES = 6; // of npm's words when it fails (its usage follows)
 const NPM_CI = ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund']; // without install scripts, as the tools'
@@ -135,9 +130,9 @@ async function onHelper(): Promise<number | undefined> {
     bring: [OUTCOMES_FILE],
     ...bundleFor(change.runs),
     limitIsResult: true,
-    // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not)
+    // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not; with none
+    // there for the take window, they stop, and the worker runs them here.)
     waitWhilePresent: true,
-    absentUntilMs,
     fallback: false,
   });
   if (!ran) throw new Error('Tests incomplete: the helper supplied no result');
@@ -597,7 +592,7 @@ function stoppedOutcome(top: string, run: Run, stopped: StoppedRun): Outcome {
 }
 
 // A run at a lower priority: the machine's other work (a live call's voice, say) goes first. One that can't start
-// rejects: the tests couldn't run.
+// rejects: the tests couldn't run. Every process it started ends as it does (leftovers.ts), so none holds its output open
 // On a helper, one still running at stopAt ends there, every process it started with it (stoppedAt).
 function spawnNiced(
   argv: string[],
@@ -607,7 +602,14 @@ function spawnNiced(
     // (a node:test run inside another, as this file's own tests are, would otherwise report to the outer one)
     // The ticket belongs to this runner. Nested fixture runners compare their own bases. The helper's limit is this
     // runner's, not its suites'.
-    const env = { ...process.env, NODE_TEST_CONTEXT: undefined, TESTS_COMPARISON: undefined, LENT_UNTIL: undefined };
+    const mark = randomUUID();
+    const env = {
+      ...process.env,
+      NODE_TEST_CONTEXT: undefined,
+      TESTS_COMPARISON: undefined,
+      LENT_UNTIL: undefined,
+      [MARK]: mark,
+    };
     const child = spawn('nice', ['-n', '10', ...argv], {
       cwd,
       env,
@@ -633,6 +635,7 @@ function spawnNiced(
     child.stdout.on('data', c => chunks.push(c));
     child.stderr.on('data', c => chunks.push(c));
     child.on('error', reject);
+    child.on('exit', () => endMarked(mark));
     child.on('close', (code, signal) => {
       clearTimeout(stop);
       resolve({ output: Buffer.concat(chunks).toString('utf8'), code, signal, stoppedAt });

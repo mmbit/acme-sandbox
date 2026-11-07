@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { coordinator, openVisitor } from './book/guestserver.mjs';
 import { readyHQ, createNotebook } from './book/invitechecks.mjs';
-import { readyNotebook, addNote, drawNote } from './book/guestscreen.mjs';
-import { serveWork, openShare, addPerson, signInByMail, typeNote, close } from './book/guestpath.mjs';
+import { readyNotebook, addNote, drawNote } from './book/guestscreen.mjs'; // (addNote)
+import { serveWork, openShare, addPerson, signInByMail, close } from './book/guestpath.mjs';
 import { playwright, until } from '../../shared/browser/browser.mjs';
 
 const arg = name => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
@@ -102,8 +102,8 @@ async function coraWrites() {
   await signInByMail(state, cora.page, book.people[0].link);
   await cora.page.locator('a[href*="/guest/notebooks/"]').first().click();
   await readyNotebook(cora.page);
-  await addNote(cora.page, 'Could the menu be easier to find');
-  await drawNote(state, cora.page, book.pages[0].id);
+  const note = await addNote(cora.page, 'Could the menu be easier to find');
+  await drawNote(state, cora.page, book.pages[0].id, note);
   await close(state, cora);
   return book;
 }
@@ -171,7 +171,7 @@ async function guestSide(link) {
     await page.frameLocator('.bk-guest-view iframe').locator('h1').filter({ hasText: 'Join the crew' }).waitFor();
     await page.locator('#book .bk-for-you').first().waitFor();
     await snap(`guest-work-${size}`, page);
-    await typeNote(page, `Bigger button, please (${size})`);
+    await addNote(page, `Bigger button, please (${size})`);
     await snap(`guest-writing-${size}`, page);
     await close(state, sam);
   }

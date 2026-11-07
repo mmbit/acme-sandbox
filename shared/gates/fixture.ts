@@ -35,6 +35,7 @@ export function clone(before: Record<string, string>, after: Record<string, stri
     'shared/gates/lent.ts',
     'shared/gates/lentsend.ts',
     'shared/gates/timings.ts',
+    'shared/gates/leftovers.ts',
   ])
     cpSync(join(repo, path), join(dir, path));
   write(before);
@@ -70,12 +71,15 @@ export const sum = (body: string) => `export const sum = (a: number, b: number) 
 // GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it ('body': after its answer's headers;
 //.), and RESTARTING plays HQ restarting (RESTART_MS: down that long from the run's
 // first poll).
+// PLAYED_BASE: the commit HQ's checkout has (none: an HQ that names none; PLAYED_BASE_STATUS: one that fails to), which
+// PLAYED_BASE_GIT's objects hold, lent to a run that stands on it as the helper lends its kept base; each run's base and
+// its bundle's heads go in PLAYED_SEEN.
 // playedHq returns its HQ_URL and HQ_TOKEN, for the check's environment, with `env`. It listens on loopback alone, as
 // it runs any command a run names.
 // (#5575 and #5602's network failures)
 const PLAYED_HQ = `
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, symlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 const states = JSON.parse(process.argv[2]);
@@ -99,14 +103,23 @@ const answer = async (req, res) => {
   }
   // (the work Stop hook asks first, hq complete)
   if (req.url === '/api/agent/followthrough-owed') return res.end(JSON.stringify({ owed: false }));
+  if (req.url === '/api/agent/runs/base')
+    return process.env.PLAYED_BASE_STATUS ? res.writeHead(Number(process.env.PLAYED_BASE_STATUS)).end()
+      : res.end(JSON.stringify({ commit: process.env.PLAYED_BASE ?? null }));
   if (req.method === 'GET' && disconnects-- > 0) return res.destroy();
   if (req.url === '/api/agent/runs/helper') return res.end(JSON.stringify({
     browser: process.env.HELPER_BROWSER ?? 'render',
-    kinds: JSON.parse(process.env.HELPER_KINDS ?? '[{"name":"render","present":true}]') }));
+    kinds: JSON.parse(process.env.HELPER_KINDS ?? '[{"name":"render","present":true,"lentPresent":true}]') }));
   if (req.url === '/api/agent/runs') {
     const spec = JSON.parse(Buffer.from(req.headers['x-run'], 'base64url').toString());
     const tree = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'played-helper-'));
     execFileSync('tar', ['-xzf', '-', '-C', tree], { input: await read(req) });
+    if (spec.base) symlinkSync(process.env.PLAYED_BASE_GIT, join(tree, 'base.git'));
+    if (process.env.PLAYED_SEEN) {
+      const bundle = readFileSync(join(tree, 'tests.bundle'), 'latin1');
+      const heads = bundle.slice(0, bundle.indexOf('\\n\\n')).split('\\n').slice(1);
+      appendFileSync(process.env.PLAYED_SEEN, JSON.stringify({ base: spec.base ?? null, heads }) + '\\n');
+    }
     let output = '', exitCode = 0;
     try { output = execFileSync('sh', ['-c', spec.command], { cwd: tree, encoding: 'utf8',
       env: { ...process.env, RUN_KIND: spec.kind, ...JSON.parse(process.env.HELPER_ENV ?? '{}') } }); }
@@ -142,7 +155,8 @@ if (!process.env.RESTARTING) createServer(answer).listen(0, '127.0.0.1', functio
 // it drops unanswered
 let dropped = false;
 const restarting = createServer((req, res) => {
-  if (dropped || req.method !== 'GET' || req.url.split('/').length !== 5) return answer(req, res);
+  if (dropped || req.method !== 'GET' || req.url.split('/').length !== 5 || req.url.endsWith('/base'))
+    return answer(req, res);
   dropped = true;
   down(Number(process.env.RESTART_MS ?? 3000));
 });

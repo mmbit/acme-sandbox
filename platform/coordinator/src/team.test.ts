@@ -76,3 +76,20 @@ test('a member of a run going for days still shows: only the run decides', async
   await anotherClaim();
   assert.deepEqual(await shown(), { clove: 'Clove working' });
 });
+
+test("a member its lead only named reads its step itself in the board's HQ, and only the step's kind anywhere else", async () => {
+  const job = await h.start({ agent: 'wren', title: 'The hero frame' });
+  await h.worker('team', { job: job.id, lead: 'wren', id: 'pip', name: 'pip', parent: 'wren', state: 'working' });
+  await h.agent('step', job.token, { as: 'pip', text: 'Running a command', board: 'Rendering the hero frame' });
+  const pip = (o: any) =>
+    o.departments.flatMap((d: { agents?: any[] }) => d.agents ?? []).find((a: any) => a.id === 'pip');
+  assert.equal(pip((await h.board('/api/org')).body).status.task, 'Rendering the hero frame');
+  assert.equal(
+    ((await h.stream()).at(-1)?.statuses?.pip as { task?: string } | undefined)?.task,
+    'Rendering the hero frame',
+    'and as its feed opens',
+  );
+  const { org } = await import('./company.ts');
+  assert.equal(pip(org()).status.task, 'Running a command', "an agent's read");
+  await h.finish(job, { result: 'Done.' });
+});

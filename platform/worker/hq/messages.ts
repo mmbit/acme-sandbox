@@ -2,7 +2,8 @@
 // that brings a job its own messages (hq inbox --hook).
 import * as api from './api.ts';
 import { additionsHead, colleaguesHead, guestsHead, intercomHead, meetingHead, partnersHead } from './inboxheads.ts';
-import { readGoalAndWords, readWords } from './files.ts';
+import { readWords } from './files.ts';
+import { sayOnCall } from './sayoncall.ts';
 import { minute, present, print, printWritten, shown, stop, text } from './output.ts';
 
 export const status = {
@@ -25,11 +26,18 @@ export const status = {
 
 export const say = {
   help: `
-   hq [--as id] say <agent> "message"                a message to a colleague (an agent in company/org.yaml, or an alumnus;
-                                                     teammates in your own session: use SendMessage). HQ keeps it and says
-                                                     what happened: queued for their running job, whose session gets it at
-                                                     its next step. CEO messages stay for the next run, even while a
-                                                     pause holds work. Other idle recipients, or those whose job ends
+   hq [--as id] say <agent> --job <n> "message"      a message to a colleague (an agent in company/org.yaml, or an alumnus;
+                                                     teammates in your own session: use SendMessage) about their job #n
+                                                     (the number your brief or hq jobs gives): only that job's session
+                                                     gets it, at its next step, or when it starts.
+   hq [--as id] say [<agent>] --deliverable <project>/<slug> "message"
+                                                     every session live on that deliverable (only the agent's, if named);
+                                                     with none, a job on it for the agent, else its owner.
+   hq [--as id] say <agent> "message"                naming no job: their running session, or every one when several
+                                                     run. A copy that went to several says so, and is for whichever
+                                                     it applies to; if none reads it, one becomes a job.
+                                                     HQ keeps it and says what happened. CEO messages stay for the next
+                                                     run, even while a pause holds work. Other idle recipients, or those whose job ends
                                                      unread, get a new job (added to the one your earlier message
                                                      made, if that hasn't started yet). A message's job starts once its
                                                      project's owner (else the CEO) has sorted it into the plan, named for
@@ -47,16 +55,22 @@ export const say = {
 
   async run(args: string[]) {
     if (process.env.HQ_CALL) return sayOnCall(args);
-    const needsAnswer = args[0] === '--needs-answer';
-    const wordsArgs = needsAnswer ? args.slice(1) : args;
-    if (wordsArgs.length !== 2)
-      stop('usage: hq say [--needs-answer] <agent> "message"   (or - to read the message from stdin)');
-    const [to, given] = wordsArgs;
+    const { needsAnswer, job, deliverable, rest } = sayFlags(args);
+    const named = deliverable === undefined ? rest.length === 2 : rest.length === 1 || rest.length === 2;
+    if (!named || (job !== undefined && !/^[0-9]+$/.test(job)))
+      stop(
+        'usage: hq say [--needs-answer] <agent> --job <n> "message", [<agent>] --deliverable <project>/<slug> "message", or <agent> "message"   (- reads the message from stdin)',
+      );
+    const [to, given] = rest.length === 2 ? rest : [undefined, rest[0]];
     const words = given === '-' ? readWords('-') : given;
+    const about = {
+      ...(job === undefined ? {} : { job: Number(job) }),
+      ...(deliverable === undefined ? {} : { deliverable }),
+    };
     let answer;
     try {
       answer = await api.call('message', {
-        body: api.withSpeaker({ to, text: words, ...(needsAnswer ? { needsAnswer: true } : {}) }),
+        body: api.withSpeaker({ to, text: words, ...about, ...(needsAnswer ? { needsAnswer: true } : {}) }),
         timeoutMs: 30_000,
       });
     } catch (error) {
@@ -66,51 +80,34 @@ export const say = {
       if (error.sentNothing) stop("hq say: couldn't reach HQ. Nothing was sent.");
       answer = { status: 0, body: '' };
     }
-    if (answer.status === 200) return print(said(to, api.parseOrNull(answer.body)));
-    stop(...sayRefusal(answer.status, to, words, api.errorIn(answer.body)));
+    if (answer.status === 200) return print(said(to ?? 'its owner', api.parseOrNull(answer.body), deliverable));
+    stop(...sayRefusal(answer.status, to ?? 'its owner', words, api.errorIn(answer.body)));
   },
 };
 
-// On a live call (the voice line sets HQ_CALL), the board's word to a job under way (call.ts reach): hq say <agent> -
-// --job <n> --what "line" --goal -, the words and the goal on stdin (files.ts readGoalAndWords), never a file or argv
-// (--goal). The agent and the number must match, so a misheard number is refused.
-// Only a refusal or no connection at all proves nothing was sent; anything else may have gone (exit 3).
-async function sayOnCall(args: string[]) {
-  const [to, dash, jobFlag, job, whatFlag, what, goalFlag, goalDash] = args;
-  const flagged = jobFlag === '--job' && whatFlag === '--what' && goalFlag === '--goal' && goalDash === '-';
-  if (args.length !== 8 || dash !== '-' || !flagged || !/^[0-9]+$/.test(job)) {
-    stop(
-      'usage on a call: hq say <agent> - --job <number> --what "one line for the call\'s list" --goal - (the goal and the words on stdin, as JSON {"goal": "...", "words": "..."})',
-    );
+// hq say's flags, anywhere before the message: --needs-answer, and the work it's about (--job or --deliverable).
+function sayFlags(args: string[]) {
+  const rest: string[] = [];
+  let needsAnswer = false,
+    job: string | undefined,
+    deliverable: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--needs-answer') needsAnswer = true;
+    else if (args[i] === '--job' && job === undefined) job = args[++i] ?? '';
+    else if (args[i] === '--deliverable' && deliverable === undefined && job === undefined)
+      deliverable = args[++i] ?? '';
+    else rest.push(args[i]);
   }
-  const given =
-    readGoalAndWords() ?? stop('Nothing was sent: hq say on a call takes {"goal": "...", "words": "..."} on stdin.');
-  const body = { to, job: Number(job), what, goal: given.goal, text: given.words.replace(/\n+$/, '') };
-  const creation = await api.createOnce('message', body, answer => present(answer.item));
-  if (!creation.made) {
-    const { refused, status, error, failure } = creation;
-    if (refused) stop(`Nothing was sent: ${failure ? "couldn't reach HQ" : error || 'HQ refused it'}.`);
-    stop(`Not confirmed: it may or may not have gone (HQ answered ${api.httpCode(status)}).`, 3);
-  }
-  const reached = creation.answer;
-  const listed = `It's on this call's list as item #${shown(reached.item)}, so the follow-up won't send it again.`;
-  if (present(reached.message)) {
-    return print(
-      `Sent to ${to}'s job #${job}: its session reads it at its next step (message #${shown(reached.message)}). ${listed}`,
-    );
-  }
-  const round = `round ${shown(reached.round)}`;
-  print(
-    reached.ruling === 'started'
-      ? `With PR #${shown(reached.pr)}'s review from now on: the ruling on ${round} had already started without it, so the fixes and every later round read it. ${listed}`
-      : `With PR #${shown(reached.pr)}'s review from now on: the ruling on ${round} reads it, as do the fixes and every later round (reviews already running don't). ${listed}`,
-  );
+  return { needsAnswer, job, deliverable, rest };
 }
 
 type Said = {
   id: number;
   state: string;
   job?: number;
+  waiting?: boolean;
+  named?: string;
+  sessions?: { message: number; job: number; agent: string }[];
   why?: string;
   added?: number;
   chain_full?: boolean;
@@ -118,15 +115,30 @@ type Said = {
 };
 
 // (and a call with the board the recipient is on hears it too, within about 15 s: the coordinator's callmessages.ts offer.
-function said(to: string, sent: Said) {
-  const where = delivery(to, sent);
+function said(to: string, sent: Said, deliverable?: string) {
+  const where = delivery(to, sent, deliverable);
   return present(sent.call)
     ? `${where}\n${to} is on call #${shown(sent.call)} with the board: the call hears it too, with ${to}'s next turn there.`
     : where;
 }
 
-function delivery(to: string, { id, state, job, why, added, chain_full }: Said) {
+function delivery(
+  to: string,
+  { id, state, job, why, added, chain_full, waiting, named, sessions }: Said,
+  deliverable?: string,
+) {
   const check = `Check: hq sent ${id}`;
+  if (sessions) {
+    const copies = sessions.map(s => `${s.agent}'s job #${s.job} (message #${s.message})`).join(', ');
+    const unread =
+      chain_full === true
+        ? 'if none reads it, it lapses: it comes from a chain of messages that has started 3 jobs, the most one may'
+        : 'if none reads it, one copy becomes a job';
+    return `Sent to ${text(named)}: every session live on that has a copy, ${copies}. Each reads it at its next step, with who it went to, and acts on it only if it applies to its work; ${unread}. ${check}`;
+  }
+  if (state === 'queued' && waiting === true) {
+    return `Queued for ${to}'s job #${job}, which isn't running now: its session reads it at its first step when it starts or resumes. ${check}`;
+  }
   if (why === 'next-run') {
     return `Kept for ${to}: ${job ? `job #${job} reads it at its next step` : 'the next run reads it'}, even while a pause holds work. If unread, it stays for the following run. ${check}`;
   }
@@ -138,6 +150,9 @@ function delivery(to: string, { id, state, job, why, added, chain_full }: Said) 
   }
   if (state === 'queued') {
     return `Queued for ${to}'s running job #${job}: it reads it at its next step; if the job ends first it becomes a new job. ${check}`;
+  }
+  if (why === 'deliverable') {
+    return `Nobody is working on ${text(deliverable)} now: it's job #${job} for ${to} on that deliverable (message #${id}), which starts once it's sorted into the plan. ${check}`;
   }
   if (why === 'codex') {
     return `${to}'s running job is on Codex, which can't take a message mid-job: it's job #${job} now (message #${id}), which starts once it's sorted into the plan. ${check}`;
@@ -225,6 +240,7 @@ type SentMessage = {
   first?: string;
   call?: number;
   needsAnswer?: boolean;
+  fan?: number;
 };
 
 function sentLine(message: SentMessage) {
@@ -242,6 +258,9 @@ function whatBecameOf(message: SentMessage) {
   }
   if (present(message.became)) return `became job #${message.became} (${jobStatus})`;
   if (present(message.delivered)) return `delivered to job #${job} at ${minute(message.delivered)}`;
+  if (present(message.lapsed) && present(message.fan)) {
+    return `not read in job #${job}, which ended first: it was one copy of message #${message.fan}, and another copy was read, became a job or still waited for a session`;
+  }
   if (present(message.lapsed)) {
     return `never read: job #${job} ended first, and its chain of messages had started 3 jobs already, so it didn't start another`;
   }

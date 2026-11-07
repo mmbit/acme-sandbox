@@ -1,8 +1,8 @@
 // Shared Ink controls for the real-coordinator guest browser journeys in guests.mjs.
 import assert from 'node:assert/strict';
-import { until } from '../../../shared/browser/browser.mjs';
 import { pen } from './notebookscreen.mjs';
-import { until as waitFor } from './kit.mjs';
+import { until as waitFor, openScrap, closeScrap, middleOf } from './kit.mjs';
+import { mouseOf } from './hands.mjs';
 import { words } from '../shell/ink/notebookwords.js';
 
 // A control of the book by its key in the guest words, as the guest's page says it
@@ -17,17 +17,24 @@ export async function readyNotebook(page) {
   assert.equal(await page.locator('a[href*="/guest/sketchbook/"]').count(), 0);
 }
 
+// The tools are an opened scrap's (Ink's README, The board's rules), so each step below opens one with the mouse and
+// puts it back with Klaar: a typed note in a new scrap, made by a click on the bare grid under what's on the page. Its
+// scrap's group id, for the steps after it.
 export async function addNote(page, words) {
-  await page
-    .locator('#book')
-    .getByRole('button', { name: await named(page, 'toolText'), exact: true })
-    .click();
-  const [x, y] = await pointOnPaper(page, 0.3, 0.3);
-  await page.mouse.click(x, y);
+  // (on a bare page, the paper's middle, clear of its head. Otherwise 40 px under what's on it: the page is only as tall
+  // as its content.)
+  const desk = await page.locator('#book .bk-desk').boundingBox();
+  const [x, y] = middleOf(desk);
+  const at = [x, Math.max(y, (await underWords(page)) + 40)];
+  const { gid, sheet } = await openScrap(page, mouseOf(page), undefined, at);
+  await tool(page, 'toolText');
+  await page.mouse.click(sheet.x + sheet.width * 0.3, sheet.y + 60);
   const field = page.locator('#book .bk-typed-words[contenteditable]');
   await field.fill(words);
   await field.press('Escape');
-  await until(page, '#book .bk-typed', new RegExp(RegExp.escape(words)));
+  await page.locator('#book .bk-typed').filter({ hasText: words }).first().waitFor();
+  await closeScrap(page, mouseOf(page));
+  return gid;
 }
 
 export async function sendPage(page) {
@@ -67,14 +74,18 @@ export async function firstPage(page) {
   await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'));
 }
 
-export async function drawNote(state, page, pageId) {
-  await page
-    .locator('#book')
-    .getByRole('button', { name: await named(page, 'toolPen'), exact: true })
-    .click();
-  // (under what's written: the page is as tall as what's on it, so a point down the paper can land on the typed note.
-  const below = await underWords(page);
-  const [[left], [right]] = await Promise.all([0.3, 0.7].map(across => pointOnPaper(page, across, 0)));
+// Two lines drawn with the pen under the note in its scrap (gid: addNote's)
+export async function drawNote(state, page, pageId, gid) {
+  const { sheet } = await openScrap(page, mouseOf(page), gid);
+  await tool(page, 'toolPen');
+  const below = await page.evaluate(() =>
+    Math.max(
+      ...[...document.querySelectorAll('#book .bk-page[data-focus] .bk-typed')].map(
+        t => t.getBoundingClientRect().bottom,
+      ),
+    ),
+  );
+  const [left, right] = [0.3, 0.7].map(across => sheet.x + sheet.width * across);
   for (const y of [below + 30, below + 60])
     await pen(
       page,
@@ -94,21 +105,7 @@ export async function drawNote(state, page, pageId) {
     2,
     'both drawing strokes are saved',
   );
-}
-
-export async function pointOnPaper(page, across, down) {
-  return page.evaluate(
-    ({ across, down }) => {
-      const paper = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden).getBoundingClientRect();
-      const desk = document.querySelector('#book .bk-desk').getBoundingClientRect();
-      const left = Math.max(paper.left, desk.left) + 50;
-      const right = Math.min(paper.right, desk.right, innerWidth) - 50;
-      const top = Math.max(paper.top, desk.top) + 60;
-      const bottom = Math.min(paper.bottom, desk.bottom, innerHeight) - 100;
-      return [left + (right - left) * across, top + (bottom - top) * down];
-    },
-    { across, down },
-  );
+  await closeScrap(page, mouseOf(page));
 }
 
 // The bottom of the lowest thing written on the page, typed or drawn
@@ -118,42 +115,34 @@ const underWords = page =>
     return Math.max(...[...paper.querySelectorAll('.bk-typed, .bk-unit')].map(el => el.getBoundingClientRect().bottom));
   });
 
-// The select tool's bar round the lassoed note and lines, and the preferences' card from the bar's dots, in the guest's
-// words
-export async function selectionAndPrefs(page) {
-  const book = page.locator('#book');
-  await book.getByRole('button', { name: await named(page, 'toolSelect'), exact: true }).click();
-  const [from, to] = await aroundUnits(page);
-  await page.mouse.move(...from);
-  await page.mouse.down();
-  await page.mouse.move(...to, { steps: 12 });
-  await page.mouse.up();
+// The select tool's bar round the note and lines in their scrap, all picked by the keys, and the preferences' card
+// from the page bar's dots, in the guest's words (gid: addNote's)
+export async function selectionAndPrefs(page, gid) {
+  await openScrap(page, mouseOf(page), gid);
+  await tool(page, 'toolSelect');
+  await page.keyboard.press('ControlOrMeta+a');
   const bar = page.getByRole('toolbar', { name: await named(page, 'selection'), exact: true });
   await bar.waitFor();
-  const acts = await Promise.all(['duplicate', 'moveToPage', 'delete'].map(key => named(page, key)));
+  // (the lines have a place in the scrap's stack, so forward and backward show)
+  const acts = await Promise.all(
+    ['duplicate', 'forward', 'backward', 'moveToPage', 'delete'].map(key => named(page, key)),
+  );
   const labels = await bar.locator('button:not([hidden])').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')));
   assert.deepEqual(labels, acts);
   await page.keyboard.press('Escape');
+  await closeScrap(page, mouseOf(page));
   const cog = await named(page, 'preferences');
-  await book.locator('.bk-more').click();
+  await page.locator('#book .bk-bar .bk-more').click();
   await page.locator('#book .bk-more-card').getByRole('menuitem', { name: cog, exact: true }).click();
   const card = await page.getByRole('dialog', { name: cog, exact: true }).innerText();
   for (const key of ['onThisDevice', 'penPans']) assert.ok(card.includes(await named(page, key)), `${key} in ${card}`);
   await page.keyboard.press('Escape');
 }
-
-// A box round everything on the page, just above its first unit and below its last (the page is as tall as what's on
-// it), clear of the screen's edge, where a drag folds the book away
-const aroundUnits = page =>
-  page.evaluate(() => {
-    const paper = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
-    const units = [...paper.querySelectorAll('.bk-unit')].map(unit => unit.getBoundingClientRect());
-    const edge = paper.getBoundingClientRect();
-    return [
-      [edge.left + 50, Math.min(...units.map(unit => unit.top)) - 10],
-      [edge.right - 30, Math.max(...units.map(unit => unit.bottom)) + 10],
-    ];
-  });
+const tool = async (page, key) =>
+  page
+    .locator('#book')
+    .getByRole('button', { name: await named(page, key), exact: true })
+    .click();
 
 // The new page after a send, untitled: its name in the bar and the pages menu, and the title field Rename page opens,
 // in the guest's words
@@ -173,4 +162,40 @@ export async function untitledPage(page) {
   const field = page.getByRole('textbox', { name: await named(page, 'pageTitle'), exact: true });
   assert.equal(await field.getAttribute('placeholder'), untitled);
   await field.press('Escape');
+}
+
+// A visitor's page let go, its routes first: a route still fetching when its context closes throws "Response has been
+// disposed".
+export async function closeVisitor(visitor) {
+  await visitor.context.unrouteAll({ behavior: 'ignoreErrors' });
+  await visitor.context.close();
+}
+
+// A guest signed in by the code mailed to them, their book open
+export async function emailSignIn(state, visitor, link) {
+  const path = new URL(link).pathname;
+  await visitor.page.goto(state.origin + path);
+  await visitor.page.locator(`form[action="${path}/send"] button`).click();
+  await visitor.page.locator('#code').waitFor();
+  const code = /: (\d{6})/.exec(state.mail.taken.at(-1)?.text)?.[1];
+  assert.ok(code, 'the email service received a sign-in code');
+  await visitor.page.locator('#code').fill(code);
+  await visitor.page.locator(`form[action="${path}/verify"] button`).click();
+  try {
+    await visitor.page.locator('a[href*="/guest/notebooks/"]').first().click();
+  } catch (failure) {
+    console.log(
+      'Guest sign-in state:',
+      JSON.stringify({
+        cookies: (await visitor.context.cookies()).map(c => c.name),
+        visible: await visitor.page.evaluate(() => ({
+          title: document.title,
+          body: document.body?.innerText.slice(0, 200),
+        })),
+      }),
+    );
+    await snapshot(state, 'guest-sign-in-failed', visitor.page);
+    throw failure;
+  }
+  await readyNotebook(visitor.page);
 }

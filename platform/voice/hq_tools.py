@@ -12,7 +12,7 @@ from callnotes import (CHANGE_WORDS, DRAW_WORDS, GOAL, MARK_WORDS, MARKS, PAGE_W
                        TRY_WORDS, WHAT, WRITE_DOWN_WORDS, change_asked, drawing_asked, mark_asked, note_asked, title_asked,
                        try_asked)
 from callnotes import PROTOTYPE_ABOUT, PROTOTYPE_HTML, PROTOTYPE_NAME, PROTOTYPE_WORDS, prototype_asked
-from design import BRIEF_MOST, BUILD_TOOL_WORDS
+from design import BRIEF_MOST, BUILD_TOOL_WORDS, EFFORTS, build_asked
 from voices import NAME_LENGTH, VOICE_WORDS
 from voices import ENROL_WORDS, FORGET_WORDS
 
@@ -374,12 +374,14 @@ TOOLS += [
     # the same rule).
     {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
      'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
-     '(stop), mark or clear the board’s urgent work (urgent milestone|job|task <id> on|off). Only urgent work bypasses seat pacing. Order work within seat pacing with a window (window <project>/<slug> | <job> <time>, or none to '
-     'lift it; the scheduler makes room for it and gives the seat back after, by itself), pause or resume a deliverable '
-     'or project only for work that must wait on a condition (something from the board, a decision it has to make, a '
-     'hold it asked for), never to put other work first (deliverable pause <project>/<slug> "why" with --until <job>, '
-     '--until-time <time> or --by-hand: what wakes you to judge it, never lifts it; deliverable resume, project pause, '
-     'project resume), move a job to another deliverable (job move <job> <project>/<slug>), drop, order or retitle a '
+     '(stop), mark or clear the board’s urgent work on its whole milestone (urgent <milestone> on|off: work filed under '
+     'it later is urgent too; urgent job|task <id> for one piece only). Only urgent work bypasses seat pacing. Order work within seat pacing with a window (window <project>/<slug> | <job> <time>, or none to '
+     'lift it; the scheduler makes room for it and gives the seat back after, by itself), pause or resume a whole '
+     'milestone or one deliverable only for work that must wait on a condition (something from the board, a decision '
+     'it has to make, a hold it asked for), never to put other work first (project pause <project> "why", every '
+     'deliverable of it and those filed later, with --until <job>, --until-time <time> or --by-hand: what wakes you to '
+     'judge it, never lifts it; project resume; deliverable pause <project>/<slug> for one deliverable, as for work '
+     'that must stay out of its milestone\'s urgency; deliverable resume), move a job to another deliverable (job move <job> <project>/<slug>), drop, order or retitle a '
      'task (plan drop <job> "why", plan move, plan title), draw, rename or close deliverables (plan deliverable, plan '
      'need, plan rename, plan done, deliverable move), a job\'s waits (waits), its size (estimate set), projects '
      '(project say, new, owner, rename, done), the inbox (inbox, inbox accept, '
@@ -663,38 +665,56 @@ TOOLS += [
          'svg': {'type': 'string', 'minLength': 1,
                  'description': 'the drawing, from <svg viewBox="0 0 640 480"> to its </svg>'}}}},
 ]
-# A throwaway prototype, kept with the call (callnotes.py; the coordinator's callprototypes.ts).
+# A throwaway prototype, kept with the call (callnotes.py; the coordinator's callprototypes.ts): what it is, and the
+# page the agent writes itself.
+PROTOTYPE_IS = ('Make a prototype to show an idea on the call: a throwaway page the board and its guest play with. It '
+                "lands as a card on their screens and a clip on the call's page: they open it full screen and tap "
+                "through it, and their pen marks on it reach you as marks on the call's page do. Never ask before you "
+                'make one. Saving again under the same name makes its next version (v2) beside the earlier ones. ')
+PROTOTYPE_PAGE = ('Write one whole HTML page with everything inline (CSS, script, SVG, data URLs): nothing from outside '
+                  'the page loads. Make it fit a tablet or phone in either orientation, or a laptop, with big touch '
+                  "targets. Never a customer's details or anything of HQ's. A page you write comes back as its picture "
+                  "(its script runs on their screens, not in the picture), with the call's number.")
+# Its fields, the guest's prototype tool's too (GUEST_PROTOTYPE)
+PROTOTYPE_FIELDS = {
+    'name': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_NAME,
+             'description': "its name, a few words ('Colour slider'): the same name again is its next version"},
+    'brief': {'type': 'string', 'minLength': 1, 'maxLength': BRIEF_MOST,
+              'description': 'what the builder makes, in plain words (or html instead)'},
+    'html': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_HTML,
+             'description': 'the whole page, from <!doctype html> to </html>, everything inline (or brief instead)'},
+    'about': {'type': 'string', 'maxLength': PROTOTYPE_ABOUT,
+              'description': 'what this version changes, one plain line (for a v2 and after, with a brief or '
+              'html)'},
+    'by': {**ID, 'description': "with a brief: the colleague who builds it (their id), when their craft fits it "
+           'better than yours; left out, you build it'},
+    'lighter': {'type': 'boolean', 'description': "with a brief: true builds it on the builder's lighter, faster "
+                'model (a still picture, a small change)'},
+    'effort': {'type': 'string', 'enum': list(EFFORTS), 'description': "with a brief: how hard its builder "
+               'thinks before making it (low for a still picture or a small change)'}}
 TOOLS += [
-    {'name': 'prototype', 'description': 'Make a prototype to show an idea on the call: a throwaway page the board '
-     "and its guest play with. It lands as a card on their screens and a clip on the call's page: they open it full "
-     "screen and tap through it, and their pen marks on it reach you as marks on the call's page do. Never ask before "
-     'you make one. Saving again under the same name makes its next version (v2) beside the earlier ones. '
-     # (a brief: built in the background, design.py.)
-     'Give a brief (what to build, what each part does, how it should feel) and a builder makes it in the background '
-     'while you go on: it takes a few minutes, to make it good, and your hand goes up when it has landed. That is '
-     'the usual way: one where every tap does something you see, with motion and a little life, beats a quick thin one. '
+    {'name': 'prototype', 'description': PROTOTYPE_IS +
+     # (a brief: built by a colleague as a job, design.py.)
+     'Give a brief (what to build, what each part does, how it should feel) and a colleague builds it as a job while '
+     'you go on: its placeholder is on the call\'s page at once with their face, and your hand goes up when it has '
+     'landed. Make what is asked, at the size it is pictured: an infographic or a poster is one still picture, made in '
+     'about a minute; a screen to feel is that screen, every tap doing something you see. Never bigger than asked. '
+     'Who builds it (by, else you) and how (lighter: their lighter model; effort) are yours to judge by the task: a '
+     'still picture or a small change goes quick and light, a rich screen to play with takes their own model. '
+     'While it is built, activity with its job shows how it goes, and prototype again under its name (or add) takes '
+     'what they say about it to its builder at once. '
      'A next version builds on the last one under its name: say what to change, and the change in a line (about). '
      # (one version per round of feedback.)
      'One per round of feedback, not per remark: gather what they say about it, and once they have had their say '
      '(they move on, or ask for it), brief all of it at once. Write the page yourself (html) only '
-     'for something you can show in a few lines, like a single slider; then it shows within seconds. Write one whole '
-     'HTML page with everything inline (CSS, script, SVG, data URLs): nothing from outside the page loads. Make it '
-     "fit a tablet or phone in either orientation, or a laptop, with big touch targets. Never a customer's details "
-     "or anything of HQ's. A page you write comes back as its picture (its script runs on their screens, not in the "
-     "picture), with the call's number. Several concepts at once, or a whole product: hand each to a colleague with "
+     'for something you can show in a few lines, like a single slider; then it shows within seconds. ' +
+     PROTOTYPE_PAGE + " Several concepts at once, or a whole product: hand each to a colleague with "
      'job (now: true), a quick job whose brief says what to build, to save it with hq prototype --call <this call\'s '
-     'number, which your briefing gives> "<name>" <its folder>, and to change nothing in the repo (a job that commits '
+     'number, which your briefing gives> "<name>" <its folder> --picture <the screenshot it was looked at in>, and to '
+     'change nothing in the repo (a job that commits '
      'nothing opens no pull request and no review). Theirs appears the same way, beside yours.',
-     'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False, 'properties': {
-         'name': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_NAME,
-                  'description': "its name, a few words ('Colour slider'): the same name again is its next version"},
-         'brief': {'type': 'string', 'minLength': 1, 'maxLength': BRIEF_MOST,
-                   'description': 'what the builder makes, in plain words (or html instead)'},
-         'html': {'type': 'string', 'minLength': 1, 'maxLength': PROTOTYPE_HTML,
-                  'description': 'the whole page, from <!doctype html> to </html>, everything inline (or brief instead)'},
-         'about': {'type': 'string', 'maxLength': PROTOTYPE_ABOUT,
-                   'description': 'what this version changes, one plain line (for a v2 and after, with a brief or '
-                   'html)'}}}},
+     'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False,
+                     'properties': PROTOTYPE_FIELDS}},
 ]
 
 # Several people in the board's room, told apart by their voices (voices.py).
@@ -769,8 +789,21 @@ TOOLS += [
 # A guest carrying the call the board left to them (server.py Call.carried): the call's own work with them, its page's
 # notes, drawings and prototypes, the agent's notes and its hang-up. Nothing that looks up the company's files, work or
 # people, and nothing that acts for the board, so a guest's words can't steer either (house rule 9, charter rule 7).
-GUEST_TOOLS = [t for t in TOOLS if t['name'] in ('change_note', 'draw_picture', 'hang_up', 'mark_notes', 'note',
-                                                   'prototype', 'read_notes', 'say_nothing', 'title_notes', 'try')]
+# Its prototypes are pages the agent writes itself: a build from a brief is a colleague's job (the coordinator's
+# callbuilds.ts build).
+GUEST_PROTOTYPE = {
+    'name': 'prototype',
+    'description': PROTOTYPE_IS + 'Write the page yourself (html), and for a next version the change in a line '
+                   '(about). ' + PROTOTYPE_PAGE,
+    'inputSchema': {'type': 'object', 'required': ['name', 'html'], 'additionalProperties': False, 'properties': {
+        'name': PROTOTYPE_FIELDS['name'],
+        'html': {**PROTOTYPE_FIELDS['html'],
+                 'description': 'the whole page, from <!doctype html> to </html>, everything inline'},
+        'about': {**PROTOTYPE_FIELDS['about'],
+                  'description': 'what this version changes, one plain line (for a v2 and after)'}}}}
+GUEST_TOOLS = [GUEST_PROTOTYPE if t['name'] == 'prototype' else t for t in TOOLS if t['name'] in (
+    'change_note', 'draw_picture', 'hang_up', 'mark_notes', 'note', 'prototype', 'read_notes', 'say_nothing',
+    'title_notes', 'try')]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
 # no_transcript says the company's fixed words itself and keeps no transcript from then on, only the notes. A note and a
@@ -1408,11 +1441,10 @@ def draw_picture(a):
 
 def prototype(a):
     """(ok, content) of the prototype tool: its picture as the board sees it, and its line; or, from a brief, the line's
-    word that a builder has it."""
+    word on the build (who builds it as which job, or that it went to the one under way)."""
     if 'brief' in a:
-        # (about beside a brief: what its version changes.)
-        if set(a) - {'name', 'brief', 'about'} or not all(isinstance(a.get(k), str) for k in ('name', 'brief')) or \
-                not isinstance(a.get('about', ''), str):
+        # (about beside a brief: what its version changes; by, lighter, effort: who builds it, and how.)
+        if not build_asked(a):
             return False, [{'type': 'text', 'text': BUILD_TOOL_WORDS['shape']}]
         return page_said({'prototype': a}, PROTOTYPE_WORDS)
     if not (asked := prototype_asked(a)):

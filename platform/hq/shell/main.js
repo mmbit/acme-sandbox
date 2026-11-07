@@ -49,6 +49,7 @@ import { followScreens } from './boardscreen.js';
 import { initFinder } from './finder.js';
 import { initBook, openBook } from './ink/book.js'; // (Ink's folder)
 import { loadFilms } from './tipcard.js';
+import { openDownloadsInApp } from './fileview.js';
 
 const $ = s => document.querySelector(s);
 const REQUEST_POLL_MS = 20000; // open board requests
@@ -69,6 +70,7 @@ function openedOnCall(tools, asked) {
 }
 async function boot() {
   brandApp();
+  openDownloadsInApp(); // (from the first tap: the pinned app never leaves HQ for a file)
   const { org, dev } = await loadOrg();
   known = org;
   world.setOrg(org, dev);

@@ -37,6 +37,32 @@ test('the CEO marks and clears each work level in one command, while inherited u
   assert.equal(urgency.taskUrgent(-99), false);
 });
 
+test("the whole milestone is urgency's plain form, and each answer says what the choice leaves out", async () => {
+  const ceo = await h.start({ agent: 'juno' });
+  const made = await h.hq(ceo, 'project', 'new', 'shelf', 'The shelf', '--code', 'SHF', '--owner', 'juno');
+  assert.equal(made.code, 0, made.out);
+  const draw = (slug: string, name: string) => {
+    assert.notEqual(typeof projects.createThread({ project: 'shelf', slug, name, goal: 'It ships' }), 'string');
+    return `shelf/${slug}`;
+  };
+  const [books, tips] = [draw('books', 'Books'), draw('tips', 'Tips')];
+  const paused = await h.hq(ceo, 'deliverable', 'pause', tips, 'Held for the board', '--by-hand');
+  assert.match(
+    paused.out,
+    /1 other open deliverable of shelf, and any filed there later, go on: hq project pause shelf/,
+  );
+  const piece = await h.hq(ceo, 'urgent', 'job', books);
+  assert.equal(piece.code, 0, piece.out);
+  assert.match(piece.out, /Still on pacing: The shelf's 1 other open deliverable, work filed under The shelf later/);
+  assert.match(piece.out, /hq urgent shelf marks the whole milestone/);
+  const whole = await h.hq(ceo, 'urgent', 'shelf');
+  assert.equal(whole.code, 0, whole.out);
+  assert.match(whole.out, /It covers its 2 open deliverables and all work filed under The shelf later/);
+  assert.match(whole.out, /Kept out by their own pause, which holds urgent work: Tips/);
+  const later = h.queue({ agent: 'bolt', thread: draw('fitted', 'Fitted') });
+  assert.equal(urgency.taskUrgent(later), true, 'work filed after the mark inherits it');
+});
+
 test('task urgency carries into its reviews and fixes and clears without changing sibling tasks', async () => {
   const ceo = await h.start({ agent: 'juno' });
   const thread = opened('reviews');

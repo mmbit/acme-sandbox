@@ -68,6 +68,23 @@ export function keptClear(own) {
     .filter(box => box.width && box.height);
 }
 
+// How far (screen px, { x, y }) el must move to lie whole on `on`, the element it shows things on (the paper), side px
+// in from its sides, and clear of the controls marked data-keep-clear there (the book's pull tab,
+// bookmarks and tools, an opened scrap's Klaar): to the nearest spot that is (clearSpot); nowhere (0, 0) where it is
+// already, or when no spot is (Select's bar, bookselect.js). Nothing moves it: the caller does.
+export function clearOn(el, on, side = 0) {
+  const r = el.getBoundingClientRect(),
+    paper = on.getBoundingClientRect(),
+    room = { left: paper.left + side, right: paper.right - side, top: paper.top, bottom: paper.bottom },
+    avoid = keptClear(el).filter(b => b.left < paper.right && b.right > paper.left),
+    meets = b => b.left < r.right && b.right > r.left && b.top < r.bottom && b.bottom > r.top;
+  const inside = r.left >= room.left && r.right <= room.right && r.top >= room.top && r.bottom <= room.bottom;
+  const spot =
+    (!inside || avoid.some(meets)) &&
+    clearSpot({ w: r.width, h: r.height }, [{ room, at: { x: r.left, y: r.top } }], avoid);
+  return spot ? { x: spot.x - r.left, y: spot.y - r.top } : { x: 0, y: 0 };
+}
+
 // The boxes on the screen of what the board reads (marked data-keep-in-sight: the book's page heading, dates and scraps)
 export const inSight = () =>
   [...document.querySelectorAll('[data-keep-in-sight]')]

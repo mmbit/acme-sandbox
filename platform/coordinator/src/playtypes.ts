@@ -46,6 +46,8 @@ export type Memory = {
   heldMb: number;
   starting: { until: number; mb: number }[];
   runningMb: Record<string, number | null>;
+  // Ended sessions whose push checks use separate users. Their memory remains external to session admission.
+  checks?: number[];
 };
 
 // An open job (queued, running, waiting for the board, or done with its pull request in review), by its id: what it

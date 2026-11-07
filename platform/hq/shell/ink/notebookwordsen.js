@@ -151,6 +151,8 @@ export const en = {
   copy: 'Copy',
   paste: 'Paste',
   duplicate: 'Duplicate',
+  forward: 'Bring forward', // (a step up its scrap's stack: booklayers.js.)
+  backward: 'Send backward',
   duplicatePage: 'Duplicate this page',
   duplicatePageHint: 'A new page with everything on this one, to carry on drawing',
   deletedToast: '<b>Deleted.</b> Tap to undo',

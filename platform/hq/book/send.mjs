@@ -187,7 +187,7 @@ async function withAsks(browser, c) {
   for (const size of [SIZES[0], SIZES.at(-1)]) {
     const { page, play, errors, done } = await open(browser, c, size, seed);
     try {
-      const count = pagesOf(play).length;
+      const before = pagesOf(play).map(p => p.id);
       await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit');
       const card = page.getByRole('dialog', { name: 'Asks still open' });
       await card.waitFor({ timeout: 3000 });
@@ -201,8 +201,10 @@ async function withAsks(browser, c) {
       await (await tearOffMenu(page)).getByRole('menuitem', { name: /Submit/ }).click();
       await card.getByRole('button', { name: 'Send now, move it to a new page' }).click();
       await until(() => pageOf(play, SECOND).sent, `sent (${size.name})`);
-      const moved = play.route('/api/notebooks/pages/groups', { page: pagesOf(play).at(-1).id }).groups;
-      assert.equal(pagesOf(play).length, count + 1, `a new page for the ask (${size.name})`);
+      // (the page the store made, wherever the journal puts it among the seed's)
+      const made = pagesOf(play).find(p => !before.includes(p.id));
+      assert.equal(pagesOf(play).length, before.length + 1, `a new page for the ask (${size.name})`);
+      const moved = play.route('/api/notebooks/pages/groups', { page: made.id }).groups;
       assert.deepEqual(
         moved.map(g => [g.id, g.status]),
         [[ASKING, 'open']],

@@ -172,6 +172,16 @@ export function* orderingInParts(
   return { now, planner: 3, windows: threadWindows, pauseUntil: pauses.untilJobs(), jobs: queued, deployLagMs: lag };
 }
 
+function holdResources(queued: QueuedJob[], now: number) {
+  const byId = new Map(queued.map(job => [job.id, job]));
+  for (const edge of plannerCapacity(now)?.resourceWaits ?? []) {
+    const waiting = byId.get(edge.job),
+      holding = byId.get(edge.on);
+    if (waiting?.status !== 'running' || holding?.status !== 'running') continue;
+    (waiting.dependencies ??= []).push({ job: holding.id, until: 'done' });
+  }
+}
+
 // A row's branch and the task before it in its thread, as its thread places it
 type Place = ReturnType<typeof threadorder.placing>['place'];
 function placedAt(row: Row, place: Place) {
@@ -283,6 +293,7 @@ function inThreads(
   keepLoops: boolean,
   now: number,
 ) {
+  holdResources(queued, now);
   rows.forEach((row, i) => {
     const placed = place(row),
       job = queued[i];
