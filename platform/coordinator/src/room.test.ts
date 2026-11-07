@@ -1,5 +1,4 @@
 // node --test src/room.test.ts   (the test company): the worker's room report, and starvation in HQ, hq jobs and HQ's feed
-//
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
@@ -126,6 +125,7 @@ test('the planner uses reported slots and memory room, and an old report becomes
       slots: { claude: 10, codex: 4 },
       seatRuns: { codex: 2 },
       room: 7,
+      resourceWaits: [{ job: 999999, on: 999998, resource: 'tests' }],
       memory: {
         at,
         availableMb: 3000,
@@ -457,4 +457,51 @@ test('each emitted notice keeps its actual report while a spell continues with n
   assert.equal(inspected.notices.notice.report, null, 'a cause-only nudge uses no report');
   assert.equal(inspected.joins.noticeToMeasurement, null, 'a newer spell supplies none of the nudge text');
   report(2e9);
+});
+
+test('fifteen ended sessions in push checks leave room and seat places for a new claim and its plan', async () => {
+  const { snapshot } = await import('./backlog.ts');
+  const { play } = await import('./eta.ts');
+  const engine = 'checks-queue',
+    seat = 'checks-seat';
+  await h.worker('seat', { seat, engine, state: 'ready', util: 0, week: 0 });
+  const checking = [];
+  for (let i = 0; i < 15; i++) checking.push(await h.start({ agent: 'kit', engine }, { seat }));
+  const waiting = h.queue({ agent: 'kit', engine });
+  const at = Date.now(),
+    ids = checking.map(run => run.id);
+  const memory = {
+    at,
+    availableMb: 6000,
+    freeReserveMb: 1500,
+    defaultRunMb: 700,
+    totalSlots: 15,
+    heldSlots: 0,
+    heldMb: 0,
+    starting: [],
+    runningMb: {},
+    checks: ids,
+  };
+  const capacity = { slots: { [engine]: 15 }, seatRuns: { [engine]: 15 }, room: 15 };
+  await h.worker('room', {
+    capacity: {
+      ...capacity,
+      memory: { ...memory, checks: [], runningMb: Object.fromEntries(ids.map(id => [id, 10])) },
+    },
+  });
+  const spell = () =>
+    h.db.prepare('select ended from slot_spells order by id desc limit 1').get() as { ended: number | null };
+  assert.equal(spell().ended, null, 'the sessions occupy all work slots');
+  const reported = await h.worker('room', { capacity: { ...capacity, memory } });
+  assert.notEqual(spell().ended, null, 'queued checks end the full-slot spell');
+  assert.equal(reported.status, 200);
+  const input = snapshot(at);
+  input.jobs = input.jobs.filter(job => ids.includes(job.id) || job.id === waiting);
+  const sizes = new Map(input.jobs.map(job => [job.id, { agent_ms: 60_000 }]));
+  const outcome = play(input, sizes).get(waiting)!;
+  assert.equal(outcome.start, input.now, 'the plan uses the returned slots and seat places');
+  const claimed = await h.claim(engine, { seat });
+  assert.equal(claimed?.id, waiting);
+  for (const run of checking) assert.equal(h.job(run.id).status, 'running', 'checks keep their ownership lease');
+  for (const run of [...checking, claimed!]) await h.finish(run);
 });

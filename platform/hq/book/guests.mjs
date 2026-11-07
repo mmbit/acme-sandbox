@@ -9,6 +9,8 @@ import { refusalStory } from './guestrefusals.mjs';
 import { serveWork } from './guestpath.mjs';
 import {
   readyNotebook,
+  closeVisitor,
+  emailSignIn,
   addNote,
   drawNote,
   sendPage,
@@ -22,6 +24,7 @@ import {
   arrowsOf,
 } from './guestscreen.mjs';
 import { playwright, until } from '../../../shared/browser/browser.mjs';
+import { phoneLookStory } from './guestphone.mjs';
 import { markedSlip, pageDate, roundWords } from './guestlanguage.mjs';
 
 export async function guestNotebookStories({ shots = null, webkit = true } = {}) {
@@ -35,6 +38,8 @@ export async function guestNotebookStories({ shots = null, webkit = true } = {})
     const board = await openVisitor(state, { width: 1440, height: 960 }, h.boardCookie);
     await board.page.goto(`${origin}/?intro=0`);
     await readyHQ(board.page);
+    await phoneLookStory(state);
+    console.log('Guest browser: the pull tab and Klaar on a phone complete');
     await roundStory(state, board.page);
     console.log('Guest browser: review round complete');
     const invited = await invitedStory(state, board.page);
@@ -67,39 +72,6 @@ export async function guestNotebookStories({ shots = null, webkit = true } = {})
   }
 }
 
-// (its routes let go first: a route still fetching when its context closes throws "Response has been disposed")
-async function closeVisitor(visitor) {
-  await visitor.context.unrouteAll({ behavior: 'ignoreErrors' });
-  await visitor.context.close();
-}
-
-async function emailSignIn(state, visitor, link) {
-  const path = new URL(link).pathname;
-  await visitor.page.goto(state.origin + path);
-  await visitor.page.locator(`form[action="${path}/send"] button`).click();
-  await visitor.page.locator('#code').waitFor();
-  const code = /: (\d{6})/.exec(state.mail.taken.at(-1)?.text)?.[1];
-  assert.ok(code, 'the email service received a sign-in code');
-  await visitor.page.locator('#code').fill(code);
-  await visitor.page.locator(`form[action="${path}/verify"] button`).click();
-  try {
-    await visitor.page.locator('a[href*="/guest/notebooks/"]').first().click();
-  } catch (failure) {
-    console.log(
-      'Guest sign-in state:',
-      JSON.stringify({
-        cookies: (await visitor.context.cookies()).map(c => c.name),
-        visible: await visitor.page.evaluate(() => ({
-          title: document.title,
-          body: document.body?.innerText.slice(0, 200),
-        })),
-      }),
-    );
-    await snapshot(state, 'guest-sign-in-failed', visitor.page);
-    throw failure;
-  }
-  await readyNotebook(visitor.page);
-}
 async function dismissPasskey(state, page) {
   await page.locator('[data-guest-passkey-prompt]').waitFor({ state: 'visible' });
   await snapshot(state, 'reviewer-passkey-desktop', page);
@@ -143,10 +115,10 @@ async function roundStory(state, board) {
   await emailSignIn(state, bela, round.people[1].reviewLink);
   assert.equal(await ada.page.locator('#book .bk-page').count(), 1);
   assert.equal(await bela.page.locator('#book .bk-page').count(), 1);
-  await addNote(ada.page, 'Give the page title more room');
-  await addNote(bela.page, 'The small-screen menu needs a clearer label');
-  await drawNote(state, ada.page, round.people[0].page);
-  await drawNote(state, bela.page, round.people[1].page);
+  const adaNote = await addNote(ada.page, 'Give the page title more room');
+  const belaNote = await addNote(bela.page, 'The small-screen menu needs a clearer label');
+  await drawNote(state, ada.page, round.people[0].page, adaNote);
+  await drawNote(state, bela.page, round.people[1].page, belaNote);
   await artifactScrap(state, ada, round.people[0].reviewLink, round.people[0].page, 'desktop');
   await artifactScrap(state, bela, round.people[1].reviewLink, round.people[1].page, 'phone');
   console.log('Guest browser: both artifact scraps saved');
@@ -216,8 +188,8 @@ async function invitedStory(state, board) {
   const guest = await openVisitor(state, { width: 390, height: 844 }, '', state.browser, { video: true });
   state.recording = guest.page.video();
   await passkeyStory(state, guest, book);
-  await addNote(guest.page, 'Could the menu be easier to find');
-  await drawNote(state, guest.page, book.pages[0].id);
+  const note = await addNote(guest.page, 'Could the menu be easier to find');
+  await drawNote(state, guest.page, book.pages[0].id, note);
   await watch(state, board, book);
   await until(board, '.ng-groups', /menu be easier/);
   await board.locator('.ng-ink').first().waitFor({ state: 'visible' });
@@ -357,9 +329,9 @@ async function languageStory(state, job, [lang, name, intro, open, label]) {
   await emailSignIn(state, visitor, book.people[0].link);
   const page = visitor.page;
   assert.equal(await page.locator('html').getAttribute('lang'), lang);
-  await addNote(page, 'A guest note');
-  await drawNote(state, page, book.pages[0].id);
-  await selectionAndPrefs(page);
+  const note = await addNote(page, 'A guest note');
+  await drawNote(state, page, book.pages[0].id, note);
+  await selectionAndPrefs(page, note);
   await sendPage(page);
   // the shell's own words in theirs: Send's toast, and below an agent's name marked as an AI's and the room to answer in
   const toastWords = await named(page, 'sentToast');

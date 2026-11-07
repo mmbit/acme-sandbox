@@ -21,7 +21,10 @@ import { wearIcons } from '../icons.js';
 
 const text = words[document.documentElement.lang];
 stylesheet('shell/ink/bookguest.css'); // (its shelf, and a round's Marked done)
-stylesheet('shell/ink/booklook.css'); // (the book's colours, its shelf's lit book too)
+// (the book's colours, its shelf's lit book too: after book.css, in the book's own order (bookstyles.js), or
+// book.css's reset of the pull tab wipes its paint, and only its shadow shows.)
+stylesheet('shell/ink/book.css');
+stylesheet('shell/ink/booklook.css');
 // (the book's controls draw HQ's icons: a guest's room wears no look, so the line set)
 wearIcons('line');
 const query = new URLSearchParams(location.search);

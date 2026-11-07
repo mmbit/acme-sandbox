@@ -5,29 +5,38 @@ import { join } from 'node:path';
 import * as api from './api.ts';
 import { print, stop, text } from './output.ts';
 
-const USAGE = 'usage: hq prototype --call <n> "<name>" <folder | file.html> [--about "<line>"]';
+const USAGE = 'usage: hq prototype --call <n> "<name>" <folder | file.html> [--about "<line>"] [--picture <png>]';
 // The most of a prototype's files in all: callprototypes.ts FILES_MOST
 const FILES_MOST = 8 << 20;
 
 export const prototype = {
   help: `
    hq prototype --call <n> "<name>" <folder>         save a page for the board's live call <n> as its throwaway
-       [--about "<line>"]                            prototype: the folder's index.html and its files (dot-files and
+       [--about "<line>"] [--picture <png>]          prototype: the folder's index.html and its files (dot-files and
                                                      node_modules left out, 8 MB at most), or one HTML file. It
                                                      appears on the call's page and the board's iPads with its
-                                                     picture. The same name again makes its next version, --about
-                                                     says what that version changes. No pull request and no review:
-                                                     commit nothing for it`,
+                                                     picture: --picture, the screenshot you looked at it in (script
+                                                     on), else HQ's own with script off. A build the call asked for
+                                                     saves only with --picture. The same name again makes its next
+                                                     version, --about says what that version changes. No pull request
+                                                     and no review: commit nothing for it`,
 
   async run(args: string[]) {
-    const { call, about, given } = argumentsOf(args);
+    const { call, about, picture, given } = argumentsOf(args);
     const [name, path] = given;
     const files = filesAt(path);
     const size = [...files.values()].reduce((sum, bytes) => sum + bytes.length, 0);
     if (size > FILES_MOST)
       stop(`Nothing saved: ${path} has ${(size / 2 ** 20).toFixed(1)} MB of files, and a prototype takes 8 MB at most`);
     const encoded = Object.fromEntries([...files].map(([file, bytes]) => [file, bytes.toString('base64')]));
-    const body = api.withSpeaker({ call: Number(call), name, ...(about !== undefined && { about }), files: encoded });
+    const looked = picture === undefined ? undefined : pictureAt(picture);
+    const body = api.withSpeaker({
+      call: Number(call),
+      name,
+      ...(about !== undefined && { about }),
+      files: encoded,
+      ...(looked && { picture: looked }),
+    });
     const answer = await api.change('prototype', { body });
     if (!api.isSuccess(answer.status)) stop(`Nothing saved: ${api.errorIn(answer.body, 'HQ refused it')}`);
     const saved = JSON.parse(answer.body);
@@ -35,18 +44,26 @@ export const prototype = {
   },
 };
 
-// --call and --about, anywhere, and the name and the path in order
+// --call, --about and --picture, anywhere, and the name and the path in order
 function argumentsOf(args: string[]) {
   const flags = new Map<string, string>();
   const given: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] !== '--call' && args[i] !== '--about') given.push(args[i]);
+    if (!['--call', '--about', '--picture'].includes(args[i])) given.push(args[i]);
     else if (args[i + 1] === undefined) stop(USAGE);
     else flags.set(args[i], args[++i]);
   }
   const call = flags.get('--call') ?? '';
   if (!/^[0-9]+$/.test(call) || given.length !== 2 || !given[0].trim()) stop(USAGE);
-  return { call, about: flags.get('--about'), given };
+  return { call, about: flags.get('--about'), picture: flags.get('--picture'), given };
+}
+
+// The screenshot it was looked at in, as base64
+function pictureAt(path: string) {
+  const found = statSync(path, { throwIfNoEntry: false });
+  if (!found?.isFile()) stop(`Nothing saved: there's no picture ${path}`);
+  if (found.size > 8 << 20) stop(`Nothing saved: ${path} is over 8 MB: a screenshot at 1180 × 820 is far less`);
+  return readFileSync(path).toString('base64');
 }
 
 // The prototype's files by their path in it: one file is its index.html

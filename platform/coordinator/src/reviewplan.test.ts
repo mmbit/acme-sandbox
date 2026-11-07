@@ -436,3 +436,116 @@ test('expedited work merges on its checks: no round before it goes live unless i
   await h.finish(running);
   cancelOpenWork();
 });
+
+test('remaining branch work gets a fresh measured round after an earlier push', async () => {
+  await h.capacity({ claude: 1, codex: 1 });
+  const cancelOpenWork = scenarioCleanup(h.db);
+  const threadpush = await import('./threadpush.ts');
+  const { threadOutlooks } = await import('./forecast.ts');
+  const now = Date.now();
+  for (const [stage, minutes] of [
+    ['triage', 2],
+    ['ruling', 3],
+  ] as const)
+    h.pastJob({
+      agent: 'quill',
+      engine: 'claude',
+      kind: 'consolidate',
+      stage,
+      run: { started: now - 10 * MINUTE, ended: now - (10 - minutes) * MINUTE },
+    });
+  for (const [index, decision, running, round] of [
+    [0, 'changes', false, 6],
+    [1, 'changes', true, 6],
+    [2, 'merge', false, 6],
+    [3, 'merge', true, 6],
+    [4, null, false, 0],
+    [5, null, true, 0],
+  ] as const) {
+    const thread = h.dueThread();
+    const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
+    const pr = 1400 + index;
+    const sha = 'f'.repeat(40);
+    h.storedPr(pr, author, 'open', [round ? 'game.ts' : 'knowledge/notes/example.md'], { round, sha, since: author });
+    threadpush.pushed(jobs.findJob(author)!, { status: 'done', branch: `job/${author}`, sha, pr });
+    if (decision)
+      h.ended(
+        { agent: 'quill', kind: 'consolidate', pr, branch: `job/${author}`, sha, round, stage: 'ruling' },
+        'done',
+        decision,
+      );
+    const continuation = h.queue({ agent: 'bolt', engine: 'claude', thread });
+    const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
+    if (running) await h.claimJob(continuation);
+    const { input, sizes } = forecast(pr, [author, continuation, after]);
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(input, sizes, { pace });
+      const finish = seen.get(continuation)!;
+      assert.notEqual(finish.merged, null, 'the branch has a predicted merge');
+      assert.equal(finish.merged, finish.done! + 5 * MINUTE, 'measured triage and ruling follow the actual work once');
+      assert.equal(seen.get(author)!.merged, finish.merged, 'earlier tasks share the branch merge');
+      assert.equal(seen.get(after)!.start, finish.merged, 'dependent work has a start time');
+    }
+    const outlook = threadOutlooks(input, play(input, sizes), play(input, sizes, { pace: 'slow' }), sizes).get(thread)!;
+    assert.notEqual(outlook.eta, null, 'the deliverable has a finish time');
+    assert.notEqual(outlook.safe, null, 'the deliverable has a time to tell the board');
+    assert.equal(await h.claim('codex'), null, 'a prediction never releases the live merge gate');
+    if (running) h.failedJobs(continuation);
+    cancelOpenWork();
+  }
+});
+
+test('branch work waits for the current round still outstanding, and a board-held pull request holds it', async () => {
+  await h.capacity({ claude: 1, codex: 1 });
+  const cancelOpenWork = scenarioCleanup(h.db);
+  const threadpush = await import('./threadpush.ts');
+  const now = Date.now();
+  for (const [stage, minutes] of [
+    ['triage', 2],
+    ['ruling', 3],
+  ] as const)
+    h.pastJob({
+      agent: 'quill',
+      engine: 'claude',
+      kind: 'consolidate',
+      stage,
+      run: { started: now - 10 * MINUTE, ended: now - (10 - minutes) * MINUTE },
+    });
+  for (const [index, status] of [
+    [0, 'open'],
+    [1, 'board'],
+  ] as const) {
+    const thread = h.dueThread();
+    const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
+    const pr = 1410 + index;
+    const branch = `job/${author}`,
+      sha = 'e'.repeat(40);
+    h.storedPr(pr, author, status, ['game.ts'], { round: 6, sha, since: author });
+    threadpush.pushed(jobs.findJob(author)!, { status: 'done', branch, sha, pr });
+    // the round-6 ruling on another engine than the work, still outstanding, or already gone to the board
+    const ruling =
+      status === 'open'
+        ? h.queue({ agent: 'quill', engine: 'codex', kind: 'consolidate', pr, branch, sha, round: 6, stage: 'ruling' })
+        : h.ended({ agent: 'quill', kind: 'consolidate', pr, branch, sha, round: 6, stage: 'ruling' }, 'done', 'merge');
+    const continuation = h.queue({ agent: 'bolt', engine: 'claude', thread });
+    const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
+    const { input, sizes } = forecast(pr, [author, continuation, after]);
+    sizes.set(ruling, { agent_ms: 60 * MINUTE });
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(input, sizes, { pace });
+      const finish = seen.get(continuation)!;
+      if (status === 'board') {
+        assert.equal(finish.merged, null, 'the board hold shows no merge');
+        assert.equal(seen.get(author)!.merged, null);
+        assert.equal(seen.get(after)!.start, null);
+        continue;
+      }
+      assert.equal(finish.done, input.now + MINUTE);
+      assert.equal(finish.merged, input.now + 65 * MINUTE, 'the next round follows the current ruling, not the work');
+      assert.equal(seen.get(author)!.merged, finish.merged, 'earlier tasks share the branch merge');
+      assert.equal(seen.get(after)!.start, finish.merged, 'dependent work starts at the merge');
+    }
+    if (status === 'open') h.failedJobs(ruling);
+    cancelOpenWork();
+  }
+});

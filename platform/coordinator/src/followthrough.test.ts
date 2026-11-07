@@ -343,26 +343,26 @@ test('paced seats give an unstarted check time to start, as seats at their limit
   assert.match(alarm(), /hasn't started 15 min after it was queued/);
 });
 
-test('a seat near its stop level with its one run taken gives an unstarted check time to start, till that run ends', () => {
+test('a seat near its stop level with its one run taken gives an unstarted check time to start, till that run ends', async () => {
   reset();
-  agreed();
   h.jobs.setSeat('claude-1', 'claude', 'draining', t0 + 3 * 24 * HOUR);
   h.jobs.setSeat('claude-2', 'claude', 'ready', 0, undefined, {
-    util: 0.93,
+    util: 0.85,
     resets: t0 + 3 * HOUR,
     week: 0.4,
     weekResets: t0 + 5 * 24 * HOUR,
   });
   h.jobs.setSeat('claude-3', 'claude', 'paused');
   h.jobs.setSeat('codex-1', 'codex', 'ready', 0);
-  const long = h.jobs.createJob({ agent: 'bolt', title: 'Long work', prompt: 'Work on.' }).id;
-  db.prepare("update jobs set status = 'running', seat = 'claude-2' where id = ?").run(long);
+  const long = await h.start({ agent: 'bolt', engine: 'claude' }, { seat: 'claude-2' });
+  agreed();
   followThroughSweep(t0);
-  followThroughSweep(t0 + HOUR); // its window at 93%: the worker gives claude-2 one run at a time (pace.ts seatRunLimit)
+  // its window at 85%, under its stop at 90%: the worker gives claude-2 one run at a time (pace.ts seatRunLimit)
+  followThroughSweep(t0 + HOUR);
   assert.equal(alarm(), null);
   assert.deepEqual(told(), []);
   assert.equal(checks().length, 1);
-  db.prepare("update jobs set status = 'done', finished = ? where id = ?").run(new Date(t0 + HOUR).toISOString(), long);
+  await h.finish(long);
   followThroughSweep(t0 + HOUR + START_MS);
   assert.match(alarm(), /hasn't started 15 min after it was queued/);
 });

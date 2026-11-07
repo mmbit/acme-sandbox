@@ -8,7 +8,11 @@ import { scenarioCleanup } from './reviewfixture.ts';
 const h = await harness('panel', {
   before: repo => {
     const file = `${repo}/company/org.yaml`;
-    writeFileSync(file, readFileSync(file, 'utf8').replace('consolidator: quill', 'consolidator: [quill, nib]'));
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace('consolidator: quill', 'consolidator: [quill, nib]') +
+        '\nreview:\n  consolidatorEngine: codex\n',
+    );
   },
 });
 const panel = await import('./panel.ts');
@@ -76,13 +80,15 @@ test('a deadline round waits for the fallback while explicit urgency lets the pa
     assert.equal(panel.consolidator(186, 'merge'), 'nib', 'the deadline stays within seat pacing');
     const marked = urgency.setUrgent('task', branch.slice('job/'.length), true, 'juno');
     assert.equal(typeof marked, 'object');
-    assert.equal(panel.consolidator(186, 'merge'), 'quill', 'urgent work bypasses pacing');
+    assert.equal(panel.consolidator(186, 'merge'), 'nib', 'Codex still wins an equally soon urgent start');
+    await h.worker('seat', { seat: 'codex-1', engine: 'codex', state: 'paused' });
+    assert.equal(panel.consolidator(186, 'merge'), 'quill', 'urgent work can use the paced fallback');
   } finally {
     await seats();
   }
 });
 
-test('equal starts follow weekly room against resets and reverse when the engines change places', async () => {
+test('Codex takes immediately available rounds regardless of weekly allowance left', async () => {
   await seats();
   await h.board('/api/seats/pacing', { on: false });
   const now = Date.now();
@@ -107,10 +113,6 @@ test('equal starts follow weekly room against resets and reverse when the engine
       pace: false,
     });
     for (const stage of ['triage', 'ruling', 'merge']) assert.equal(panel.consolidator(187, stage), 'nib');
-    const triage = await import('./reviewtriage.ts');
-    const brief = triage.brief(187, '', [], [], null);
-    assert.ok(brief.includes(`"week_resets":${now + 5 * day}`), 'the judgment receives the actual reset');
-    // The same allowance with an earlier reset is room to spend, not a reason to preserve it longer.
     await h.worker('seat', {
       seat: 'codex-1',
       engine: 'codex',
@@ -119,7 +121,7 @@ test('equal starts follow weekly room against resets and reverse when the engine
       weekResets: now + 5 * day,
       pace: false,
     });
-    assert.equal(panel.consolidator(187), 'quill');
+    assert.equal(panel.consolidator(187), 'nib');
     await h.worker('seat', {
       seat: 'codex-1',
       engine: 'codex',
@@ -137,7 +139,7 @@ test('equal starts follow weekly room against resets and reverse when the engine
   }
 });
 
-test('paused seats do not change which engine has weekly room at an equal start', async () => {
+test('paused seats cannot displace a Codex seat that can start now', async () => {
   await seats();
   const reset = Date.now() + 7 * 24 * 60 * minute;
   round(189, 200);
@@ -173,5 +175,20 @@ test('a concurrent seat starts a ruling beside work while a single-run seat wait
     assert.equal(panel.consolidator(188, 'ruling'), 'nib');
   } finally {
     h.failedJobs(...running);
+  }
+});
+
+test('a sole Codex author is excluded while another eligible Codex consolidator takes the round', async () => {
+  await seats();
+  const file = `${h.repo}/company/org.yaml`,
+    before = readFileSync(file, 'utf8');
+  writeFileSync(file, before.replace('consolidator: [quill, nib]', 'consolidator: [quill, nib, flint]'));
+  try {
+    const work = h.ended({ agent: 'nib' });
+    h.storedPr(190, work, 'open', ['platform/coordinator/src/jobs.ts'], { round: 1 });
+    assert.ok(!panel.consolidators(190).includes('nib'));
+    for (const stage of ['triage', 'ruling']) assert.equal(panel.consolidator(190, stage), 'flint');
+  } finally {
+    writeFileSync(file, before);
   }
 });

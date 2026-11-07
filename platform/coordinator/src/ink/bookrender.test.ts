@@ -347,6 +347,39 @@ test("a later unit's highlighter lies under an earlier unit's pen line, as the b
   assert.ok(at(drawn, 300, 200)[0] < 30, `the line clean on top: ${at(drawn, 300, 200)}`);
 });
 
+test('a line sent behind a picture lies under it, a picture sent behind a line under the line, as HQ stacks them', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'layers-'));
+  await sharp({ create: { width: 200, height: 200, channels: 3, background: '#1d9a5b' } })
+    .png()
+    .toFile(join(dir, 'g.png'));
+  const line = Array.from({ length: 11 }, (_, i) => [40 + 20 * i, 150, 0.5, i * 10]),
+    picture = { file: 'g.png', x: 100, y: 100, w: 100, h: 100, tilt: 0 },
+    pen = { color: '#000000', size: 6, points: line };
+  // (a place in the stack only where one is given, as the store keeps it)
+  const placed = (layer?: number) => (layer === undefined ? {} : { layer });
+  const inkAt = async (layers: { pen?: number; picture?: number }) =>
+    at(
+      await pixels(
+        await render(
+          {
+            w: 400,
+            h: 300,
+            ink: [{ ...pen, ...placed(layers.pen) }],
+            scraps: [{ ...picture, ...placed(layers.picture) }],
+          },
+          dir,
+        ),
+      ),
+      300,
+      300,
+    );
+  // (twice the page's px: the line across the picture's middle)
+  assert.ok((await inkAt({}))[0] < 30, 'never moved: the line over the picture');
+  const behind = await inkAt({ pen: 0, picture: 1 });
+  assert.ok(behind[1] > 120 && behind[0] < 60, `sent behind: the picture over the line (${behind})`);
+  assert.ok((await inkAt({ pen: 1, picture: 0 }))[0] < 30, 'brought forward: the line over the picture');
+});
+
 test("a notebook page's units lie on their post-its on the dotted paper, a scrap's words written on its card", async () => {
   const drawn = await pixels(
     await render(

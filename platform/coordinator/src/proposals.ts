@@ -112,7 +112,7 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
       // held, though its item is accepted already (messages.ts take offers it, decided before it was sent): unread when
       // the session ends, it lapses rather than becoming a job.
       if (running) {
-        const sent = messages.send(by, owner, line, running.id, item.proposal);
+        const sent = messages.send(by, owner, line, { only: running.id, held: item.proposal });
         if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
       }
       publish({
@@ -344,7 +344,7 @@ export function drop(given: number | string, by: { agent: string; job: number },
   });
   // (a Codex job takes no message mid-run: it would become a job of its own)
   const running = !!p.job && messages.inSession(p.job);
-  if (running) messages.send(by, p.agent, `Your proposal #${id} ("${p.title}") was dropped: ${said}`, p.job!);
+  if (running) messages.send(by, p.agent, `Your proposal #${id} ("${p.title}") was dropped: ${said}`, { only: p.job! });
   return { ok: true as const, told: running };
 }
 
@@ -386,7 +386,7 @@ export function tell(
   const item = typeof label === 'number' ? `Proposal #${label}` : `Review ${label}`;
   const line = `${item} from ${p.agent}${p.project ? ` for ${p.project}` : ''}: "${p.title}". Accept it into your plan or drop it (hq inbox ${label}).`;
   if (by) {
-    const sent = messages.send(by, owner, line, session.id, p.id);
+    const sent = messages.send(by, owner, line, { only: session.id, held: p.id });
     if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
   } else messages.notice(owner, line, session.id, p.id);
 }

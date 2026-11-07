@@ -7,6 +7,7 @@ const h = await harness('carrykinds');
 const predictions = await import('./predictions.ts');
 const MINUTE = 60_000;
 const T = Date.now();
+const scopeOf = (code: boolean) => ({ typecheck: code, tests: code ? ['infra', 'platform/coordinator'] : [] });
 const sha = (n: number) => n.toString(16).padStart(40, '0');
 const reader = await h.start({ agent: 'bolt', title: 'Read carry estimates', kind: 'chat' });
 const kindOf = (n: number) =>
@@ -24,18 +25,18 @@ for (let n = 0; n < 2 * pairs; n++) {
     title: `The gates and tests on ${n}, a commit main took outside review`,
     queued_by: null,
     carry: sha(100 + n),
+    carryScope: scopeOf(code),
     created: at,
     run: { started: at, ended: at + minutes * MINUTE },
     sized: 5 * MINUTE,
   });
-  h.db.prepare('insert into carry_commits (sha, code) values (?, ?)').run(sha(100 + n), code ? 1 : 0);
 }
 
 test("the worker's word on each commit is kept before its check is queued, and for one checked before", async () => {
   const commit = (n: number, code?: boolean, ...parents: number[]) => ({
     sha: sha(n),
     parents: parents.map(sha),
-    ...(code === undefined ? {} : { code }),
+    ...(code === undefined ? {} : { code, scope: scopeOf(code) }),
   });
   const checksOf = (n: number) =>
     (h.db.prepare('select id from jobs where carry = ?').all(sha(n)) as { id: number }[]).map(j => j.id);
@@ -48,6 +49,13 @@ test("the worker's word on each commit is kept before its check is queued, and f
   assert.deepEqual(checksOf(1), [old]);
   assert.equal(predictions.stored(checksOf(4)[0])!.size.agent_ms, 20 * MINUTE);
   assert.equal(predictions.stored(checksOf(3)[0])!.size.agent_ms, 0.4 * MINUTE);
+  assert.deepEqual(predictions.stored(checksOf(4)[0])!.basis.scope, scopeOf(true));
+  assert.deepEqual(predictions.stored(checksOf(3)[0])!.basis.scope, scopeOf(false));
+  assert.equal(
+    (await h.worker('main-moved', { commits: [{ ...commit(6, true, 5), scope: { typecheck: true, tests: [12] } }] }))
+      .status,
+    400,
+  );
   assert.equal((await h.worker('main-moved', { commits: [{ ...commit(6, true, 5), code: 'yes' }] })).status, 400);
 });
 
@@ -74,5 +82,8 @@ test('hq estimate --accuracy replays the carry checks on their own kind beside e
   assert.equal(c.now.median_factor, 1);
   const cli = await h.hq(reader, 'estimate', '--accuracy', '--days', '1');
   assert.equal(cli.code, 0, cli.out);
-  assert.match(cli.out, /mechanical carry checks, worker occupancy: 12 jobs\n {4}on the latest of their own kind/);
+  assert.match(
+    cli.out,
+    /mechanical carry checks, worker occupancy: 12 jobs\n {4}recorded required-check scope: 12\/12\n {4}on their required checks/,
+  );
 });

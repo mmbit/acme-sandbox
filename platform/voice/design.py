@@ -14,10 +14,11 @@ Saying nothing: the line hands the agent everything it hears, and a model asked
 something writes something back (a stage direction like "(listening)", read aloud). Its say_nothing tool passes the
 turn: nothing more of the reply is said, and its tool steps after it play no tick, which is for someone waiting on an
 answer (Call.answer).
-A prototype built in the background: the prototype tool with a brief instead of a page. A builder of its own (the CLI
-once, at BUILD_EFFORT, no tools) takes the minutes a good one needs while the call goes on, the page lands on their
-screens as the agent's would, and the agent's hand goes up for it (Call.build, built)."""
-import os, re
+A prototype built from a brief: the prototype tool with a brief instead of a page. A colleague builds it as a job (the
+coordinator's callbuilds.ts), followed and steered from the call as any job it queued, its placeholder on the call's
+page at once; it lands on their screens as the agent's would, and the agent's hand goes up for it (Call.built,
+Design.built)."""
+import re
 from callnotes import PROTOTYPE_ABOUT, PROTOTYPE_NAME
 
 # How long the room stays quiet (past the second idle() waits for the last words) before a raised hand's moment: a
@@ -73,13 +74,17 @@ DESIGN_WORDS = (
     "place of the old ones, never a second list beside them. The page is about this session's subject: a "
     "fault in our own tools goes on the call's list alone (write_down with page false), not on the page.\n"
     "- Bring your own ideas, and what's been overlooked. Have prototypes built while they talk (prototype with a "
-    "brief): a builder takes the few minutes a good one needs in the background, it lands on their screens, and your "
-    "hand goes up for it (or, if it fails, to say why). They'd rather wait a few minutes for one that's really good "
-    "than have a thin one at once: brief it to be worth playing with, and brief one idea at its heart (a screen or a "
-    "flow to feel), never a whole product: a brief for everything at once runs past the quarter of an hour a build may "
-    "take and lands nothing. Several at once, or a whole product, go to colleagues (job, now: true). When you start "
+    "brief): a colleague builds it as a job, its placeholder is on the page at once with their face, and it lands on "
+    "their screens, your hand going up for it (or, if it fails, to say why). Make what they ask for, at the size they "
+    "picture it: an infographic or a poster is one still picture, made in about a minute, that they then work on "
+    "round by round; a screen to feel is that one screen. Never a bigger thing than asked (an animation for an "
+    "infographic): what they want more of, they ask for next round. Brief one idea at its heart, never a whole "
+    "product, and choose who builds it and how (by, lighter, effort) by what it is: a still picture or a small change "
+    "goes quick and light. Several at once, or a whole product, go to colleagues (job, now: true). When you start "
     "one, say so in a sentence, and say it's there when your hand's moment comes. They know how the hand works: never "
-    "tell them it will go up, or that you'll say when it's there.\n"
+    "tell them it will go up, or that you'll say when it's there. While it's built you can see how it goes "
+    "(activity, with its job), and what they say about it then goes straight to its builder: prototype again under "
+    "its name with the change, so they never wait for a version they've already seen a flaw in.\n"
     # (one version per round of feedback, not per remark.)
     "- Feedback on a prototype comes a sentence at a time while they play with it. Gather it: a new version for every "
     "remark, minutes apart, is chaos to follow. Their round on it is done when they've had their say: they move on to "
@@ -87,8 +92,8 @@ DESIGN_WORDS = (
     "of it (its name again, one brief with every change, and about: the change in a line), and you say in a sentence "
     "that you're making it and what goes in (\"I'll put all that into a v3 of Reis A: bigger photos, the cover "
     "first\"). When its hand comes up, say what changed. One remark they want to see straight away (\"make it blue, "
-    "let's see it\") is a round of its own. What they say about one while its next version is being built is the "
-    "round after it.\n"
+    "let's see it\") is a round of its own. What they say about one while its next version is being built goes into "
+    "that version, if it's still being built.\n"
     "- When you have something worth adding and they're talking, never talk over them: raise your hand (raise_hand, "
     "with what it's about) and say nothing more in that reply. The line gives you your moment at a natural pause, or "
     "when they tap your hand. If it no longer fits by then, say nothing: your hand comes down. If someone talks to you, "
@@ -136,50 +141,17 @@ HAND_TOOL_WORDS = {
     'gone': 'The call has ended.',
 }
 
-# A prototype built in the background (Call.build): the builder's effort, how long one may take before the line gives
-# up on it, and the most of a brief.
-# (medium: a builder's minutes go to the page, not to thinking before it; at high, a big brief ran past BUILD_SECONDS.
-BUILD_EFFORT = os.environ.get('VOICE_BUILD_EFFORT', 'medium')
-BUILD_SECONDS = 15 * 60
+# A prototype built from a brief (the coordinator's callbuilds.ts): the most of a brief, and how the agent asks for one.
 BRIEF_MOST = 4000
-# The builder's own briefing: the call agent hands it only the brief (and the version before, for a next one).
-BUILD_WORDS = (
-    "You build one prototype for a design session in progress: the people in it are talking on while you work, and "
-    "the moment it's done it lands on their screens to play with. They'd rather wait a few minutes for one that's "
-    "three times as good than get a thin one in seconds, but they're waiting minutes, not a quarter of an hour: the "
-    "line stops a build after that, and nothing lands. A page of about 30 KB is with them in minutes; one of 60 KB "
-    "runs past the quarter hour. So go deep, not wide: the heart of the idea, the moment that makes people show each "
-    "other, done really well, with simple stand-ins for the rest of a big brief (a few drawn photos, a book's first "
-    "pages).\n"
-    "What good is here:\n"
-    "- Everything you can tap does something you see, with motion that has weight (easing, overshoot, squash and "
-    "stretch), never just a line of text. A pet you feed gets a bowl that empties as it eats, crumbs and a happy face; "
-    "stroked, it closes its eyes, purrs and its tail swishes; put to sleep, the room dims and it curls up with Z's "
-    "floating up.\n"
-    "- It lives between taps: state that changes over time and shows on it (a mood, a meter, a season), small idle "
-    "motion (blinking, a glance, a drift), a surprise now and then.\n"
-    "- Drawn with care in inline SVG or canvas: a style of its own, a small palette, shapes with character. Not a "
-    "form with default buttons.\n"
-    "- Sound where it adds (Web Audio, synthesised in code, quiet, started by the first tap).\n"
-    "- Its words few, in the language the brief gives.\n"
-    "The page: one whole HTML page with everything inline (CSS, script, SVG, data URLs). Nothing outside it loads: no "
-    "fonts, scripts or pictures from the web. It fits a tablet or phone in either orientation, or a laptop, with "
-    "big touch targets and no hover-only parts. Never anyone's real details. It's a throwaway: no build step, no "
-    "backend, nothing saved past a reload unless the idea needs localStorage.\n"
-    "Answer with the page alone, from <!doctype html> to </html>, then one line after it: what to try first, in the "
-    "brief's language, a dozen words or so."
-)
+EFFORTS = ('low', 'medium', 'high')
 BUILD_TOOL_WORDS = {  # (said in the call's language, nothing of the hand)
-    'started': ("The builder has it and takes the few minutes a good one needs, in the background: it lands on their "
-                "screens as a card, and your hand goes up for it then. If you haven't yet, say in a sentence, in the "
-                "call's language, that it's being made (a next version: what goes in it), and nothing of the hand."),
+    'started': ("If you haven't yet, say in a sentence, in the call's language, that it's being made (a next "
+                "version: what goes in it), and nothing of the hand."),
     'shape': (f'prototype with a brief takes name (at most {PROTOTYPE_NAME} characters: the same name again builds '
-              f'its next version from the last one), brief (what to build and how it should feel, at most '
-              f'{BRIEF_MOST} characters) and about (what a next version changes, one line of at most {PROTOTYPE_ABOUT} '
-              f'characters).'),
-    # (a next version builds on the last one, so a second one under way beside it would lose the first one's changes.
-    'building': ('{name} is still being built, from your last brief for it: what they say about it now is the round '
-                 'after that version lands, built on it.'),
+              f'its next version from the last one, or, while it is still being built, goes to its builder), brief '
+              f'(what to build and how it should feel, at most {BRIEF_MOST} characters), about (what a next version '
+              f'changes, one line of at most {PROTOTYPE_ABOUT} characters), and if you like by (who builds it: a '
+              f"colleague's id), lighter (true: on their lighter model) and effort ({', '.join(EFFORTS)})."),
 }
 # What the agent hears of a build that didn't land (its hand's moment: HAND_WORDS failed), and of one that did, when it
 # hears with its next message instead (Design.hear_built).
@@ -189,59 +161,21 @@ BUILT = '({about} Its card is on their screens.)'
 LANGUAGES = {'en': 'English', 'nl': 'Dutch', 'de': 'German'}
 
 
-def build_ask(name, brief, lang, earlier=None):
-    """The builder's message: the brief, the language of the page's words, and the version before (earlier: its page,
-    when the call saved one under this name: the next version builds on it)."""
-    before = f'\n\nThe version before, to build on (keep what works, make it better):\n{earlier}' if earlier else ''
-    return f'Prototype: {name}\nIts words in {LANGUAGES.get(lang, lang)}.\n\n{brief}{before}'
-
-
-def prototype_key(name):
-    """A prototype's name as the store compares it: its name column is SQLite's nocase, which folds ASCII letters only
-    (callprototypes.ts: 'reis a' is v2 of 'Reis A', 'één' a prototype of its own beside 'Één')."""
-    return name.encode().lower().decode()
-
-
-class Progress:
-    """How far a builder got (Call.builder), from its CLI's stream: when its thinking ended, how much of its answer it
-    has written. Read when it's given up on, so the reason says where the minutes went."""
-
-    def __init__(self, start):
-        self.start, self.answered, self.thought, self.written = start, None, None, 0
-
-    def seen(self, event, at):
-        """One line of the CLI's stream-json (a dict), at the line's clock."""
-        e = event.get('event') if event.get('type') == 'stream_event' else None
-        if not isinstance(e, dict):
-            return
-        if e.get('type') == 'message_start' and self.answered is None:
-            self.answered = at
-        block = e.get('content_block') or {}
-        if e.get('type') == 'content_block_start' and block.get('type') == 'text' and self.thought is None:
-            self.thought = at
-        delta = e.get('delta') or {}
-        if e.get('type') == 'content_block_delta' and isinstance(delta.get('text'), str):
-            self.written += len(delta['text'].encode())
-
-    def said(self, now):
-        """Where it was at now, in a few words."""
-        minutes = lambda s: f'{s / 60:.0f} minute{"" if round(s / 60) == 1 else "s"}' if s >= 90 else f'{s:.0f} s'
-        if self.answered is None:
-            return f'the model never started answering in {minutes(now - self.start)}'
-        if self.thought is None:
-            return f'it was still thinking after {minutes(now - self.start)}, no page begun'
-        return (f'it thought for {minutes(self.thought - self.start)}, then wrote {self.written >> 10} KB of its page in '
-                f'{minutes(now - self.thought)}')
-
-
-def built_page(result):
-    """(page, line) from the builder's answer: the page from <!doctype html> to </html>, and its line after it. None
-    when there's no whole page in it."""
-    page = re.search(r'<!doctype html.*</html>', result, re.I | re.S)
-    if not page:
+def build_asked(given):
+    """A brief to build, as the coordinator takes it (callbuilds.ts build), or None when it isn't one."""
+    name, brief, about = (given.get(k, '') for k in ('name', 'brief', 'about'))
+    if set(given) - {'name', 'brief', 'about', 'by', 'lighter', 'effort'} or not all(
+            isinstance(v, str) for v in (name, brief, about)):
         return None
-    line = ' '.join(result[page.end():].split())
-    return page.group(0), line[:200]
+    name, brief, about = ' '.join(name.split()), brief.strip(), ' '.join(about.split())
+    if not 0 < len(name) <= PROTOTYPE_NAME or not 0 < len(brief) <= BRIEF_MOST or len(about) > PROTOTYPE_ABOUT:
+        return None
+    by, lighter, effort = given.get('by'), given.get('lighter'), given.get('effort')
+    if by is not None and not (isinstance(by, str) and re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', by)) or \
+            lighter is not None and not isinstance(lighter, bool) or effort is not None and effort not in EFFORTS:
+        return None
+    return {'name': name, 'brief': brief, **({'about': about} if about else {}), **({'by': by} if by else {}),
+            **({'lighter': True} if lighter else {}), **({'effort': effort} if effort else {})}
 
 
 class Design:

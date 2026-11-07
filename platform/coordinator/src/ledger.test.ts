@@ -126,6 +126,24 @@ test("Juno's call gets a work follow-up too; the reply it sets appears in the in
   assert.match(turn.note ?? '', new RegExp(`follow-up job #${f.id}[\\s\\S]*Busy but good[\\s\\S]*And tomorrow\\?`), 'the next turn hears the reply, then the board');
 });
 
+test("a call's notes give its length from its lines' times, not its words: long on-screen lines don't stretch it", async () => {
+  quietIntercom();
+  const screen = `(on screen: ${'the board scrolls through the projects view and the plan '.repeat(40).trim()})`;
+  const lines = ['Board: Shall we look at the plan?', ...Array.from({ length: 19 }, (_, i) => i % 2 ? 'Juno: Yes.' : screen), 'Board: Thanks, bye.'];
+  assert.ok(lines.join(' ').split(/\s+/).length / 150 > 20, 'its words alone would read as over 20 minutes');
+  const start = Date.now() - 11 * 60_000, times = lines.map((_, i) => start + Math.round(i * 10 * 60_000 / (lines.length - 1)));
+  const c = await aCall('juno', lines);
+  assert.equal((await voice('call-end', { agent: 'juno', lines, token: c.token, times })).status, 200);
+  const f = job(callRow(c.id).job);
+  const t = await claim(f.id);
+  const it = await agent('item', t, { kind: 'question', owner: 'juno', goal: 'g', what: 'A look at the plan', lines: '1', ...quote(lines[0]) });
+  assert.equal((await agent('item-link', t, { id: it.body.id, to: { ref: 'answered on the call' } })).body.status, 'handled');
+  await finish(f.id, { status: 'done', result: `Items: recorded #${it.body.id}.` });
+  const shown = (await history()).messages.slice(-2) as { who: string; text: string }[];
+  assert.equal(shown[0].text, 'Call with Juno · about 10 min');
+  quietIntercom();   // (its notes wait for the intercom's next turn: later tests' parked intercom stays parked)
+});
+
 test("another agent's call shows the reply its follow-up set in HQ's Calls", async () => {
   const c = await aCall('kit', TALK);
   await c.end();
@@ -407,7 +425,7 @@ test("linked evidence hears a customer call's goal only where its agent may read
   assert.equal(job(rivets).prompt, 'x');
   const { id: pennys } = jobs.createJob({ agent: 'penny', title: 'Care', prompt: 'x', queuedBy: 'penny' });
   assert.equal((await link(ct, r, pennys)).goalReached, 'brief');
-  // (the goal stays with the call: the brief names it, and the job reads it with hq items. company: job #17552)
+  // (the goal stays with the call: the brief names it, and the job reads it with hq items.)
   assert.ok(job(pennys).prompt.includes(`\`hq items ${cc.id}\` has it`) && !job(pennys).prompt.includes('Jan Jansen'));
   const pt = await claim(pennys);
   assert.equal(((await agent('items', pt)).body as any[]).find(i => i.id === r).goal, 'Make it right for Jan Jansen', 'it reads it at the source');

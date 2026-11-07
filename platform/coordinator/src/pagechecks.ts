@@ -6,6 +6,7 @@ import { LINE_ID, MAX_SCRAPS } from './pagescraps.ts';
 import { noKeys } from '../../../shared/review/anchor.js';
 import { TEXT_MAX } from '../../hq/shell/ink/notebookparts.js';
 import { LINE } from '../../hq/shell/ink/bookinkmath.js';
+import { layerOk } from '../../hq/shell/ink/booklayers.js';
 
 // The ink a page holds. The page draws all of it again at every undo, redo and
 // stroke the eraser takes, and the coordinator once more for its picture (bookrender.ts): ink.js
@@ -96,7 +97,7 @@ export function inkOf(v: unknown): Stroke[] | Refused {
     if (!stroke)
       return [
         400,
-        'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, cut?, points: [[x, y, pressure, t], ...], id? }',
+        'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, cut?, points: [[x, y, pressure, t], ...], id?, layer? }',
       ];
     points += stroke.points.length;
     if (points > MAX_POINTS) return [413, FULL, 'pageFull'];
@@ -156,6 +157,9 @@ function strokeOf(s: any) {
   // (its own id, which HQ keeps through a move or a resize, bookedit.js newId)
   if (s.id !== undefined && !(typeof s.id === 'string' && LINE_ID.test(s.id))) return null;
   const id = s.id === undefined ? {} : { id: s.id as string };
+  // (its place in its scrap's stack, HQ's booklayers.js.)
+  if (s.layer !== undefined && !layerOk(s.layer)) return null;
+  const layer = s.layer === undefined ? {} : { layer: s.layer as number };
   const alpha = s.alpha === undefined ? {} : { alpha: s.alpha };
   // (a filled shape: its line and its inside, ink.js.)
   const fill = s.fill ? { fill: true as const } : {};
@@ -167,6 +171,7 @@ function strokeOf(s: any) {
     ...cut,
     points: s.points as number[][],
     ...id,
+    ...layer,
   };
 }
 // A data URL's picture, read by its bytes and stripped as an upload is (pictures.ts), or the refusal

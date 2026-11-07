@@ -9,7 +9,8 @@ import {
   timingAudit,
   RUN_COLUMNS,
   RUN_JOIN,
-  CARRY_CODE,
+  CARRY_COLUMNS,
+  sizeOf,
   type PastJob,
   type Run,
   type Work,
@@ -112,7 +113,7 @@ function readAsk(ask: Ask): Asked | 400 {
 function jobOf(id: number) {
   const row = db
     .prepare(
-      `select j.id, j.title, j.agent, j.status, ${ORIGIN} origin, ${CARRY_CODE}, ${RUN_COLUMNS} from jobs j ${RUN_JOIN}
+      `select j.id, j.title, j.agent, j.status, ${ORIGIN} origin, ${CARRY_COLUMNS}, ${RUN_COLUMNS} from jobs j ${RUN_JOIN}
       where j.id = ?`,
     )
     .get(id) as (Work & { id: number; agent: string; status: string } & Run) | undefined;
@@ -170,6 +171,7 @@ function shown(
     title: j.title,
     engine: j.engine,
     origin: j.origin,
+    check_scope: j.carry ? { sha: j.carry, required: j.carry_scope ? JSON.parse(j.carry_scope) : null } : null,
     finished: j.finished,
     agent_minutes: fractionalMinutes(j.agent_ms),
     adjusted: adjustedShown(j),
@@ -201,9 +203,10 @@ const adjustedShown = ({ adjusted: a, customers, about_keys }: PastJob) =>
 const priced = (j: PastJob): j is PastJob & { spend: number } => j.spend !== null;
 const rate = (j: PastJob & { spend: number }) => j.spend / Math.max(j.agent_ms, 60_000);
 
-// The spread of the picks' agent time (each at its adjusted time where it has one), and their usual seat spend.
+// The spread of the picks' agent time (each at its adjusted time where it has one), and their usual seat spend: of picks
+// enough to size the work from (matching.ts sizeOf).
 function typical(jobs: PastJob[]) {
-  if (jobs.length < 3) return null;
+  if (!sizeOf(jobs)) return null;
   const sorted = jobs.map(j => countedMs(j) / 60_000).sort((a, b) => a - b);
   const at = (share: number) => {
     const minutes = sorted[Math.floor(share * (sorted.length - 1))];

@@ -1,9 +1,9 @@
 // The select tool's cut, copy, paste, duplicate and delete (bookselect.js), and its keys: Delete or Backspace, ⌘ or
-// Ctrl with X, C, V, D (a duplicate a little down and right) and A (all on the page shown; on a Notebook page's grid,
-// nothing), Escape to let go, and the
-// arrow keys to nudge (Shift: ten times as far). The bar beside the selection duplicates, moves to another page and
-// deletes with a Pencil or a finger; a tap on bare paper brings the Paste bubble for what a key copied
-// (bookselectpaste.js).
+// Ctrl with X, C, V, D (a duplicate a little down and right), A (all on the page shown; on a Notebook page's grid,
+// nothing), ] and [ (forward and back a step in the scrap's stack: bookselectlayer.js), Escape to let go, and the
+// arrow keys to nudge (Shift: ten times as far). The bar beside the selection duplicates, brings forward and sends
+// backward, moves to another page and deletes with a Pencil or a finger; a tap on bare paper brings the Paste bubble
+// for what a key copied (bookselectpaste.js).
 //
 // The clip is the book's own: what was copied, kept as it was. The system's clipboard gets a word that names it, so a
 // paste takes the clip only while that word is still there: a picture copied since is booktape.js's to paste, and
@@ -21,7 +21,8 @@ import { thingsPicture } from './bookpaperdraw.js';
 import { said, shut } from './booksave.js';
 import { word } from './bookscope.js';
 import { mapBox, moveBy, movedScrap, movedStroke, movedText, movedThings, pasteAt, union } from './bookselectmath.js';
-import { bounds, boxOfText, changed, choose, current, framed, letGo, redrawn } from './bookselect.js';
+import { bounds, boxOfText, changed, choose, current, framed, holdsFixed, letGo, redrawn } from './bookselect.js';
+import { restacked } from './bookselectlayer.js';
 import { swapIn } from './bookedit.js';
 import { newCut } from './bookstrokes.js';
 
@@ -119,6 +120,26 @@ function move(clip, from) {
   letGo(sel);
   return true;
 }
+// What's picked a step up (up) or down its scrap's stack (bookselectlayer.js), a step of its own.
+function restack(clip, up) {
+  const { sel } = clip;
+  if (!current(sel) || !stackable(sel)) return false;
+  const view = sel.view,
+    swap = restacked(view.page, sel, up);
+  // (on top of, or under, all it overlaps already: nothing to do)
+  if (!swap) return true;
+  const change = sel.hooks.begin(view);
+  swapIn(view.page, swap);
+  for (const k of ['ink', 'scraps']) sel[k] = sel[k].map(x => swap.get(x) ?? x);
+  redrawn(sel, view, bounds(sel));
+  framed(sel);
+  change.end();
+  sfx.tick();
+  return true;
+}
+// Whether what's picked has a place in a stack: a picture or a line of an opened scrap's own, never our scraps' (their
+// pictures lie on the page, not on its canvas: bookpage.js photos)
+const stackable = sel => !!sel.view?.page.focus && sel.ink.length + sel.scraps.length > 0 && !holdsFixed(sel);
 // What's picked copied a step down and right, picked in its place
 function duplicate(clip) {
   const { sel } = clip;
@@ -177,6 +198,8 @@ async function paste(clip, from = clip.held, tr = null, at = null) {
 const fresh = x => {
   const copy = { ...x };
   delete copy.g;
+  // (a copy lands on top, as anything new does: booklayers.js.)
+  delete copy.layer;
   return copy;
 };
 // Where a paste goes: its middle on the point asked, else where the pointer was last on the paper, else the paper's
@@ -238,6 +261,7 @@ function keys(clip) {
     if (mod && 'cxv'.includes(k) && k.length === 1) return later(clip, k);
     let done = false;
     if (mod && k === 'a') done = all(clip);
+    else if (mod && (k === ']' || k === '[')) done = restack(clip, k === ']');
     else if (mod && k === 'd') done = duplicate(clip);
     else if (mod) return;
     else if (e.key === 'Escape') done = escape(sel);
@@ -313,7 +337,8 @@ function following(clip) {
 // ---- the bar
 
 // The bar beside the selection, one line of icons named for screen readers and tipped with their keys: Duplicate,
-// Move to page… (on an open Notebook page: bookgroups.js) and Delete, for a Pencil or a finger (a mouse has them too).
+// Bring forward and Send backward (a picture or a line on an opened scrap), Move to page… (on an open Notebook page:
+// bookgroups.js) and Delete, for a Pencil or a finger (a mouse has them too).
 // Duplicate is the copy and paste, Move to page and a drag the cut. Its
 // touches are its own: never the paper's pan or ink, which would take their click.
 function barOf(clip) {
@@ -324,6 +349,8 @@ function barOf(clip) {
   for (const type of ['pointerdown', 'touchstart', 'touchmove']) bar.addEventListener(type, e => e.stopPropagation());
   const acts = [
     [icon('duplicate'), word('duplicate'), `${MOD}+D`, () => duplicate(clip)],
+    [icon('layer-up'), word('forward'), `${MOD}+]`, () => restack(clip, true)],
+    [icon('layer-down'), word('backward'), `${MOD}+[`, () => restack(clip, false)],
     [icon('move-to'), word('moveToPage'), '', b => move(clip, b)],
     [icon('bin'), word('delete'), 'Delete', () => remove(clip)],
   ];
@@ -339,12 +366,14 @@ function barOf(clip) {
         },
       }),
     );
-  clip.moving = bar.children[1];
+  [, clip.forward, clip.backward, clip.moving] = bar.children;
   return bar;
 }
-// Move to page… in the bar while what's picked can go to another page
+// Move to page… in the bar while what's picked can go to another page; forward and back while it has a place in a
+// stack
 function fit(clip) {
   clip.moving.hidden = !clip.sel.book.groups?.movable(clip.sel.view);
+  clip.forward.hidden = clip.backward.hidden = !stackable(clip.sel);
 }
 // (copied by a key with no event: the clip's word on the system's clipboard too, so ⌘V knows it; a clipboard
 // that refuses it, the page says so, as ⌘V may then find other words there.)

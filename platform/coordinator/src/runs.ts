@@ -7,6 +7,7 @@
 // lent machine and this server run a helper per kind, each in the kind's image, taking only that kind's runs. A kind can
 // keep its runs off this server, and departments' work in the queue, until a lent machine has finished a run of it
 // (holds). The board's HQ sees each machine live (listMachines, the 'machines' event).
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { publish } from './events.ts';
 import {
@@ -24,10 +25,11 @@ import {
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import type { RouteRequest, RouteTable } from '../../../shared/routes/routes.ts';
 import { companyTime, roles, yamlFile } from './company.ts';
 import { DATA_DIR, ORIGIN, REPO_DIR, RUNS_TOKEN } from './config.ts';
-import { db, remember, setting } from './db.ts';
+import { columnsOf, db, remember, setting } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as machines from './machines.ts';
 import { secret } from './secrets.ts';
@@ -63,6 +65,8 @@ type RunRow = {
   attempt: string | null;
   // how many times a helper took it
   takes: number | null;
+  // the commit of HQ's checkout its bundle stands on (thinBase), which the helper keeps, or none for a whole one
+  base: string | null;
   created: string;
   taken: string | null;
   beat: string | null;
@@ -75,8 +79,10 @@ type Kind = {
   name: string;
   about: string;
   image: string;
-  cpus: number;
-  memoryGb: number;
+  serverImage?: string;
+  // its helpers' caps, a number or a share of a lent machine's threads and memory, sized on each machine (capsOn)
+  cpus: Cap;
+  memoryGb: Cap;
   diskGb: number;
   gpus: boolean;
   // only lent machines take its runs (work on a graphics card the server hasn't): this server has no helper of it, and a
@@ -88,11 +94,14 @@ type Kind = {
   holdUntilLent: string[];
   // how many helpers of it each lent machine runs, each taking a run at once, each with the caps above
   helpers: number;
-  // its runs keep their sockets (a test's local servers): only on a machine set up with its install command, where the
-  // helpers' network reaches HQ and the package registries alone (manager.mjs), so it's for the lent machines only
+  // its runs keep their sockets (a test's local servers), on a closed helper network that reaches HQ and the package
+  // registries alone (manager.mjs, infra/run_helpers.py)
   sockets: boolean;
   checkout: boolean;
   browsers: boolean;
+  // its checkout runs carry the worker's infrastructure tools (age, versitygw, caddy, docker-compose, jq: shared/gates/
+  // bundle.ts), which only infra's tests use.
+  tools: boolean;
 };
 
 const DIR = `${DATA_DIR}/runs`;
@@ -105,6 +114,9 @@ const VOLUME = 'run-helper';
 const KIND_NAME = /^[a-z][a-z0-9-]{0,23}$/;
 // (pasted into PowerShell, cmd and sh alike: nothing any of them reads as more than a word)
 const IMAGE_NAME = /^[a-z0-9][a-z0-9._/:@-]{0,199}$/;
+// A kind's server build: a compose service of this server alone (infra/run_helpers.py builds from it). Compose reads any
+// other build context as a path or URL on the host.
+const SERVER_IMAGE = /^service:[a-z][a-z0-9-]{0,23}$/;
 // (a job's whole tree, as a push's tests send it: a company's is a few hundred MB)
 const BUNDLE_MAX_BYTES = 2 ** 30;
 const FILES_MAX_BYTES = 200 * 2 ** 20;
@@ -113,6 +125,9 @@ const OUTPUT_MAX_BYTES = 2 ** 20 + 64 * 1024;
 // a beat's readings and the run's new output (4 KB at most, escaped in JSON)
 const BEAT_MAX_BYTES = 64 * 1024;
 const COMMAND_MAX_CHARS = 4000;
+const COMMIT = /^[0-9a-f]{40}$/;
+// the commits a helper says it has, at most
+const HAVE_MAX = 20;
 const BRING_MAX = 100;
 // A job's runs waiting for a helper, those still coming in counted: each holds its bundle on HQ's volume until a helper
 // takes it
@@ -137,7 +152,8 @@ const SWEEP_MS = 60_000;
 db.exec(`create table if not exists helper_runs (id integer primary key, job integer not null, agent text not null,
   command text not null, cwd text not null, bring text not null, minutes integer not null, state text not null,
   helper text, passed integer, created text not null, taken text, beat text, ended text, exit_code integer,
-  timed_out integer, why text, kind text, attempt text, takes integer, machine integer, slot integer)`);
+  timed_out integer, why text, kind text, attempt text, takes integer, machine integer, slot integer, base text)`);
+if (!columnsOf('helper_runs').includes('base')) db.exec('alter table helper_runs add column base text');
 db.exec("create index if not exists helper_runs_open on helper_runs (state) where state in ('waiting', 'running')");
 db.exec('create unique index if not exists helper_runs_attempt on helper_runs (attempt)');
 mkdirSync(DIR, { recursive: true });
@@ -182,22 +198,31 @@ function kindProblem(name: string, entry: unknown) {
   if (!KIND_NAME.test(name)) return 'its name: a to z, 0 to 9 and -, starting with a letter, at most 24 characters';
   if (entry === null || entry === undefined) return '';
   if (!isMap(entry))
-    return 'its settings: a map (about, image, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers)';
+    return 'its settings: a map (about, image, serverImage, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers, tools)';
   if (entry.about !== undefined && typeof entry.about !== 'string') return 'about: a line of text';
   if (entry.image !== undefined && !(typeof entry.image === 'string' && IMAGE_NAME.test(entry.image)))
     return 'image: a plain Docker reference (a to z, 0 to 9 and . _ / : @ -)';
+  if (
+    entry.serverImage !== undefined &&
+    !(typeof entry.serverImage === 'string' && SERVER_IMAGE.test(entry.serverImage))
+  )
+    return "serverImage: one of this server's compose services, as service:<name> (service:worker)";
   if (entry.gpus !== undefined && typeof entry.gpus !== 'boolean') return 'gpus: true or false';
   if (entry.lentOnly !== undefined && typeof entry.lentOnly !== 'boolean') return 'lentOnly: true or false';
   if (entry.sockets !== undefined && typeof entry.sockets !== 'boolean') return 'sockets: true or false';
   if (entry.checkout !== undefined && typeof entry.checkout !== 'boolean') return 'checkout: true or false';
   if (entry.browsers !== undefined && typeof entry.browsers !== 'boolean') return 'browsers: true or false';
+  if (entry.tools !== undefined && typeof entry.tools !== 'boolean') return 'tools: true or false';
   if (entry.serverAfterLent !== undefined && typeof entry.serverAfterLent !== 'boolean')
     return 'serverAfterLent: true or false';
   if (entry.holdUntilLent !== undefined && !isDepartmentList(entry.holdUntilLent))
     return "holdUntilLent: a list of org.yaml's department ids";
-  for (const cap of ['cpus', 'memoryGb', 'diskGb', 'helpers'])
-    if (entry[cap] !== undefined && !(Number.isSafeInteger(entry[cap]) && (entry[cap] as number) > 0))
-      return `${cap}: a whole number above 0`;
+  const positive = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0;
+  for (const cap of ['cpus', 'memoryGb'])
+    if (entry[cap] !== undefined && !positive(entry[cap]) && !shareOf(entry[cap]))
+      return `${cap}: a whole number above 0, or a share of the machine from 1% to 100%`;
+  for (const cap of ['diskGb', 'helpers'])
+    if (entry[cap] !== undefined && !positive(entry[cap])) return `${cap}: a whole number above 0`;
   return '';
 }
 
@@ -205,18 +230,56 @@ const kindOf = (name: string, entry: Record<string, unknown> | null): Kind => ({
   name,
   about: (entry?.about as string | undefined) ?? '',
   image: (entry?.image as string | undefined) ?? DEFAULT_IMAGE,
-  cpus: whole(entry?.cpus, 4),
-  memoryGb: whole(entry?.memoryGb, 8),
+  serverImage: entry?.serverImage as string | undefined,
+  cpus: capOf(entry?.cpus, 4),
+  memoryGb: capOf(entry?.memoryGb, 8),
   diskGb: whole(entry?.diskGb, 16),
   gpus: entry?.gpus === true,
-  lentOnly: entry?.lentOnly === true || entry?.sockets === true,
+  lentOnly: entry?.lentOnly === undefined ? entry?.sockets === true : entry.lentOnly === true,
   serverAfterLent: entry?.serverAfterLent === true,
   holdUntilLent: (entry?.holdUntilLent as string[] | undefined) ?? [],
   helpers: whole(entry?.helpers, 1),
   sockets: entry?.sockets === true,
   checkout: entry?.checkout === true,
   browsers: entry?.browsers === true,
+  tools: entry?.tools === true,
 });
+
+// A cap: a number, or a share of the machine ({ share: 0.5 } for '50%')
+type Cap = number | { share: number };
+const capOf = (given: unknown, fallback: number): Cap => {
+  const share = shareOf(given);
+  return share ? { share } : whole(given, fallback);
+};
+
+// A share of the machine, '50%', as a fraction, or null for anything else
+const shareOf = (given: unknown) => {
+  const percent = typeof given === 'string' ? Number(/^(\d{1,3})%$/.exec(given)?.[1]) : NaN;
+  return percent >= 1 && percent <= 100 ? percent / 100 : null;
+};
+
+// A kind's caps on a lent machine of that size (machines.hostOf): its numbers, and its share of what the machine has,
+// rounded down, at least 1. Null for a share on a machine whose size HQ doesn't know (its manager hasn't said, or it
+// was started by hand), which then has no helper of the kind (UNSIZED). This server's own helpers have the server's
+// caps (infra), never these.
+function capsOn(kind: Kind, host: machines.HostSize | null) {
+  const sized = (cap: Cap, amount: (host: machines.HostSize) => number) =>
+    typeof cap === 'number' ? cap : host && Math.max(1, Math.floor(amount(host) * cap.share));
+  const [cpus, memoryGb] = [sized(kind.cpus, of => of.threads), sized(kind.memoryGb, of => of.memoryMb / 1024)];
+  return cpus && memoryGb ? { cpus, memoryGb } : null;
+}
+
+// Why a kind whose caps are a share of the machine has no helper on a machine whose size HQ doesn't know
+const UNSIZED =
+  "its manager hasn't said the machine's size, and the kind's caps are a share of it: paste the install command on the machine";
+
+// The kinds left out of a lent machine's setup there, each with why (UNSIZED)
+const unsizedOn = (machine: number) =>
+  Object.fromEntries(
+    runSettings()
+      .kinds.filter(kind => !capsOn(kind, machines.hostOf(machine)))
+      .map(kind => [kind.name, UNSIZED]),
+  );
 
 const isDepartmentList = (given: unknown) => {
   const departments = new Set(departmentsOf().map(department => department.id));
@@ -246,6 +309,7 @@ const attemptOf = (request: RouteRequest) => request.params.attempt;
 export const routeTable: RouteTable = {
   'POST /api/agent/runs': forJob(async (job, { req, res }) => answer(res, await createRun(job, specOf(req), req))),
   'GET /api/agent/runs/helper': forJob((job, { res }) => answer(res, helperState())),
+  'GET /api/agent/runs/base': forJob(async (job, { res }) => answer(res, await thinBase())),
   'GET /api/agent/runs/:id(\\d+)': forJob((job, request) => answer(request.res, showRun(job, runId(request)))),
   'POST /api/agent/runs/:id(\\d+)/withdraw': forJob((job, request) =>
     answer(request.res, withdrawRun(job, runId(request))),
@@ -274,6 +338,12 @@ export const routeTable: RouteTable = {
   'GET /api/helper/runs/:attempt(\\d+-\\d+)/bundle': forHelper((helper, request) =>
     sendFile(request.res, bundleFor(helper, attemptOf(request)), 'application/gzip'),
   ),
+  'GET /api/helper/runs/:attempt(\\d+-\\d+)/base': forHelper(async (helper, request) => {
+    const bundle = await baseFor(helper, attemptOf(request), request.url.searchParams.get('have') ?? '');
+    if (bundle instanceof Refusal) return answer(request.res, bundle);
+    await sendFile(request.res, bundle, 'application/octet-stream');
+    rmSync(bundle, { force: true });
+  }),
   'POST /api/helper/runs/:attempt(\\d+-\\d+)/beat': forHelper(async (helper, request) =>
     answer(request.res, beat(helper, attemptOf(request), await request.jsonBody(BEAT_MAX_BYTES))),
   ),
@@ -287,7 +357,8 @@ export const routeTable: RouteTable = {
 
 export function start() {
   // the uploads a restart cut off (none is under way yet).
-  for (const name of readdirSync(DIR)) if (name.startsWith('incoming-')) rmSync(`${DIR}/${name}`, { force: true });
+  for (const name of readdirSync(DIR))
+    if (name.startsWith('incoming-') || name.startsWith('base-')) rmSync(`${DIR}/${name}`, { force: true });
   publishKinds();
   publishHolds();
   setInterval(() => {
@@ -311,7 +382,12 @@ export function publishKinds() {
   const text = JSON.stringify(
     runSettings()
       .kinds.filter(kind => !kind.lentOnly)
-      .map(({ name, image }) => ({ name, image })),
+      .map(({ name, image, sockets, serverImage }) => ({
+        name,
+        image,
+        ...(sockets ? { sockets } : {}),
+        ...(serverImage ? { serverImage } : {}),
+      })),
   );
   if (existsSync(KINDS_FILE) && readFileSync(KINDS_FILE, 'utf8') === text) return;
   writeFileSync(`${KINDS_FILE}.new`, text); // (whole or not at all, for a deploy reading it meanwhile)
@@ -358,7 +434,7 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
     return new Refusal(413, `the bundle is over ${BUNDLE_MAX_BYTES / 2 ** 20} MB: name only the folders the run needs`);
   const { id } = db
     .prepare(
-      "insert into helper_runs (job, agent, command, kind, cwd, bring, minutes, state, created) values (?, ?, ?, ?, ?, ?, ?, 'waiting', ?) returning id",
+      "insert into helper_runs (job, agent, command, kind, cwd, bring, minutes, base, state, created) values (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?) returning id",
     )
     .get(
       job.id,
@@ -368,6 +444,7 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
       spec.cwd,
       JSON.stringify(spec.bring),
       spec.minutes,
+      spec.base ?? null,
       new Date().toISOString(),
     ) as {
     id: number;
@@ -431,6 +508,8 @@ function specProblem(spec: any) {
   const { maxMinutes } = runSettings();
   if (!Number.isSafeInteger(spec.minutes) || spec.minutes < 1 || spec.minutes > maxMinutes)
     return `minutes: a whole number from 1 to ${maxMinutes}`;
+  if (spec.base !== undefined && !(typeof spec.base === 'string' && COMMIT.test(spec.base)))
+    return "base: the commit of HQ's checkout the bundle stands on (GET /api/agent/runs/base)";
   return '';
 }
 
@@ -473,11 +552,10 @@ function showRun(job: Job, id: number) {
     why: settled.why,
     kind: settled.kind,
     on: settled.helper,
-    // the lent machine that has it or had it, by its name
-    machine: settled.helper === 'lent' ? (machines.findMachine(settled.machine)?.name ?? null) : null,
+    machine: settled.helper ? helperName(settled.helper, settled.machine) : null,
     passed: settled.passed === 1,
     bring: JSON.parse(settled.bring),
-    helper: kindHelper(settled.kind ?? ''),
+    helper: kindHelper(settled.kind ?? '', settled.passed === 1),
   };
 }
 
@@ -531,18 +609,20 @@ function sayMachines() {
 
 // The lent machines and each kind of run on them: whether that kind's helper is asking for work on any machine, the
 // size of the fastest there, the run it has, and the commands a person pastes on a machine (a changed helper.mjs needs
-// the new start commands). Then the kinds left out of the settings. With each kind, this server's helper of it.
+// the new start commands). Then the kinds left out of the settings. With each kind, this server's helper of it, and
+// whether either may take a run of it (kindPresence).
 function helperState() {
   const settings = runSettings();
   const setup = machineSetup();
   return {
     ...machineState(settings),
-    machines: lentMachines().map(({ name, state, speed, cpus, memoryGb, gpu, kinds, manager, problems }) => ({
+    machines: lentMachines().map(({ name, state, speed, cpus, memoryGb, host, gpu, kinds, manager, problems }) => ({
       name,
       state,
       speed,
       cpus,
       memoryGb,
+      host,
       gpu,
       kinds,
       manager,
@@ -553,12 +633,11 @@ function helperState() {
       about: kind.about,
       checkout: kind.checkout,
       browsers: kind.browsers,
+      tools: kind.tools,
       image: kind.image,
       gpus: kind.gpus,
       lentOnly: kind.lentOnly,
-      ...presence('lent', kind.name),
-      server: presence('server', kind.name),
-      serverTakes: serverTakes(kind),
+      ...kindPresence(kind.name, serverTakes(kind)),
       holds: holdsWork(kind) ? holdLine(kind, settings.helper) : '',
       setup: setup.kinds[index].commands,
     })),
@@ -571,16 +650,29 @@ function helperState() {
 }
 
 // A run's kind on the lent machines, and this server's helper of that kind: who may take it
-function kindHelper(kind: string) {
+function kindHelper(kind: string, passed = false) {
   const settings = runSettings();
   const declared = settings.kinds.find(found => found.name === kind);
   return {
     ...machineState(settings),
     kind,
     lentOnly: declared?.lentOnly === true,
-    ...presence('lent', kind),
-    server: presence('server', kind),
-    serverTakes: !declared || serverTakes(declared),
+    ...kindPresence(kind, !declared || serverTakes(declared), passed),
+  };
+}
+
+// A kind's helpers on the lent machines (the fastest one's size) and on this server, and whether one that may take a run
+// of it is there (mayTake): lent.ts in a branch's checkout waits while it is. A run a lent helper lost (passed) waits for
+// this server's alone.
+function kindPresence(kind: string, takes: boolean, passed = false) {
+  const lent = presence('lent', kind);
+  const server = presence('server', kind);
+  return {
+    ...lent,
+    lentPresent: lent.present,
+    server,
+    serverTakes: takes,
+    present: (lent.present && (!passed || !takes)) || (takes && server.present),
   };
 }
 
@@ -635,19 +727,17 @@ function machineView(id: number, machine: machines.Machine | null) {
     .sort()
     .at(-1);
   const live = machines.liveOf(id);
-  // the cores its run's kind gets there, as its helper said, else as org.yaml gives them
-  const cores = run
-    ? (helpers.find(helper => helper.kind === run.kind)?.cpus ??
-      runSettings().kinds.find(kind => kind.name === run.kind)?.cpus ??
-      null)
-    : null;
+  const host = machines.hostOf(id);
   return {
     id: machine ? id : 'server',
     name: machine?.name ?? 'This server',
     state,
     speed: most(helpers.map(helper => helper.speed)),
+    // its biggest helper's caps: the most a run gets there
     cpus: most(helpers.map(helper => helper.cpus)),
     memoryGb: most(helpers.map(helper => helper.memory_gb)),
+    // what the machine has (null: its manager hasn't said), as HQ shows it
+    host: host && { cores: host.cores, threads: host.threads, memoryGb: Math.round(host.memoryMb / 1024) },
     gpu: machine?.gpu ?? null,
     gpuCount: gpuCount(machine?.gpu ?? null),
     body: machine?.body ?? null,
@@ -657,7 +747,7 @@ function machineView(id: number, machine: machines.Machine | null) {
     added: machine?.added ?? null,
     seen: machine ? machine.seen : (lastSeen ?? null),
     manager: machine ? managerOf(machine, present.length > 0) : null,
-    problems: machine ? problemsOf(machine) : {},
+    problems: machine ? { ...problemsOf(machine), ...unsizedOn(id) } : {},
     ...(run
       ? {
           run: {
@@ -667,12 +757,22 @@ function machineView(id: number, machine: machines.Machine | null) {
             agent: run.agent,
             title: run.title,
             since: run.taken,
-            cores,
+            cores: runCores(id, run.kind, helpers),
           },
         }
       : {}),
     ...(live ? { live: { ...live, lines: run ? machines.linesOf(run.id) : [] } } : {}),
   };
+}
+
+// The cores a run's kind gets on a machine, as its helper there said, else as org.yaml gives them (capsOn)
+function runCores(machine: number, kind: string, helpers: machines.KindHelper[]) {
+  const declared = runSettings().kinds.find(found => found.name === kind);
+  return (
+    helpers.find(helper => helper.kind === kind)?.cpus ??
+    (declared && capsOn(declared, machines.hostOf(machine))?.cpus) ??
+    null
+  );
 }
 
 // The run a machine is on (its oldest), with its job's title and code (job_code, as HQ names it).
@@ -747,23 +847,31 @@ function managerBootstrap() {
 // The hash of the manager's code HQ serves now, which the install command trusts
 const managerCode = () => createHash('sha256').update(readFileSync(MANAGER_CODE)).digest('hex');
 
-// What a lent machine's manager keeps it in step with: every kind's helpers, with their image and caps, and the ones of
-// them that have a run now, which it changes only once that run has ended, and the hash of the manager's code HQ serves,
-// which a manager that follows HQ starts again on. Each call is kept with the code the manager says it runs ({ code },
+// What a lent machine's manager keeps it in step with: every kind's helpers, with their image and caps (a share of the
+// machine sized from what the call says it has, and no helper of such a kind while HQ doesn't know its size, UNSIZED), and the ones of them that have a run now, which it changes only once that run
+// has ended, and the hash of the manager's code HQ serves, which a manager that follows HQ starts again on. Each call is kept with the code the manager says it runs ({ code },
 // its hash, and { follows }: managerOf).
 function managerSetup(helper: Helper, said: unknown) {
   if (helper.name !== 'lent') return new Refusal(403, 'a lent machine sets itself up, never this server');
-  machines.managerHeard(helper.machine, said);
-  const kinds = runSettings().kinds.map(({ name, image, cpus, memoryGb, diskGb, gpus, helpers, sockets }) => ({
-    name,
-    image,
-    cpus,
-    memoryGb,
-    diskGb,
-    gpus,
-    helpers,
-    sockets,
-  }));
+  const refused = machines.managerHeard(helper.machine, said);
+  if (refused) return new Refusal(400, refused);
+  const host = machines.hostOf(helper.machine);
+  const kinds = runSettings().kinds.flatMap(kind => {
+    const caps = capsOn(kind, host);
+    return caps
+      ? [
+          {
+            name: kind.name,
+            image: kind.image,
+            ...caps,
+            diskGb: kind.diskGb,
+            gpus: kind.gpus,
+            helpers: kind.helpers,
+            sockets: kind.sockets,
+          },
+        ]
+      : [];
+  });
   const busy = openRuns('running')
     .filter(row => row.machine === helper.machine)
     .map(row => ({ kind: row.kind, slot: row.slot ?? 1 }));
@@ -911,7 +1019,7 @@ export function machineSetup() {
     kinds: runSettings().kinds.map(kind => ({
       name: kind.name,
       about: kind.about,
-      commands: kindCommands(kind, bootstrap),
+      commands: kindCommands(kind, capsOn(kind, null), bootstrap),
     })),
     removeKey: `docker volume rm ${VOLUME}`,
     install: installCommand(),
@@ -942,14 +1050,16 @@ function bootstrapCode() {
   );
 }
 
-function kindCommands(kind: Kind, bootstrap: string) {
+// (none for a kind whose caps are a share of the machine, whose size HQ doesn't know there)
+function kindCommands(kind: Kind, caps: ReturnType<typeof capsOn>, bootstrap: string) {
+  if (!caps) return { why: UNSIZED };
   const name = container(kind.name);
   // (--init reaps what a run leaves behind once kill(-1) ends it)
   const start = [
     `docker run -d --init --name ${name} --restart unless-stopped`,
     '--user 0:0 --entrypoint node --cap-drop ALL --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges',
     `--read-only --tmpfs /tmp:size=64m,mode=755 --tmpfs /work:exec,mode=1777,size=${kind.diskGb}g`,
-    `--cpus ${kind.cpus} --memory ${kind.memoryGb}g --pids-limit 4096${kind.gpus ? ' --gpus all' : ''}`,
+    `--cpus ${caps.cpus} --memory ${caps.memoryGb}g --pids-limit 4096${kind.gpus ? ' --gpus all' : ''}`,
     `-v ${VOLUME}:/state -e HQ_URL=${ORIGIN} -e RUN_KIND=${kind.name}`,
     `${kind.image} -e "${bootstrap}"`,
   ].join(' ');
@@ -1019,6 +1129,7 @@ function takeRun(helper: Helper, asked: unknown) {
     bring: JSON.parse(row.bring),
     minutes: row.minutes,
     sockets,
+    ...(row.base ? { base: row.base } : {}),
   };
 }
 
@@ -1065,15 +1176,19 @@ function firstInLine(machine: number, kind: Kind, row: RunRow) {
 const waited = (row: RunRow) => Date.now() - Date.parse(row.created);
 
 // A lent machine takes a run only while it fits the memory its runs may hold in all (runs.machineMemoryGb), each running
-// run counted at its kind's memoryGb: its helpers of several kinds, each capped alone, never ask more of it together.
+// run counted at its kind's memoryGb there: its helpers of several kinds, each
+// capped alone, never ask more of it together. A kind HQ can't size there (capsOn) has no helper there to take one.
 function fitsMachine(machine: number, kind: Kind) {
   const settings = runSettings();
   if (!settings.machineMemoryGb) return true;
-  const memoryOf = new Map(settings.kinds.map(declared => [declared.name, declared.memoryGb]));
+  const host = machines.hostOf(machine);
+  const asked = capsOn(kind, host);
+  if (!asked) return false;
+  const memoryOf = new Map(settings.kinds.map(declared => [declared.name, capsOn(declared, host)?.memoryGb ?? 0]));
   const held = openRuns('running')
     .filter(running => running.machine === machine)
     .reduce((sum, running) => sum + (memoryOf.get(running.kind ?? '') ?? 0), 0);
-  return held + kind.memoryGb <= settings.machineMemoryGb;
+  return held + asked.memoryGb <= settings.machineMemoryGb;
 }
 
 // Where a run blocked on the worker can go instead (blocks.ts): the lent machines the board hasn't paused, each with its
@@ -1095,6 +1210,7 @@ export function offloadPlaces() {
       about: kind.about,
       checkout: kind.checkout,
       browsers: kind.browsers,
+      tools: kind.tools,
       server: serverTakes(kind) && presence('server', kind.name).present,
     })),
   };
@@ -1122,6 +1238,43 @@ function bundleFor(helper: Helper, attempt: string) {
   const row = attemptRun(helper, attempt);
   return row ? `${DIR}/${row.id}/bundle.tar.gz` : '';
 }
+
+// A run's bundle stands on this checkout's commit: the commit and the tree as
+// the job has them, on top of it, so it carries only what came after (shared/gates/lent.ts). The helper keeps what it
+// fetched of it (baseFor), so a run that stands on a commit it has brings a few MB, not the repo. None from a shallow
+// checkout, which can't give the history whole.
+async function thinBase() {
+  if ((await checkout('rev-parse', '--is-shallow-repository')) !== 'false') return { commit: null };
+  return { commit: await checkout('rev-parse', 'HEAD^{commit}') };
+}
+
+// The commit an attempt's run stands on, with everything before it, as a git bundle in a file of its own: this
+// checkout's HEAD, and main as it last fetched it (a deploy gone back to the last good commit has an earlier HEAD),
+// less what the helper has (have: its commits, comma-separated, those this checkout knows).
+async function baseFor(helper: Helper, attempt: string, have: string) {
+  const row = attemptRun(helper, attempt);
+  if (!row?.base) return new Refusal(404, 'this run stands on no base');
+  const known = [];
+  for (const commit of have.split(',').slice(0, HAVE_MAX))
+    if (COMMIT.test(commit) && (await inCheckout(`${commit}^{commit}`))) known.push(commit);
+  const main = 'refs/remotes/origin/main';
+  const fetched = (await inCheckout(main)) ? [main] : [];
+  const file = `${DIR}/base-${randomUUID()}.bundle`;
+  try {
+    await checkout('bundle', 'create', '-q', file, 'HEAD', ...fetched, ...(known.length ? ['--not', ...known] : []));
+    return file;
+  } catch (error) {
+    rmSync(file, { force: true });
+    return new Refusal(404, `HQ's checkout gave no bundle: ${(error as Error).message.slice(0, 300)}`);
+  }
+}
+const inCheckout = (name: string) => checkout('rev-parse', '-q', '--verify', name).then(Boolean, () => false);
+// (safe.directory: the checkout is root's on the server, mounted read-only)
+const checkout = async (...args: string[]) =>
+  (
+    await execute('git', ['-c', `safe.directory=${REPO_DIR}`, '-C', REPO_DIR, ...args], { encoding: 'utf8' })
+  ).stdout.trim();
+const execute = promisify(execFile);
 
 // The helper's word that its attempt goes on, with its machine's readings and the run's new output ({ live, lines }).
 // The answer says whether it should.

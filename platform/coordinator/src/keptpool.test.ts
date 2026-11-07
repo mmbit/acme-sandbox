@@ -135,12 +135,16 @@ test("a trigger an earlier version made, blind to a column the read takes now, i
 });
 
 test("the start's read ahead, a slice at a time, is the whole read's, and a change during the slicing is read again", async () => {
-  // more than two slices of done work. The reviews among them are runs the pool leaves out.
-  for (let i = 0; i < 1100; i++) {
-    const ended = T - DAY + i * 60_000;
-    h.pastJob({ title: `Paint tile ${i}`, run: { started: ended - 10 * 60_000, ended } });
-    if (i % 3 === 0) h.pastJob({ kind: 'review', title: `Review tile ${i}`, run: { started: ended - 60_000, ended } });
-  }
+  // more than two slices of done work. The reviews among them are runs the pool leaves out. (In one step: row by row,
+  // the writes can outrun the test's minute on a busy machine.)
+  inOneStep(() => {
+    for (let i = 0; i < 1100; i++) {
+      const ended = T - DAY + i * 60_000;
+      h.pastJob({ title: `Paint tile ${i}`, run: { started: ended - 10 * 60_000, ended } });
+      if (i % 3 === 0)
+        h.pastJob({ kind: 'review', title: `Review tile ${i}`, run: { started: ended - 60_000, ended } });
+    }
+  });
   const fresh = './matching.ts?ahead',
     started = (await import(fresh)) as typeof matching;
   const ahead = await started.readPastAhead();

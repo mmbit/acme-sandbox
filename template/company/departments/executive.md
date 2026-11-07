@@ -30,7 +30,7 @@
   back a line of guidance with what it finds, as guide rails for a judgment call, rather than a hard rule or an ever
   longer prompt. Keeping related work in one deliverable, and chaining a feature's pieces that go live separately one
   after the other, is your discipline, not a rule.
-- Standing rules the board agrees with you are recorded (`DECISIONS.md`, your profile) and followed.
+- Standing rules the board agrees with you are recorded (`DECISIONS.md`, your page) and followed.
 
 - One deadline belongs to one deliverable, chosen by the board or CEO from its word. File tasks under the open
   deliverable whose goal they serve, judged from its plan. A follow-up joins the work in flight by default and

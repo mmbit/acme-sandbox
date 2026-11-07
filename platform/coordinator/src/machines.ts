@@ -4,7 +4,8 @@
 // beats, it says what it has (cores, memory, a GPU), its speed and its load. While it runs one, it sends the run's newest
 // output. The load and the output live in memory alone, for HQ's live view.
 import { createHash, randomBytes } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { cpus, totalmem } from 'node:os';
 import { yamlFile } from './company.ts';
 import { columnsOf, db } from './db.ts';
 import { redact } from './events.ts';
@@ -29,7 +30,13 @@ export type Machine = {
   // why its helpers aren't in step, as its manager's last setup call said ({ helper's container: message }, JSON), or
   // null for none
   manager_problems: string | null;
+  // what the machine has, as its manager last measured it on the host (null: not said, a machine started by hand)
+  host_cores: number | null;
+  host_threads: number | null;
+  host_memory_mb: number | null;
 };
+// What a machine has: its physical cores (null where they aren't told apart from its threads), threads and memory
+export type HostSize = { cores: number | null; threads: number; memoryMb: number };
 // A machine's helper of a kind: when it last asked for work, and asked or beat, with the size and speed it gave
 export type KindHelper = {
   machine: number;
@@ -73,6 +80,9 @@ for (const column of [
   'manager_code text',
   'manager_problems text',
   'manager_follows integer not null default 0',
+  'host_cores integer',
+  'host_threads integer',
+  'host_memory_mb integer',
 ])
   if (!columnsOf('machines').includes(column.split(' ')[0])) db.exec(`alter table machines add column ${column}`);
 db.exec(`create table if not exists machine_kinds (machine integer not null, kind text not null, asked text,
@@ -202,8 +212,11 @@ export function heard(machine: number, kind: string, report: unknown, asked: boo
 }
 
 // Its manager's setup call (each minute, platform/helper/manager.mjs), with the hash of the code it runs where it says one,
-// whether it follows HQ's code, and why its helpers aren't in step where it says
+// whether it follows HQ's code, why its helpers aren't in step, and what the machine has, where it says. Returns '' once
+// kept, or why the call's host isn't a size (sizeOf), keeping nothing of the call, for managerSetup to refuse it with.
 export function managerHeard(machine: number, said: unknown) {
+  const host = isMap(said) && said.host !== undefined ? sizeOf(said.host) : null;
+  if (typeof host === 'string') return host;
   const code = isMap(said) && typeof said.code === 'string' && /^[0-9a-f]{64}$/.test(said.code) ? said.code : null;
   const problems = Object.entries(isMap(said) && isMap(said.problems) ? said.problems : {})
     .filter(([name, message]) => /^[\w.-]{1,80}$/.test(name) && typeof message === 'string')
@@ -218,7 +231,48 @@ export function managerHeard(machine: number, said: unknown) {
     problems.length ? JSON.stringify(Object.fromEntries(problems)) : null,
     machine,
   );
+  if (host)
+    db.prepare('update machines set host_cores = ?, host_threads = ?, host_memory_mb = ? where id = ?').run(
+      host.cores,
+      host.threads,
+      host.memoryMb,
+      machine,
+    );
+  return '';
 }
+
+// What a manager says its machine has (manager.mjs hostSize), or why that isn't a size
+function sizeOf(given: unknown): HostSize | string {
+  if (!isMap(given)) return 'host: { cores, threads, memoryMb }, as the machine has them';
+  const [cores, threads, memoryMb] = [whole(given.cores), whole(given.threads), whole(given.memoryMb)];
+  if (!threads) return 'host.threads: a whole number above 0';
+  if (!memoryMb) return 'host.memoryMb: a whole number above 0';
+  if (given.cores !== null && !cores)
+    return "host.cores: a whole number above 0, or null where the machine doesn't tell its cores apart";
+  if (cores && cores > threads) return 'host.cores: no more than host.threads';
+  return { cores, threads, memoryMb };
+}
+
+// What a machine has, as its manager measured it on the host, or this server as HQ sees it (its helpers' caps are
+// their kinds', never the machine's), or null for a machine whose manager hasn't said
+export function hostOf(machine: number): HostSize | null {
+  if (machine === SERVER) return SERVER_HOST;
+  const found = findMachine(machine);
+  return found?.host_threads && found.host_memory_mb
+    ? { cores: found.host_cores, threads: found.host_threads, memoryMb: found.host_memory_mb }
+    : null;
+}
+
+// This server's, measured as manager.mjs hostSize() measures a lent machine's (the manager is one file and can't import
+// this: a change to one is made in the other)
+const SERVER_HOST: HostSize = (() => {
+  const cores = new Set<string>();
+  for (const block of readFileSync('/proc/cpuinfo', 'utf8').split(/\n\s*\n/)) {
+    const field = (name: string) => new RegExp(`^${name}\\s*:\\s*(\\d+)`, 'm').exec(block)?.[1];
+    if (field('core id') !== undefined) cores.add(`${field('physical id') ?? 0}:${field('core id')}`);
+  }
+  return { cores: cores.size || null, threads: cpus().length, memoryMb: Math.round(totalmem() / 2 ** 20) };
+})();
 
 export const kindHelper = (machine: number, kind: string) =>
   db.prepare('select * from machine_kinds where machine = ? and kind = ?').get(machine, kind) as KindHelper | undefined;

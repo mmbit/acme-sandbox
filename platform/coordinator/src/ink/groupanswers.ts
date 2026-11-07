@@ -9,6 +9,7 @@
 //     call's page, which no judge reads: its agent answers there in its own notes and words.
 import { db } from '../db.ts';
 import { agentName, jobAgent } from '../jobs.ts';
+import { placeholderOf } from '../callbuildrows.ts';
 import { ceo } from '../company.ts';
 import { answersOnGroups, comingOf, going, slipsOf, waitingOf, type Listed } from './bookslips.ts';
 import { asksBy, asksOn } from './bookasks.ts';
@@ -88,7 +89,16 @@ export function tryOf(g: Tried, answers: { style: string }[]) {
     name = agentName(by);
   const made = answers.filter(a => a.style === 'version').length;
   const state = going(g.tried) ? 'coming' : made ? 'made' : 'empty';
-  return { state, expect: g.expect, by, name, reason: state === 'empty' ? endedEmpty(name, job) : null };
+  // (a call's prototype being built: its placeholder says so, with its time.)
+  const build = state === 'coming' ? placeholderOf(g.id, g.tried) : null;
+  return {
+    state,
+    expect: g.expect,
+    by,
+    name,
+    reason: state === 'empty' ? endedEmpty(name, job) : null,
+    ...(build && { build }),
+  };
 }
 // Why a try that ended has no version, as the board reads it in the versions' place: the run's own last line when it
 // ended well (the brief asks it to say why it made none)

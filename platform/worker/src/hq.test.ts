@@ -1053,6 +1053,20 @@ test('say tells what is true now: queued for a running job, or a job of its own;
   assert.equal((await run(['say', 'nib', 'x'])).out, "nib's running job is on Codex, which can't take a message mid-job: it's job #1101 now (message #14), which starts once it's sorted into the plan. Check: hq sent 14\n");
   await run(['say', 'bolt', '-'], 'line one\nline two\n');   // from stdin, whole (the shell drops the last newline)
   assert.deepEqual(last().body, { to: 'bolt', text: 'line one\nline two' });
+  // The work it's about: one job, or every live session on a deliverable
+  said = { id: 17, state: 'queued', job: 935, waiting: true };
+  assert.equal((await run(['say', 'bolt', '--job', '935', 'For that one'])).out,
+    "Queued for bolt's job #935, which isn't running now: its session reads it at its first step when it starts or resumes. Check: hq sent 17\n");
+  assert.deepEqual(last().body, { to: 'bolt', job: 935, text: 'For that one' });
+  said = { id: 18, state: 'queued', named: 'the deliverable shop/logs', sessions: [{ message: 18, job: 934, agent: 'bolt' }, { message: 19, job: 936, agent: 'nib' }] };
+  assert.equal((await run(['say', '--deliverable', 'shop/logs', 'Logs moved'])).out,
+    "Sent to the deliverable shop/logs: every session live on that has a copy, bolt's job #934 (message #18), nib's job #936 (message #19). "
+    + 'Each reads it at its next step, with who it went to, and acts on it only if it applies to its work; if none reads it, one copy becomes a job. Check: hq sent 18\n');
+  assert.deepEqual(last().body, { deliverable: 'shop/logs', text: 'Logs moved' });
+  said = { id: 20, state: 'job', job: 940, why: 'deliverable' };   // nobody live on it: a job on it, for its owner
+  assert.equal((await run(['say', '--deliverable', 'shop/logs', 'Logs moved'])).out,
+    "Nobody is working on shop/logs now: it's job #940 for its owner on that deliverable (message #20), which starts once it's sorted into the plan. Check: hq sent 20\n");
+  assert.match((await run(['say', 'bolt', '--job', 'x', 'hi'])).err, /^usage: hq say .*--job <n>/);
   const long = await run(['say', 'bolt', '-'], 'x'.repeat(8001));
   assert.equal(long.code, 1); assert.match(long.err, /8001 characters, over the 8000 .* Nothing was sent/);
   assert.equal(last().body.text.length, 8001);   // sent whole, refused whole: never cut
@@ -1373,6 +1387,12 @@ test('prototype sends a folder\'s page and files for the call, or one HTML file 
     files: { 'index.html': base64('<!doctype html><img src="art/mug.svg">'), 'art/mug.svg': base64('<svg/>') } });
   await hq('prototype', 'Just the mug', `${folder}/art/mug.svg`, '--call', '7');
   assert.deepEqual(last().body, { call: 7, name: 'Just the mug', files: { 'index.html': base64('<svg/>') } });
+  // (with the screenshot it was looked at in, its clip's picture)
+  writeFileSync(`${tmp}/looked.png`, 'png bytes');
+  await hq('prototype', '--call', '7', 'Just the mug', `${folder}/art/mug.svg`, '--picture', `${tmp}/looked.png`);
+  assert.equal(last().body.picture, base64('png bytes'));
+  const unseen = await run(['prototype', '--call', '7', 'Just the mug', folder, '--picture', `${tmp}/none.png`]);
+  assert.match(unseen.err, /^Nothing saved: there's no picture /);
   const refused = await run(['prototype', '--call', '8', 'Mug colours', folder]);
   assert.equal(refused.code, 1);
   assert.match(refused.err, /^Nothing saved: no live call #8\n$/);

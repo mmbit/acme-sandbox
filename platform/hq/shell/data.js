@@ -984,7 +984,7 @@ async function mockMachineAction(action, body) {
   if ((action === 'add' || action === 'rename') && list.some(x => x.name.toLowerCase() === name.toLowerCase() && x.id !== body.machine)) throw seatRefused(`There’s a machine called ${name} already. Pick another name.`);
   if (action === 'add') {
     const id = Math.max(0, ...list.map(x => (typeof x.id === 'number' ? x.id : 0))) + 1;
-    list.splice(list.length - 1, 0, { id, name, state: 'away', speed: null, cpus: null, memoryGb: null, gpu: null, gpuCount: 0, body: null, glow: null, kinds: [], paused: false, added: new Date().toISOString(), seen: null });
+    list.splice(list.length - 1, 0, { id, name, state: 'away', speed: null, cpus: null, memoryGb: null, host: null, gpu: null, gpuCount: 0, body: null, glow: null, kinds: [], paused: false, added: new Date().toISOString(), seen: null });
     return { ...(await mockList('machine-setup')), id, install: mockInstall(id) };
   }
   if (!m) throw seatRefused('There’s no such machine.');

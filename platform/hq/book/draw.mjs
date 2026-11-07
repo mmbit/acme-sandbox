@@ -173,8 +173,9 @@ async function threeOnOneLine(page, c) {
     );
   assert.deepEqual(
     buttons.map(b => b.name),
-    ['Assign', 'Duplicate', 'Move to page…', 'Delete'],
-    'the bar has Assign, Duplicate, Move to page… and Delete',
+    ['Assign', 'Duplicate', 'Bring forward', 'Send backward', 'Move to page…', 'Delete'],
+    // (Bring forward and Send backward)
+    'the bar has Assign, Duplicate, Bring forward, Send backward, Move to page… and Delete',
   );
   assert.equal(new Set(buttons.map(b => b.top)).size, 1, 'on one line');
   await c.shot('book-draw-bar', page);

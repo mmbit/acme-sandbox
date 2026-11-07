@@ -15,6 +15,7 @@ import { reply } from './uploads.ts';
 import { exclude } from './latency.ts';
 import { NOTHING, TOOL_PX, callPlayback, clockOf, mirrors } from './watchalong.ts';
 import { when } from './watchtimes.ts';
+import { timesOf } from './calltimes.ts';
 import type { Moment } from '../../../shared/watchalong/moments.ts';
 
 type Refusal = 404 | [number, string];
@@ -24,7 +25,7 @@ function transcriptOf(call: number) {
     { lines: string; line_times: string | null; status: string } | undefined;
   if (!row) return undefined;
   const lines = JSON.parse(row.lines) as string[],
-    times = row.line_times ? (JSON.parse(row.line_times) as number[]) : null;
+    times = timesOf(row.line_times);
   return { lines, times: times?.length === lines.length ? times : null, live: row.status === 'live' };
 }
 // The call's transcript and recording (read on playback.ts's thread), or why not.

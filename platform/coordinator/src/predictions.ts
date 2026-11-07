@@ -11,7 +11,7 @@ import {
   runOf,
   RUN_COLUMNS,
   RUN_JOIN,
-  CARRY_CODE,
+  CARRY_COLUMNS,
   sizeOf,
   type Basis,
   type PastJob,
@@ -71,7 +71,7 @@ type Row = Size & { job: number; picks: string; basis: string; guessed: number; 
 export function recordQueued(job: number, now = Date.now(), schedule?: Run) {
   const work = db
     .prepare(
-      `select j.agent, j.title, ${ORIGIN} origin, ${CARRY_CODE} from jobs j where j.id = ? and j.kind = 'work'
+      `select j.agent, j.title, ${ORIGIN} origin, ${CARRY_COLUMNS} from jobs j where j.id = ? and j.kind = 'work'
       and not exists(select 1 from predictions p where p.job = j.id)`,
     )
     .get(job) as Work | undefined;
@@ -110,7 +110,7 @@ export function stored(job: number, pool = pastJobs()): Prediction | undefined {
 export function newWork(now: number) {
   const missing = db
     .prepare(
-      `select j.id, j.agent, j.title, ${ORIGIN} origin, ${CARRY_CODE}, ${RUN_COLUMNS} from jobs j ${RUN_JOIN}
+      `select j.id, j.agent, j.title, ${ORIGIN} origin, ${CARRY_COLUMNS}, ${RUN_COLUMNS} from jobs j ${RUN_JOIN}
       where j.kind = 'work' and j.status in ${OPEN_JOBS}
       and not exists (select 1 from predictions p where p.job = j.id)`,
     )

@@ -14,7 +14,8 @@ import { contrastChannels } from '../../../shared/contrast/contrast.js';
 import { momentIn, zoneOf } from './clock.ts';
 import { brand, optional, parsed } from './companyfiles.ts';
 
-export function org() {
+// forBoard: the board's own HQ reads it (GET /api/org, boardStatuses), with a member's step itself.
+export function org(forBoard = false) {
   const o = orgChart();
   for (const d of o.departments ?? [])
     for (const a of d.agents ?? []) a.status = status.get(a.id) ?? { state: 'idle' };
@@ -23,18 +24,21 @@ export function org() {
   const team = teamMembers(), names = new Map<string, string>([...(o.departments ?? []).flatMap((d: any) =>
     (d.agents ?? []).map((a: any) => [a.id, a.name])), ...team.map(m => [m.id, m.name] as [string, string])]);
   // Right now: the task its lead gave it, or for one its lead only named, its latest step, which HQ keeps following
-  // (steps). No look: HQ quotes one, and a member's would only be its name.
+  // (steps), as the reader may read it (lastStep). No look: HQ quotes one, and a member's would only be its name.
   for (const m of team) {
     const d = (o.departments ?? []).find((x: any) => x.id === m.department);
     if (!d || known.has(m.id)) continue;
     known.add(m.id);
     const current = status.get(m.id) ?? { state: m.state, task: m.task ?? undefined }, named = !m.task;
-    const rightNow = named ? { ...current, task: current.task || lastStep(m.job, m.id) } : current;
+    const rightNow = named ? { ...current, task: current.task || lastStep(m.job, m.id, forBoard) } : current;
     (d.agents ??= []).push({ id: m.id, name: m.name, role: 'Team member', ...(m.parent && { focus: `with ${names.get(m.parent) ?? m.parent}` }),
       engine: 'claude', temp: true, ...(named && { steps: true }), status: rightNow });
   }
   return o;
 }
+// Who's at work as the board's HQ opens its feed (events.ts subscribe), a team member as the board's org read gives it.
+export const boardStatuses = () => ({ ...Object.fromEntries(status), ...Object.fromEntries((org(true).departments ?? [])
+  .flatMap((d: any) => d.agents ?? []).filter((a: any) => a.temp).map((a: any) => [a.id, a.status])) });
 // org.yaml, parsed only when it changes (tens of ms), once for roles() and every agent lookup (jobs.ts findAgent). A copy
 // each time, as org() adds to it. A missing or broken one, or one that isn't a map, throws.
 const orgChart = () => { const { value, error } = parsed('company/org.yaml'); if (error) throw error; return structuredClone(value); };

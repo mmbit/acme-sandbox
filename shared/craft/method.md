@@ -14,6 +14,13 @@ builds on these.
 
 - **On the screen they'll use, at the size they'll see it.** A social ad first at thumb size on a phone, then full
   screen. A deck on a phone held upright. Anything for the board on the board's screens (`company/screens.json`).
+- **Measure the fit before you judge the look.** A still hides a number running into the bars beside it, a word cut
+  by its box, and a note drawn 1.7 times its size at just one width, and a check that only compares before with after
+  never asks about a fault that was already there. Measure the page itself at every screen people use (the board's:
+  `company/screens.json`, from its own sessions), every look, and every size a part can be dragged to: what spills,
+  what's cut, what's past the screen's edge, and text drawn far bigger or smaller at one size than at the others
+  (`shared/browser/fit.mjs`; HQ's screens: `node platform/hq/fit-check.mjs`, minutes on the render helper). Then open
+  the pictures for what boxes can't judge.
 - **Read every word aloud** at the size it's shown.
 - **Your own screenshots passing isn't the same as it looking right.** Several versions of one drawing once passed
   every automated screenshot and still looked wrong to a person (the geometry was right, the view hid half of it).
@@ -39,6 +46,11 @@ builds on these.
 - **A check that sees nothing must not read as a pass.** Count what it checked (frames, turns, files), and fail a run
   that's short.
 - **A check you call stable runs several times in a row**, also with the machine busy.
+- **Run again only what your change touched.** A browser check keeps what each case ran (`shared/browser/touched.mjs`);
+  after a fix, its `--again` reruns only the cases whose code or styles changed and keeps the rest's results. A whole
+  re-render for a one-line fix is time nobody gets back.
+- **Give up a stall at once.** A case that doesn't settle within its budget is a failure to read, not a run to wait out
+  until the time limit.
 - **Open what you made:** `ffprobe` and a full decode for a film (`ffmpeg -i x.mp4 -f null -`), a few frames pulled
   out and looked at, the PDF opened.
 

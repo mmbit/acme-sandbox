@@ -7,9 +7,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { db } from './db.ts';
 import * as chat from './chat.ts';
 import * as intercom from './intercom.ts';
-import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob } from './jobs.ts';
+import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob, heldWith } from './jobs.ts';
+import * as redraws from './redraws.ts';
 import * as messages from './messages.ts';
 import { forCall } from './callmessages.ts';
+import { lineTimes } from './calltimes.ts';
 import * as ledger from './ledger.ts';
 import * as review from './review.ts';   // (reach)
 import * as pictures from './pictures.ts';
@@ -21,6 +23,7 @@ import * as forecast from './forecast.ts';
 import * as goals from './goals.ts';
 import { padBriefing } from './pad.ts';
 import { guestPrompt } from './callguestbrief.ts';
+import * as callbuilds from './callbuilds.ts';
 import { read, section, profileOf, spokenAloud, replies, recognised } from './callspoken.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
@@ -202,7 +205,7 @@ export function addToJob(me: { agent: string; callId?: number }, id: number, tex
   const message = `An addition to your job #${id} (${job.title}), from ${me.agent}'s call with the board (call #${call}), where it was queued. `
     + `It's part of the brief: act on it with the rest.\n\n${text}`;
   if (message.length > messages.MAX) return [413, `too long for a job that has started (${text.length.toLocaleString('en')} characters, and the note around it counts): keep the addition short; the follow-up has the whole call`];
-  const sent = messages.send({ agent: me.agent, job: null, call }, job.agent, message, id);
+  const sent = messages.send({ agent: me.agent, job: null, call }, job.agent, message, { only: id });
   if (sent === 429) return [429, `this call has added ${messages.PER_HOUR} times in the past hour: put the rest in one addition, or leave it to the call's follow-up`];
   if (typeof sent === 'number') return sent;
   if (sent.state === 'queued') return { job: id, agent: job.agent, added: 'message', message: sent.id };
@@ -243,7 +246,7 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
     + `this work as it stands now, in ${me.agent}'s words. Weigh it with your brief, as the board's. The call's follow-up checks it against `
     + `the call's transcript, and tells you if it was misheard.\n\nWhy the board wants this: ${goal}\n\n${text}`;
   if (message.length > messages.MAX) return [413, `too long (${text.length.toLocaleString('en')} characters, and the note around it counts): keep it to what the job needs now`];
-  const sent = messages.send({ agent: me.agent, job: null, call }, to, message, id);
+  const sent = messages.send({ agent: me.agent, job: null, call }, to, message, { only: id });
   if (typeof sent === 'number') return [sent, sent === 429 ? `this call has sent ${messages.PER_HOUR} messages in the past hour` : 'HQ refused it'];
   const item = ledger.reached(call, { owner: to, what, goal, words: text, job: id, ref: `sent on call #${call} as message #${sent.id}` });
   return { job: id, agent: to, item, message: sent.id };
@@ -270,6 +273,7 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   const live = was?.status === 'live' ? was.id : undefined;
   // (its notes page stays in My journal as the board left it, or is deleted if nothing is on it.)
   if (live) ledger.callEnded(live);
+  if (live) callbuilds.endedCall(live);
   const recorded = live ? ledger.items(live).length > 0 : false;
   if ((!lines?.length && !recorded) || !findAgent(agent)) {
     if (live) ledger.forgetCall(live);
@@ -294,12 +298,9 @@ export function kept(agent: string, lines: string[] | undefined, token = '', tim
     where t.hash = ? and c.agent = ? and c.status = 'live'`).get(sha256(token), agent) as { call: number } | undefined)?.call : undefined;
   if (!bound) return 404;
   if (lines) db.prepare('update calls set lines = ?, line_times = ? where id = ?').run(JSON.stringify(lines), lineTimes(lines, times), bound);
-  return { ok: true, messages: forCall(bound) };
+  // (and its prototypes built since, or not: callbuilds.ts.)
+  return { ok: true, messages: forCall(bound), built: callbuilds.heard(bound) };
 }
-
-const lineTimes = (lines: string[], times: unknown) =>
-  Array.isArray(times) && lines?.length && times.length === lines.length && times.every(t => Number.isFinite(t) && t > 0)
-    ? JSON.stringify(times.map(Math.round)) : null;
 
 // The call log for HQ's computer: each call, its follow-up (the reply it set, ledger.ts reply) and what the team
 // took from it (each item's plain line and where it stands). Never the transcript, nor the words an item quotes: the
@@ -592,7 +593,10 @@ function companyNow(agent: string) {
   // (by number, for reach and add: what's running is in goingon's list; step, round: a job's name, nameOf.)
   const jobs = rows("select id, agent, title, step, round, status from jobs where status in ('queued', 'blocked') and kind in ('work', 'chat') order by id desc limit 15")
     .map(j => `- #${j.id}, ${j.agent}: ${nameOf(j as { title: string })} (${j.status})`).join('\n') || '- none';
-  const reviews = rows("select id, agent, title, step, round, status from jobs where status = 'queued' and kind in ('review', 'consolidate') order by id desc limit 10")
+  // Only reviews that can start: one a paused project or thread holds waits with that pause (goingon lists the pauses),
+  // never as a backlog of reviews. (heldWith: the claim's own hold.)
+  const reviews = rows(redraws.query(`select id, agent, title, step, round, status from jobs j where status = 'queued'
+    and kind in ('review', 'consolidate') and ${heldWith('j')} is null order by id desc limit 10`))
     .map(j => `- #${j.id}, ${j.agent}: ${nameOf(j as { title: string })} (${j.status})`).join('\n') || '- none';
   const team = (org().departments ?? []).flatMap((d: any) => (d.agents ?? []).filter((a: any) => !a.temp).map((a: any) => `- ${a.name}${a.pronouns ? ` (${a.pronouns})` : ''}: ${titleOf(a, '')} (${d.name})`)).join('\n');
   // a call's transcript and a desk phone answer stay with the jobs that hear them: the briefing only says they happened.
@@ -613,7 +617,7 @@ ${team}
 ${goingon.words(forecast.current())}
 ${agent === ceo() ? heartbeatPart() : ''}Queued or waiting for the board (the newest):
 ${jobs}
-Reviews queued:
+Reviews queued (one a paused project or deliverable holds waits with its pause, so it isn't listed here):
 ${reviews}
 The intercom chat, the board's typed conversation with the CEO. Everything ever said there is there to look up (the
 intercom tool, and search): before you tell the board something wasn't asked or written down, look there.

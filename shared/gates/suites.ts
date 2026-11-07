@@ -21,7 +21,8 @@ type Suite = {
 
 // Every area's test command, by the test file's name. node:test files run together from the nearest folder with a
 // package.json (the root if none), as `cd platform/coordinator && node --test src/x.test.ts` does, a file per core at
-// once, each ending with its last test (what a test that timed out left running can't hold it open). A Python or shell
+// once, each ending with its last test (what a test that timed out left running can't hold it open), and every process
+// it started with it (leftovers.ts). A Python or shell
 // test runs on its own from its folder. Browser page checks (*-check.mjs, check.mjs) start servers and a browser and
 // are judged by eye: they stay the reviewers', where a change needs them, and the report lists them (PAGE_CHECK).
 export const SUITES: Record<'node' | 'python' | 'shell', Suite> = {
@@ -29,6 +30,7 @@ export const SUITES: Record<'node' | 'python' | 'shell', Suite> = {
     files: /\.test\.(ts|js|mjs)$/,
     command: (names, serial) => [
       'node',
+      `--import=${join(import.meta.dirname, 'leftovers.ts')}`,
       '--test',
       `--test-reporter=${join(import.meta.dirname, 'timings.ts')}`,
       `--test-timeout=${TEST_MS}`,

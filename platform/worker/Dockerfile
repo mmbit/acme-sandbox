@@ -64,6 +64,7 @@ RUN curl -fsSL -o /tmp/docker-compose https://github.com/docker/compose/releases
 RUN useradd -m -u 1500 worker \
     && for i in $(seq 1 16); do groupadd -g $((1500 + i)) slot$i && useradd -M -d /nonexistent -s /bin/bash -u $((1500 + i)) -g slot$i slot$i; done \
     && for i in 1 2; do groupadd -g $((1516 + i)) slottest$i && useradd -M -d /nonexistent -s /bin/bash -u $((1516 + i)) -g slottest$i slottest$i; done \
+    && for i in $(seq 1 15); do groupadd -g $((1518 + i)) checks$i && useradd -M -d /nonexistent -s /bin/bash -u $((1518 + i)) -g checks$i checks$i; done \
     && mkdir -p /work /seats && git config --system --add safe.directory /work/mirror.git
 # The gates' tools (shared/gates), pinned at the repo's root, and the coordinator's packages for the type check, laid
 # out as the repo: a job's clone links them in. No install scripts, and none of the search model's runtime (types only).

@@ -30,6 +30,12 @@ export const SLOT_IDS = new Map(
   }),
 );
 export const WORK_SLOTS = [...SLOT_IDS.keys()].filter(slot => slot !== CHAT_SLOT);
+// Checks have the same maximum number of isolated runners as sessions, without taking their places.
+export const CHECK_SLOTS = WORK_SLOTS.map((_, i) => `checks${i + 1}`);
+for (const [i, name] of CHECK_SLOTS.entries()) {
+  const uid = FIRST_SLOT + MAX_SLOTS + TEST_IDS.length + i;
+  SLOT_IDS.set(name, { uid, gid: uid, name });
+}
 
 export const jobDirs = (work: string, id: number) => ({
   dir: `${work}/jobs/${id}`,

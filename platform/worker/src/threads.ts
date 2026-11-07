@@ -1,5 +1,6 @@
 // A task in a thread as the worker runs it: its branch brought up to date with main as it starts, its briefing's lines,
 // and its own profile lines sent to main apart from the thread's work (and their branch's repair).
+import { GitOutputLimitError } from './gitoutput.ts';
 
 // The claim's answer for a task in a thread (the coordinator's claim).
 export type InThread = {
@@ -33,6 +34,7 @@ export function mergeMain(clone: Pick<InClone, 'git'>, dir: string, base: string
     inClone('merge', '-q', '--no-edit', '-m', `Bring up to date with ${base}`, `origin/${base}`);
     return [];
   } catch (err) {
+    if (err instanceof GitOutputLimitError) throw err;
     if (!has(clone, dir, 'MERGE_HEAD')) throw err;
     const conflicts = inClone('diff', '--name-only', '--diff-filter=U', '-z').split('\0').filter(Boolean);
     if (!conflicts.length) throw err;

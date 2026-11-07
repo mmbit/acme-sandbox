@@ -454,8 +454,8 @@ pause holds, and after a resume by hand until the jobs the pause waited for are 
 
 A deadline orders work within seat pacing. Only work the board marks urgent bypasses pacing, and expedited work
 counts as urgent.
-`hq urgent milestone|job|task <id> on|off` sets or clears urgency in one step. The call agent uses the same command
-with its manage tool. Off a call the CEO records it. On a live board call, that call’s agent records it.
+`hq urgent <milestone> on|off` sets or clears urgency on the whole milestone in one step, and
+`hq urgent job|task <id> on|off` on one piece. The call agent uses the same command with its manage tool. Off a call the CEO records it. On a live board call, that call’s agent records it.
 Until the work model names migrate, milestone identifiers are project keys, job identifiers are `project/slug`,
 and task identifiers are task numbers. Clearing a child flag leaves urgency inherited from its parent or source work, and an expedited task stays urgent. Milestone urgency passes to its jobs and tasks. Job urgency passes to its tasks.
 Reviews and fixes read the urgency of their source work, so clearing its flag clears that inheritance too.
@@ -463,6 +463,12 @@ Urgency goes on the whole milestone the board names. A hold or pause meant for t
 A flag set piece by piece misses work filed under the milestone later, and that work then waits on pacing.
 Work that must stay out of a milestone's urgency keeps a pause of its own or moves to its own milestone.
 A pause holds urgent work, but expedited work bypasses it. Never pick the pieces by hand.
+The tools lead with the whole milestone and say what a choice leaves out. `hq urgent` on a milestone names the
+deliverables it covers and those their own pause keeps out, and on a piece names the work still on pacing. `hq project
+pause` comes before `hq deliverable pause`, whose answer counts the deliverables that go on. A card that tells the board
+work is ready waits for the whole milestone with `hq ask --when deployed:<project>`: every deliverable of it open
+then or filed later is done and its last merge deployed, but one its own pause keeps out. A card held on jobs instead
+names the milestones whose later work doesn't hold it.
 The plan gives expedited work the finish it gets live: its work, which ends with its push's checks, then the deploy.
 Its review follows the merge, so no round stands before it. A push that went to review instead (its checks failed,
 or it changes its own checks or what HQ shows the board) has its round before its merge, as any other.

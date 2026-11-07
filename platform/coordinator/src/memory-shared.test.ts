@@ -63,7 +63,7 @@ test("A board call is every agent's: search finds its words and its summary, and
   assert.equal((await agent(`call?id=${live.call}`, bolt.token)).status, 404);
   assert.equal((await voice('call-lines', { agent: 'kit', token: 'not its token', lines: ['Board: no'] })).status, 404);
   const kept = await voice('call-lines', { agent: 'kit', token: live.token, lines: ['Board: the frog goes on the mug.'] });
-  assert.deepEqual(kept.body, { ok: true, messages: [] });
+  assert.deepEqual(kept.body, { ok: true, messages: [], built: [] });
   const now = (await agent(`call?id=${live.call}`, juno.token)).body;
   assert.deepEqual([now.lines, now.summary_left_out], [['Board: the frog goes on the mug.'], 'the call is still going on: these are its lines so far']);
   assert.equal((await agent(`call?id=${live.call}`, bolt.token)).status, 404, 'still only the CEO');

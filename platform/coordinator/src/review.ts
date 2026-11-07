@@ -6,7 +6,8 @@ import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
 import * as threadends from './threadends.ts';
-import { createJob, createRequest, findAgent, inProcess, failedNote, isOpenJob, replacementOf, stillHolds, OPEN_PRS } from './jobs.ts';   // (failedNote) (stillHolds)
+import { createJob, createRequest, findAgent, inProcess, failedNote, isOpenJob, replacementOf, stillHolds, OPEN_PRS, heldWith } from './jobs.ts';   // (failedNote) (stillHolds)
+import * as redraws from './redraws.ts';
 import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
@@ -41,6 +42,7 @@ import * as mergeorder from './mergeorder.ts';
 import * as rulingjobs from './rulingjobs.ts';
 import * as authorwork from './authorwork.ts';
 import { AGENT_CONFIG, GATES_CONFIG } from './reviewfloor.ts';
+import { shellQuote } from './shellquote.ts';
 
 // A pull request merged: marked so, what its reviews left into its author's separate follow-up deliverable before
 // the threads whose work it held let go of its branch (threadends.ts merged), and the visual hold it was still in, when
@@ -458,11 +460,8 @@ function openRound(push: Push, files: string[], links: string[], checksNote: str
   const row = db.prepare(`update prs set round = round + ?, since = (select coalesce(max(id), 0) from jobs), panel = 'full' where number = ?
     returning round`).get(redo || keepsRound ? 0 : 1, pr) as { round: number };
   const { round } = row;
-  // runs still queued from before this round (another head, or a round before) never decide anything (reviewFinished):
-  // they don't take a seat either
-  db.prepare(
-    "update jobs set status = 'cancelled', finished = ? where pr = ? and kind in ('review', 'consolidate') and status = 'queued'",
-  ).run(new Date().toISOString(), pr);
+  // (runs still queued from before this round don't take a seat either)
+  dropQueuedRuns(pr);
   return { round, base, before };
 }
 
@@ -576,8 +575,7 @@ function sendBack(push: { pr: number; branch: string; author: string; sha?: stri
   if (prev?.status === 'open' && prev.sha !== (sha ?? null) && !ruled(pr, prev.round, prev.sha) && roundUnderWay(pr, prev)) {
     leaveBehind(pr, prev);
     db.prepare('update prs set sha = ?, since = (select coalesce(max(id), 0) from jobs) where number = ?').run(sha ?? null, pr);
-    db.prepare("update jobs set status = 'cancelled', finished = ? where pr = ? and kind in ('review', 'consolidate') and status = 'queued'")
-      .run(new Date().toISOString(), pr);
+    dropQueuedRuns(pr);
   }
   if (prev?.status === 'stuck' && !ruled(pr, prev.round, prev.sha)) db.prepare('update prs set sha = ? where number = ?').run(sha ?? null, pr);
   fixJob({ number: pr, branch, author } as Pr, what, prompt);
@@ -719,12 +717,8 @@ function dispatchTriage(job: { id: number; pr: number; round: number; sha: strin
     return stuck(job.pr, `review needs its owner's decision: ${selected.reason}`);
   }
   db.prepare("update prs set panel = 'triaged' where number = ?").run(job.pr);
-  for (const seat of selected.reviewers) roundJob({ agent: seat.agent, kind: 'review', pr: job.pr, round: job.round,
-    sha: job.sha!, judges: seat.files, stage: 'review', step: 'Reviewing',
-    cli: seat.security && findAgent(seat.agent)?.engine === 'codex' ? 'codex' : undefined,
-    prompt: reviewerPrompt(job.pr, pr.branch, briefingFor(pr.branch, job.round, selected.throwaway), seat.security, seat.files, true, pr.fixes_from, selected.throwaway)
-      + lens(seat, seat.agent === selected.looker, selected.foundation.includes(seat.agent)) + boardWords(pr.branch)
-      + scopeFor(pr) });
+  for (const seat of selected.reviewers) queueReader(job, pr, selected, seat);
+  queueConsolidatorRead(job, pr, selected, selected.consolidator);
   publish({ type: 'log', agent: selected.consolidator,
     text: `PR #${job.pr}, round ${job.round}: ${selected.reason}. Reviewers: ${selected.reviewers.map(seat => `${seat.agent}: ${seat.reason}`).join(', ') || 'the consolidator alone'}` });
   if (!selected.reviewers.length) {
@@ -734,6 +728,26 @@ function dispatchTriage(job: { id: number; pr: number; round: number; sha: strin
         briefingFor(pr.branch, job.round, selected.throwaway), JSON.parse(pr.links), 'Read the assigned diff yourself, with no separate reviewers.',
         boardWords(pr.branch, 'ruling'), scopeFor(pr), JSON.parse(pr.files), writes, pr.fixes_from, selected.throwaway) });
   }
+}
+
+function queueReader(job: { pr: number; round: number; sha: string | null }, pr: Pr, selected: reviewtriage.Selection, seat: reviewtriage.Read) {
+  roundJob({ agent: seat.agent, kind: 'review', pr: job.pr, round: job.round,
+    sha: job.sha!, judges: seat.files, stage: 'review', step: 'Reviewing',
+    cli: seat.security && findAgent(seat.agent)?.engine === 'codex' ? 'codex' : undefined,
+    prompt: reviewerPrompt(job.pr, pr.branch, briefingFor(pr.branch, job.round, selected.throwaway), seat.security, seat.files, true, pr.fixes_from, selected.throwaway)
+      + lens(seat, seat.agent === selected.looker, selected.foundation.includes(seat.agent)) + boardWords(pr.branch)
+      + scopeFor(pr) });
+}
+
+// A required read covered by triage's suggestion becomes independent when another agent takes the ruling.
+function queueConsolidatorRead(job: { pr: number; round: number; sha: string | null }, pr: Pr, selected: reviewtriage.Selection | undefined, agent: string) {
+  if (!selected?.consolidatorRead || selected.consolidatorRead.agent === agent) return false;
+  const seat = selected.consolidatorRead;
+  const reviews = roundReviews(job.pr, job.round, job.sha, pr.since);
+  if (reviews.some(review => review.agent === seat.agent)) return false;
+  queueReader(job, pr, selected, seat);
+  reviewtriage.addReader(job, selected, seat);
+  return true;
 }
 
 function scopeFor(pr: Pr) {
@@ -954,12 +968,15 @@ export async function reviewFinished(job: { id: number; kind: string; status: st
     }
     // two reviewers finishing together both see the panel complete: consolidate once
     if (db.prepare("select 1 from jobs where kind = 'consolidate' and pr = ? and round = ? and sha = ? and coalesce(stage, '') != 'triage' and id > ?").get(job.pr, job.round, job.sha, pr.since)) return;
+    const selected = reviewtriage.selected(job.pr, job.round, job.sha);
+    const agent = panel.consolidator(job.pr, 'ruling');
+    if (queueConsolidatorRead(job, pr, selected, agent)) return;
     // the findings the round weighs: the trust rule's dismissals stay out, and the ones on code the change doesn't touch
     // are set apart
     const isPreExisting = findings.preExisting(findings.changeOf(job.pr, job.sha));
     const reports = jobs.map(j => weighed(j.agent, j.output, isPreExisting)).join('\n\n');
-    const writes = touchupFiles(pr), throwaway = reviewtriage.selected(job.pr, job.round, job.sha)?.throwaway;
-    roundJob({ pr: job.pr, round: job.round, sha: job.sha ?? undefined,
+    const writes = touchupFiles(pr), throwaway = selected?.throwaway;
+    roundJob({ agent, pr: job.pr, round: job.round, sha: job.sha ?? undefined,
       stage: 'ruling', step: `Weighing the reviews${label ? ` (${label})` : ''}`, writes,
       prompt: consolidatorPrompt(job.pr, job.branch, pr.author, briefingFor(job.branch, job.round, throwaway), JSON.parse(pr.links), reports, boardWords(job.branch, 'ruling'),
         scopeFor(pr),
@@ -1048,7 +1065,7 @@ function roundJob(job: Omit<Parameters<typeof createJob>[0], 'title' | 'agent'> 
   const { branch, checks_note, files, since } = db.prepare('select branch, checks_note, files, since from prs where number = ?').get(job.pr) as Pr;
   const previews = previewsStep(job, JSON.parse(files));
   // (screens.rulingStep)
-  const made = createJob({ agent: panel.consolidator(job.pr, job.stage), kind: 'consolidate', branch, downtime: downtime(branch),
+  const made = createJob({ agent: job.agent ?? panel.consolidator(job.pr, job.stage), kind: 'consolidate', branch, downtime: downtime(branch),
     ...named(job.step, branch, job.pr), ...job, prompt: job.prompt + visualapproval.reviewStep(job.round, job.stage) + screens.rulingStep(job) + previews + checks_note + boardDecisions(job.pr) });
   if ((job.kind ?? 'consolidate') === 'consolidate' && !['merge', 'triage'].includes(job.stage ?? ''))
     reviewsources.record(made.id, roundReviews(job.pr, job.round, job.sha ?? null, since));
@@ -1062,7 +1079,9 @@ function previewsStep(job: { pr: number; round: number; sha?: string; kind?: str
   if (!chosen?.looker) return '';
   if (job.kind === 'review') return job.agent === chosen.looker ? visual.reviewStep(visual.visualFor(job.judges ?? [])) : '';
   if (job.stage !== 'ruling') return '';
-  return chosen.looker === chosen.consolidator ? visual.rulingStep(visual.visualFor(files)) : visual.weighStep(visual.visualFor(files), chosen.looker);
+  const { since } = db.prepare('select since from prs where number = ?').get(job.pr) as Pr;
+  const looked = roundReviews(job.pr, job.round, job.sha ?? null, since).some(reader => reader.agent === chosen.looker);
+  return looked ? visual.weighStep(visual.visualFor(files), chosen.looker) : visual.rulingStep(visual.visualFor(files));
 }
 
 async function decide(job: { id: number; pr: number; round: number; sha: string | null }, pr: Pr) {
@@ -1702,8 +1721,9 @@ const HANDOFF_MS = 10 * 60_000;
 // A job on pull request p: one of its own, or its author's work on its branch.
 const JOB_ON_PR = `(j.pr = p.number or j.kind = 'work' and j.branch = p.branch)`;
 const OPEN_JOB = `j.status in ('queued', 'running', 'blocked')`;
-const NO_JOB_SINCE = `not exists (
-  select 1 from jobs j where ${JOB_ON_PR} and (${OPEN_JOB} or coalesce(j.finished, j.created) >= ?))`;
+const noJobOnSince = (open: string) => `not exists (
+  select 1 from jobs j where ${JOB_ON_PR} and (${open} or coalesce(j.finished, j.created) >= ?))`;
+const NO_JOB_SINCE = noJobOnSince(OPEN_JOB);
 // The start of revive's hold while GitHub can't tell: what a later answer clears
 const unanswered = (round: number) => `round ${round} never reached the panel, and GitHub `;
 export async function reviveRounds() {
@@ -1848,6 +1868,7 @@ function stuckToAuthor(pr: Pr) {
 // A pull request merged or closed, by any path: the sweeps' settings on it go, and the stuck sweep's job for its author
 // with them.
 function settledAside(pr: number) {
+  dropQueuedRuns(pr);
   const { job } = givenFor(pr);
   if (job) ledger.cancelJob(job, `PR #${pr} is merged or closed`);
   remember(stuckKey(pr), null);
@@ -1855,19 +1876,31 @@ function settledAside(pr: number) {
   // (once the path that settled it has done the rest)
   setImmediate(() => mergeOrderMoved(pr).catch(err => console.error(`Could not merge the pull requests held behind PR #${pr}:`, err)));
 }
+// A pull request's review runs still queued end once a new round starts or the pull request merges or closes: they never
+// decide anything then (reviewFinished). Running ones finish as they are.
+function dropQueuedRuns(pr: number) {
+  db.prepare("update jobs set status = 'cancelled', finished = ? where pr = ? and kind in ('review', 'consolidate') and status = 'queued'")
+    .run(new Date().toISOString(), pr);
+}
 
 // Ask GitHub about open pull requests with no active job and no job activity for an hour, whatever their round.
 // The quiet hour avoids asking during gaps between jobs. Each pull request is asked at most once an hour to limit
 // GitHub traffic.
 // Settings keep the last-asked time across restarts, so a restart doesn't ask again. A merged or closed one is recorded
 // so here, and its saved time is cleared with its status.
+// A job queued on it that a pause holds (jobs.ts heldWith, the claim's own hold) isn't anyone on it: its work may land
+// another way while the pause lasts (through another pull request, or by hand on GitHub), and only this asks. An
+// expedited merge's review is the exception: GitHub has it merged, and only that review's ruling settles it
+// (reviewedAfter).
 const IDLE_MS = 60 * 60_000;
 const idleCheckKey = (pr: number) => `review.idle.${pr}`;
-const IDLE_OPEN = `p.status = 'open' and ${NO_JOB_SINCE}`;
+// (built when asked: jobs.ts imports this file, so its predicates aren't there yet at load)
+const UNHELD_JOB = () =>
+  `(j.status in ('running', 'blocked') or j.status = 'queued' and (p.expedited = 1 or ${heldWith('j')} is null))`;
 export async function settleIdle() {
   const now = Date.now();
   const noJobSince = new Date(now - IDLE_MS).toISOString();
-  const idle = db.prepare(`select * from prs p where ${IDLE_OPEN}`).all(noJobSince) as Pr[];
+  const idle = db.prepare(redraws.query(`select * from prs p where p.status = 'open' and ${noJobOnSince(UNHELD_JOB())}`)).all(noJobSince) as Pr[];
   for (const pr of idle) {
     const key = idleCheckKey(pr.number);
     if (deciding.has(pr.number) || now - Number(setting(key) ?? 0) < IDLE_MS) continue;
@@ -1891,7 +1924,7 @@ async function reconcile(pr: Pr, why: string, noJobSince?: string): Promise<Reco
   const unchanged = db.prepare(`select 1 from prs where number = ? and status = ? and round = ? and since = ?`)
     .get(pr.number, pr.status, pr.round, pr.since);
   if (!unchanged) return;
-  if (noJobSince && !db.prepare(`select 1 from prs p where p.number = ? and ${NO_JOB_SINCE}`).get(pr.number, noJobSince)) return;
+  if (noJobSince && !db.prepare(redraws.query(`select 1 from prs p where p.number = ? and ${noJobOnSince(UNHELD_JOB())}`)).get(pr.number, noJobSince)) return;
   if (await settled(pr.number, github?.state, why)) return;
   return github?.state === 'open' ? 'open' : 'unanswered';
 }
@@ -2328,7 +2361,6 @@ secret or a house-rule break you meet is still a finding.
 ${looking ? "You are this round's one reader who looks at what the change shows: rendering it, screenshots and page checks are yours."
     : 'Rendering, screenshots and page checks are not yours on this change. Run or try code only if your lens is how it behaves.'}
 ${foundation ? FOUNDATION_QUESTION : ''}`;
-const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 // The first question is judgment, not a check (the round's bar, reviewrounds.ts)
 const FIRST_QUESTION = `is the change the simplest shape of what the board asked for, built on what we already have, or does it
 rebuild something that exists (a second copy of a feature, a parallel data model, a new path beside a working one)?

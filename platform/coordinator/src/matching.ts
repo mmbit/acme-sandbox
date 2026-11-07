@@ -1,12 +1,12 @@
-// Done jobs matched by agent, origin and title words, or scheduled entry. Carry checks match only carry checks, of
-// their own kind.
+// Done work matched by scope or title. Mechanical carries compare the checks their commits require.
+import * as carryscope from './carryscope.ts';
 import { db } from './db.ts';
 import { keptPool, type Notes, type RowAlias } from './keptpool.ts';
 // (the runs table, which the pool is read from and counted on)
 import './agenttime.ts';
 import { keysCondition } from './chat.ts';
 import { workBranch } from './jobs.ts';
-import { mean, wholeSeconds } from './arithmetic.ts';
+import { wholeSeconds } from './arithmetic.ts';
 import { REBUILT_RUN, INVALID_RUN, timingFlags, type TimingEvidence, type TimingFlag } from './timing.ts';
 import { ADJUSTED_COLUMNS, ADJUSTED_JOIN, adjustedOf, countedMs, type Adjusted, type AdjustedRow } from './adjusted.ts';
 
@@ -22,8 +22,9 @@ export const ORIGIN = `case when j.carry is not null then 'carry' when j.stage =
     or exists(select 1 from proposals p where p.accepted = j.id and p.status = 'accepted')
     or (not j.is_check and exists(select 1 from book_sheets s where s.job = j.id and s.status = 'sent'
       and s.owner = j.agent)) then 'work' else 'hq' end`;
-// A carry check's kind, read as work to size (Work.carry_code)
-export const CARRY_CODE = '(select code from carry_commits where sha = j.carry) carry_code';
+// A carry commit's recorded scope, read before its check is sized.
+export const CARRY_COLUMNS = `(select code from carry_commits where sha = j.carry) carry_code,
+  (select scope from carry_commits where sha = j.carry) carry_scope`;
 export const ABOUT_KEYS = `(j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()}))`;
 export const PRIVATE = `(j.customers or ${ABOUT_KEYS})`;
 
@@ -57,6 +58,9 @@ export type PastJob = {
   // a carry check's commit: 1 when it changes anything a push's checks run on, 0 when nothing, null unknown
   // (db.ts carry_commits).
   carry_code?: number | null;
+  carry_scope?: string | null;
+  comparison_weight?: number;
+  carry?: string | null;
 } & Run;
 
 // A scheduled job's run (schedule.ts schedule_runs): its entry, the entry's routine, and the slot run() puts at the end
@@ -87,7 +91,7 @@ const past = (only = false) => {
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
     p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}, r.outcomes, r.invalid_runs, r.unknown_seats, j.customers,
-    ${ABOUT_KEYS} about_keys, ${ADJUSTED_COLUMNS}, cc.code carry_code,
+    ${ABOUT_KEYS} about_keys, ${ADJUSTED_COLUMNS}, cc.code carry_code, cc.scope carry_scope, j.carry,
     j.id in (select job from job_replacement_links) is_replacement
   from (select job, count(*) runs, sum(${REBUILT_RUN}) rebuilt, min(started) first, max(ended) last,
     sum((julianday(ended) - julianday(started)) * 86400000) agent_ms,
@@ -183,7 +187,13 @@ export function timingAudit(pool: PastJob[] = pastJobs()) {
 
 // The piece of work to match: its title, its origin, its agent when known (any agent's work matches otherwise), and
 // for a scheduled job its run.
-export type Work = { title: string; origin: JobOrigin; agent?: string; carry_code?: number | null } & Partial<Run>;
+export type Work = {
+  title: string;
+  origin: JobOrigin;
+  agent?: string;
+  carry_code?: number | null;
+  carry_scope?: string | null;
+} & Partial<Run>;
 // What the picks have in common with the work: its origin and its agent, unless too few of those were done, and the
 // title's words that found them (none: the latest of their origin). `kind` is the origin's name where the basis is
 // stored (predictions.ts) and shown (hq estimate). A scheduled job's: the runs of its entry (`entry`), or of its
@@ -196,6 +206,7 @@ export type Basis = {
   entry?: string;
   routine?: string;
   code?: boolean;
+  scope?: carryscope.Scope;
 };
 
 // The jobs an estimate takes the mean of (a mean holds the few long jobs that dominate a sum of agent time): the PICKS
@@ -210,21 +221,9 @@ export function picksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis
 }
 // Historical baseline only. Candidate comparisons always use picksFor.
 export function rawPicksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis: Basis } {
-  if (work.origin === 'carry') return carriesLike(work, pool);
+  if (work.origin === 'carry') return carryscope.comparisons(work, pool);
   const agents = agentPool(pool);
   return runsLike(work, agents) ?? matched(work, agents);
-}
-// A carry check stands on the latest PICKS of its own kind: a commit that changes code gets a push's whole gates and
-// tests, tens of minutes, one of company files alone seconds. With its kind unknown, or fewer than FEWEST of it, on
-// the latest carry checks of any kind.
-function carriesLike(work: Work, pool: PastJob[]) {
-  const carries = pool.filter(job => job.origin === 'carry').sort((a, b) => b.id - a.id);
-  const kind = work.carry_code == null ? [] : carries.filter(job => job.carry_code === work.carry_code);
-  const own = kind.length >= FEWEST;
-  return {
-    picks: (own ? kind : carries).slice(0, PICKS),
-    basis: { kind: 'carry' as const, agent: null, words: [], ...(own && { code: work.carry_code === 1 }) },
-  };
 }
 // A worker-only check never becomes evidence for model-agent work, even in a sparse pool.
 const agentPools = new WeakMap<PastJob[], PastJob[]>();
@@ -268,12 +267,13 @@ function runsLike(work: Work, pool: PastJob[]) {
 }
 
 // The work's time: the mean of its picks, each at its adjusted time where a process change made its measurement stale
-// (adjusted.ts). None with fewer than FEWEST picks.
+// (adjusted.ts) and weighted by how closely it compares (a carry's, carryscope.ts), else equally. None with fewer than
+// FEWEST picks of model-agent work. A carry check needs one: carryscope.ts picks only comparable checks.
 export function sizeOf(picks: PastJob[]) {
-  if (picks.length < FEWEST) return null;
-  return {
-    agent_ms: wholeSeconds(mean(picks.map(countedMs))!),
-  };
+  if (!picks.length || (picks[0].origin !== 'carry' && picks.length < FEWEST)) return null;
+  const weight = (job: PastJob) => job.comparison_weight ?? 1;
+  const weighted = picks.reduce((sum, job) => sum + countedMs(job) * weight(job), 0);
+  return { agent_ms: wholeSeconds(weighted / picks.reduce((sum, job) => sum + weight(job), 0)) };
 }
 
 // Small words (English, Dutch and German: the board's languages, language.ts, which the plan's titles are written in)

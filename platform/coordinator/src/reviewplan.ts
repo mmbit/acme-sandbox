@@ -5,8 +5,8 @@ import { expeditedPlans } from './expeditedplan.ts';
 import { org, roles, ceo } from './company.ts';
 import { OPEN_JOBS, workBranchOf } from './jobs.ts';
 import { withPicks } from './models.ts';
-import { fitIn, mean, wholeSeconds } from './arithmetic.ts';
-import { weekOfReviews } from './reviewtime.ts';
+import { fitIn } from './arithmetic.ts';
+import { measuredSizes } from './reviewtime.ts';
 import type { ReviewPlan, ReviewStage } from './rounds.ts';
 import { ownerOf } from './projects.ts';
 
@@ -36,7 +36,6 @@ type Run = {
   stage: string | null;
   status: string;
 };
-type Measurement = { engine: string; kind: string; ms: number };
 export type ProspectiveRun = Run & { branch: string; thread: string | null };
 type Work = {
   opensReview?: boolean;
@@ -70,28 +69,28 @@ function roundsBefore(
   actors: ReturnType<typeof panelActors>,
   now: number,
 ): ReviewPlan {
-  const resolution = pr ? resolutionOf(sweepAction(pr, true), now) : undefined;
+  const own = pr ? (record.runs.get(pr.number) ?? []) : [];
+  // Work on an open pull request's branch, not run on it yet, pushes the next round once this one's ruled (review.ts).
+  const continuing =
+    pr?.status === 'open' && isOpen(work) && pr.branch !== `job/${work.id}` && !own.some(run => run.id === work.id);
+  const resolution = pr && !continuing ? resolutionOf(sweepAction(pr, true), now) : undefined;
   if (
     pr &&
     (resolution !== undefined ||
       !inReview(pr) ||
-      (!pr.round && officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number)))
+      (!continuing &&
+        !pr.round &&
+        officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number)))
   )
-    return {
-      panel: pr.panel ?? 'records',
-      count: 0,
-      stages: [],
-      terminal: null,
-      unresolved: inReview(pr),
-      ...resolution,
-    };
-  const own = pr ? (record.runs.get(pr.number) ?? []) : [];
+    return resolutionPlan(pr, resolution);
   const panel = pr?.panel ?? (pr && own.length && !own.some(run => run.kind === 'review') ? 'check' : 'triage');
   const current = Math.max(1, pr?.round ?? 1);
+  const opens = continuing ? pr.round + 1 : undefined;
   const fixing = own.some(run => run.round === current && run.kind === 'work' && isOpen(run));
   const undrawn = pr && !fixing ? record.undrawn.get(pr.number) : undefined;
   if (undrawn && !undrawn.sorter) return undrawnFix(pr!, undrawn.owner);
-  const count = Math.max(current + Number(fixing || !!undrawn), record.counts.get(pr?.review_class ?? panel) ?? 1);
+  const least = Math.max(current + Number(fixing || !!undrawn), opens ?? 0);
+  const count = Math.max(least, record.counts.get(pr?.review_class ?? panel) ?? 1);
   const selection = pr ? record.selections.get(pr.number) : undefined;
   const reviewers = panelMembers(
     own.filter(run => run.round === current && run.id > (pr?.since ?? 0)),
@@ -109,7 +108,19 @@ function roundsBefore(
     actors: { ...actors, consolidator: selection?.consolidator ?? actors.consolidator },
     work,
     sorter: undrawn?.sorter,
+    opens,
   });
+}
+
+function resolutionPlan(pr: PullRequest, resolution: ReturnType<typeof resolutionOf>): ReviewPlan {
+  return {
+    panel: pr.panel ?? 'records',
+    count: 0,
+    stages: [],
+    terminal: null,
+    unresolved: inReview(pr),
+    ...resolution,
+  };
 }
 
 // Ruled "changes" with its findings in the owner's inbox and no fix task drawn. While the owner's planning job holds
@@ -176,10 +187,6 @@ function records(now: number, prospective?: ProspectiveRun) {
     where p.status in ('open', 'board', 'stuck') order by coalesce(j.seq, j.id), j.id`,
   ).all() as Run[];
   if (prospective) runs.push(prospective);
-  // (the week's done review runs, checks and fixes, none still running: reviewtime.ts weekOfReviews)
-  const measured: Measurement[] = weekOfReviews(now)
-    .filter(job => !job.running)
-    .map(job => ({ engine: job.engine, kind: job.measuredKind, ms: job.ms }));
   const panels = Map.groupBy(
     prs.filter(pr => pr.status === 'merged'),
     pr => pr.review_class ?? 'check',
@@ -201,7 +208,7 @@ function records(now: number, prospective?: ProspectiveRun) {
         ),
       ]),
     ),
-    measured: measuredSizes(Map.groupBy(measured, run => `${run.kind}:${run.engine}`)),
+    measured: measuredSizes(now),
   };
 }
 
@@ -214,16 +221,6 @@ function recordedSelections() {
     )
     .all() as { pr: number; selection: string }[];
   return new Map(selections.map(row => [row.pr, JSON.parse(row.selection) as Selected]));
-}
-
-function measuredSizes(groups: Map<string, Measurement[]>) {
-  return new Map(
-    [...groups].map(([key, runs]) => {
-      const times = runs.map(run => run.ms),
-        usualMs = wholeSeconds(mean(times)!);
-      return [key, { usualMs, slowMs: Math.max(usualMs, wholeSeconds(fitIn(times, SLOW_SHARE)!)) }] as const;
-    }),
-  );
 }
 
 function panelActors(record: ReturnType<typeof records>) {
@@ -251,7 +248,7 @@ function panelActors(record: ReturnType<typeof records>) {
   };
 }
 const inReview = (pr: { status: string }) => ['open', 'board', 'stuck'].includes(pr.status);
-const isOpen = (run: Run) => ['queued', 'running', 'blocked'].includes(run.status);
+const isOpen = (run: Pick<Run, 'status'>) => ['queued', 'running', 'blocked'].includes(run.status);
 
 type Selected = { consolidator: string; reviewers: { agent: string }[] };
 function panelMembers(own: Run[], selected: Selected | undefined) {
@@ -277,6 +274,7 @@ type Context = {
   work: Work;
   // the owner's planning job holding the round's undrawn findings (undrawnFix): the stage before its fix
   sorter?: Sorter;
+  opens?: number; // the round the work's own push opens (a board or stuck PR holds it): that push is its fix
 };
 type Sorter = { id: number; agent: string; engine: string };
 function buildPlan(context: Context): ReviewPlan {
@@ -308,13 +306,14 @@ function buildPlan(context: Context): ReviewPlan {
       if (fixes.length)
         for (const fix of fixes)
           preceding = [addStage(context, stages, `${round}:fix:${fix.id}`, 'work', fix.agent, preceding, fix)];
-      else
+      else if (round + 1 !== context.opens)
         preceding = [
           addStage(context, stages, `${round}:fix`, 'work', context.pr?.author ?? context.work.agent, preceding),
         ];
     }
   }
   return {
+    ...(context.pr ? { pr: context.pr.number } : {}),
     panel: context.panel,
     count: context.count,
     stages,

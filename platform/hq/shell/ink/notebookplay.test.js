@@ -420,10 +420,12 @@ test("pages are titled, ordered and archived; dev mode's seed reads whole", () =
   assert.ok(asked.some(g => g.waiting));
   const open = play.route('/api/notebooks/open');
   assert.deepEqual([open.forms.length, open.questions.length], [1, 1]);
+  // (the book lists its pages chapter by chapter, so a new order holds within each: the seed's Sketch pages reversed,
+  // its call page kept in Calls)
   const order = pages.map(p => p.id).reverse();
   assert.deepEqual(
     post('pages/order', { notebook, pages: order }).pages.map(p => p.id),
-    order,
+    [3, 2, 1, 6],
   );
   assert.throws(
     () => post('pages/order', { notebook, pages: order.slice(1) }),

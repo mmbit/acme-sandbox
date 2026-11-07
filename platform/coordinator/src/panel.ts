@@ -1,6 +1,6 @@
 // Branch authors, review eligibility and the consolidator selected for a round.
 import { db, redactedJson } from './db.ts';
-import { org, roles } from './company.ts';
+import { org, roles, reviewSettings } from './company.ts';
 import * as capacity from './panelcapacity.ts';
 import { withPicks } from './models.ts';
 import * as engineOnly from './engineonly.ts';
@@ -45,7 +45,7 @@ export function excludedAuthors(pr: number) {
   return authors.size === 1 ? authors : new Set<string>();
 }
 
-export function consolidator(pr?: number, stage = 'triage') {
+export function consolidator(pr?: number, stage = 'triage', suggested?: string) {
   const candidates = consolidators(pr);
   const selected =
     pr === undefined
@@ -56,22 +56,13 @@ export function consolidator(pr?: number, stage = 'triage') {
     on p.number = t.pr and p.round = t.round and p.sha = t.sha where t.pr = ? and t.job > p.since order by t.job desc limit 1`,
           )
           .get(pr) as { selection: string } | undefined);
-  const assigned = selected ? (JSON.parse(selected.selection).consolidator as string) : undefined;
-  if (assigned && candidates.includes(assigned)) return assigned;
+  const assigned = suggested ?? (selected ? (JSON.parse(selected.selection).consolidator as string) : undefined);
+  if (assigned && candidates.includes(assigned)) {
+    if (!reviewSettings().consolidatorEngine) return assigned;
+    candidates.unshift(...candidates.splice(candidates.indexOf(assigned), 1));
+  }
   if (!candidates.length) throw new Error(`No eligible consolidator${pr === undefined ? '' : ` for PR #${pr}`}`);
-  return pr === undefined ? candidates[0] : soonest(pr, candidates, stage);
-}
-
-// The shared play decides the start. Equally soon starts favor the engine with more of its week left for the time.
-// Stable sorting leaves preference order to break remaining ties.
-function soonest(pr: number, candidates: string[], stage: string) {
-  const choices = capacity.choices(pr, candidates, stage);
-  choices.sort((a, b) => {
-    const sooner = (a.start ?? Infinity) - (b.start ?? Infinity);
-    const roomier = a.weekLeft === null || b.weekLeft === null ? 0 : b.weekLeft - a.weekLeft;
-    return sooner || roomier;
-  });
-  return choices[0].agent;
+  return pr === undefined ? candidates[0] : capacity.choose(capacity.choices(pr, candidates, stage)).agent;
 }
 
 // Each agent on the engine it runs on, from one read of the chart (a findAgent per agent read it and the picks again).

@@ -14,6 +14,7 @@ export type ReviewStage = {
   after: string[];
 };
 export type ReviewPlan = {
+  pr?: number;
   panel: string;
   count: number;
   stages: ReviewStage[];
@@ -74,7 +75,11 @@ export function expandRows<T extends OrderingSnapshot>(snapshot: T, keepLoops = 
         byId.set(id, row);
         pooled.push({ id, usualMs: stage.usualMs, slowMs: stage.slowMs });
       }
-      row.dependencies.push(...dependencies.filter(job => job !== id).map(job => ({ job, until: 'done' as const })));
+      row.dependencies.push(
+        ...dependencies
+          .filter(job => job !== id)
+          .map(job => ({ job, until: 'done' as const, internal: true as const })),
+      );
     }
     let endpoint = owner.reviewPlan.terminal ? stageIds.get(owner.reviewPlan.terminal)! : null;
     if (endpoint === null && owner.reviewPlan.unresolved) {
@@ -113,10 +118,11 @@ function holdEndpoints(expansion: Expansion, nextId: number) {
 
 function mapTerminal(owner: QueuedJob, terminal: number, jobs: QueuedJob[], terminals: Map<number, number>) {
   terminals.set(owner.id, terminal);
-  const pr = owner.review?.pr ?? owner.pr;
+  const pr = owner.reviewPlan?.pr ?? owner.review?.pr ?? owner.pr;
   if (pr !== null)
     for (const row of jobs)
-      if (row.kind === 'work' && (row.review?.pr ?? row.pr) === pr) terminals.set(row.id, terminal);
+      if (row.kind === 'work' && (row.reviewPlan?.pr ?? row.review?.pr ?? row.pr) === pr)
+        terminals.set(row.id, terminal);
 }
 
 function pendingResolution(owner: QueuedJob, id: number) {
@@ -131,7 +137,7 @@ function pendingResolution(owner: QueuedJob, id: number) {
   };
   const pending = synthetic(owner, stage, id);
   pending.kind = 'resolution';
-  pending.dependencies.push({ job: owner.id, until: 'done' });
+  pending.dependencies.push({ job: owner.id, until: 'done', internal: true });
   const { resolutionAt, resolutionAfter, waiting } = owner.reviewPlan!;
   if (resolutionAfter !== undefined) pending.dependencies.push({ job: resolutionAfter, until: 'done' });
   else if (resolutionAt !== undefined) pending.notBefore = resolutionAt;
@@ -154,7 +160,7 @@ function heldMerge(owner: QueuedJob, id: number, prior: number) {
     id,
   );
   pending.kind = 'resolution';
-  pending.dependencies.push({ job: prior, until: 'done' });
+  pending.dependencies.push({ job: prior, until: 'done', internal: true });
   const hold = owner.mergeHold!;
   if (hold.job !== null) {
     pending.dependencies.push({ job: hold.job, until: 'merged' });

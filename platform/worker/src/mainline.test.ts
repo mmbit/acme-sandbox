@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { MAIN_LINE, checkedChange, tellMainLine, testedAreas, type ToldMain } from './mainline.ts';
-import { areaOf as gatesAreaOf } from '../../../shared/gates/repo.ts';
+import { MAIN_LINE, checkedChange, checkScope, tellMainLine, testedAreas, type ToldMain } from './mainline.ts';
+import { areaOf as gatesAreaOf, TYPED } from '../../../shared/gates/repo.ts';
 import { SUITES } from '../../../shared/gates/suites.ts';
 
 const sha = (n: number) => n.toString(16).padStart(40, '0');
@@ -11,6 +11,7 @@ const sha = (n: number) => n.toString(16).padStart(40, '0');
 const main = (tip: number, kept = 1) => {
   const at = (n: number) => ({ sha: sha(n), parents: n > 1 ? [sha(n - 1)] : [] });
   return {
+    mainTip: () => sha(tip),
     mainLine: (count: number) => Array.from({ length: Math.min(count, tip) }, (_, i) => at(tip - i)),
     mainSince: (seen: string) => {
       const n = parseInt(seen, 16);
@@ -93,4 +94,19 @@ test("the worker's reading of the checks' areas and test files is shared/gates' 
   const suite = (f: string) => Object.values(SUITES).some(s => s.files.test(f));
   const differ = files.filter(f => String([...testedAreas([f])]) !== (suite(f) ? gatesAreaOf(f) : ''));
   assert.deepEqual(differ, []);
+  const typed = files.filter(f => checkScope([f], new Set()).typecheck !== TYPED.test(f));
+  assert.deepEqual(typed, []);
+});
+
+test('scope selects only tests in changed areas, including a deletion and a documentation change', () => {
+  const tested = testedAreas(['platform/coordinator/src/a.test.ts', 'infra/test_sync.py']);
+  assert.deepEqual(checkScope(['company/people/bolt.md'], tested), { typecheck: false, tests: [] });
+  assert.deepEqual(checkScope(['platform/coordinator/README.md'], tested), {
+    typecheck: false,
+    tests: ['platform/coordinator'],
+  });
+  assert.deepEqual(checkScope(['platform/coordinator/src/deleted.ts', 'infra/test_sync.py'], tested), {
+    typecheck: true,
+    tests: ['infra', 'platform/coordinator'],
+  });
 });

@@ -1,7 +1,5 @@
-// A job on a pull request's branch (a fix round, a touch-up check, the board's notes): it goes on in its author's last
-// session there, which the worker keeps while the pull request can still merge (jobs.ts ended), as long as that session
-// is warm on the seat that claims it. Otherwise it starts a fresh one with the author's closing reports (the worker's
-// carry.ts).
+// A pull request's next job goes on in its author's warm session on the claiming seat, or starts from the closing
+// reports. A Claude fix always starts from the reports.
 import { db } from './db.ts';
 
 // The engines' prompt caches last an hour from a request. A session resumed after that writes its whole context to the
@@ -11,6 +9,9 @@ export const COLD_MS = 60 * 60_000;
 type Branched = {
   id: number;
   kind: string;
+  engine: string;
+  cli: string | null;
+  stage: string | null;
   agent: string;
   branch: string | null;
   pr: number | null;
@@ -33,7 +34,10 @@ export function carryOver(job: Branched, seat: string): { resumes?: Resumes; clo
     )
     .get(job.agent, job.branch, job.id) as Resumes | undefined;
   if (!last) return {};
-  if (warmOn(last.session, seat)) return { resumes: last };
+  // A Claude fix resumed from another job re-reads that job's whole history on every turn, which measured costlier than
+  // a fresh start (DECISIONS.md, 2026-11-07).
+  const freshFix = (job.cli ?? job.engine) === 'claude' && job.stage === 'fix';
+  if (!freshFix && warmOn(last.session, seat)) return { resumes: last };
   const reports = db
     .prepare(
       `select id job, result report from jobs where kind = 'work' and status = 'done' and agent = ?

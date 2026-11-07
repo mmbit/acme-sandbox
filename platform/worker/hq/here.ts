@@ -19,7 +19,7 @@ export async function noTakerNow(kindName: string) {
   const kind = machine.kinds.find(one => one.name === kindName) ?? only;
   // (several kinds and none named: HQ's refusal says which there are)
   if (!kind) return kindName ? `HQ declares no ${kindName} kind of run` : null;
-  if (kind.present || (kind.server.present && kind.serverTakes)) return null;
+  if (kind.present) return null;
   return kind.serverTakes ? `no helper of ${kind.name} is asking for work` : `${machine.name} isn't asking for work`;
 }
 

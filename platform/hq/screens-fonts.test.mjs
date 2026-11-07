@@ -1,5 +1,5 @@
 // node --test platform/hq/screens-fonts.test.mjs
-// A kept kit font in the screenshot look (screens-shots.mjs fulfilFonts): HQ's page asks Google Fonts for Pixelify Sans
+// A kept kit font in the screenshot look (keptfonts.mjs fulfilFonts): HQ's page asks Google Fonts for Pixelify Sans
 // and gets the kit's file, at an address HQ's CSP lets it load, so the screen is shot in Pixelify, not a fallback
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,8 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launched, openPage } from '../../shared/browser/browser.mjs';
 
-process.env.HQ_RENDER_CHILD = '1'; // (the harness it imports runs here, never sent on to the render helper)
-const { fulfilFonts, keptFonts } = await import('./screens-shots.mjs');
+import { fulfilFonts, keptFonts } from './keptfonts.mjs';
 // A kits folder of the test's own that keeps a Pixelify Sans (the Notebook's Caveat under its name: the page needs a
 // real font file, not Pixelify's glyphs), so it passes at a company whose kits keep none, and with no way out to
 // Google

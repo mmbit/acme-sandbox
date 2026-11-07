@@ -95,6 +95,9 @@ export function areaOf(path: string) {
   return parts.slice(0, depth).join('/');
 }
 
+// A change to one of these runs the type check (gates.ts, and the worker's carry checks: its mainline.ts)
+export const TYPED = /\.(ts|js|mjs|cjs)$|(^|\/)(package|tsconfig)\.json$/;
+
 export function plural(n: number, noun: string) {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }

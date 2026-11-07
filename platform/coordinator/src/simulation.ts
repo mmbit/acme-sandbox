@@ -184,7 +184,8 @@ function preparedPlay(
     conditions: ledger.conditions(snapshot),
   };
   for (const run of runs.values())
-    if (run.state === 'running') run.seat = play.seats.find(s => s.id === run.row.seat) ?? null;
+    if (run.state === 'running' && !snapshot.memory?.checks?.includes(run.row.id))
+      run.seat = play.seats.find(s => s.id === run.row.seat) ?? null;
   return play;
 }
 
@@ -290,7 +291,7 @@ function start(play: Play, now: number) {
   const waiting: Run[] = [];
   for (const r of play.claimants) if (r.state === 'waiting' && ready(r, now)) waiting.push(r);
   // Started claims join this list. Runs paused by makeRoom stay in it until they stop.
-  const running = [...play.started];
+  const running = [...play.started].filter(run => !play.snapshot.memory?.checks?.includes(run.row.id));
   const seats = capacity.at(play.seats, now);
   const reservations = activeReservations(play, seats);
   if (play.account) ledger.pacing(play.account, seats);

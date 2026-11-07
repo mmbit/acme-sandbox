@@ -1425,3 +1425,65 @@ test('an older spare claim on another engine cannot spend an ordinary waiter’s
     assert.ok(seen.get(2)!.start! >= seen.get(3)!.done!);
   }
 });
+
+for (const urgent of [false, true])
+  test(`a transitive prerequisite carries ${urgent ? 'urgency across pacing' : 'an overdue waiting window ahead of older independent work'}`, () => {
+    const input = snapshot([
+      work(1, { due: -120 * MINUTE }),
+      work(2, { due: -60 * MINUTE }),
+      work(3, { after: 2 }),
+      work(4, { needs: [3], due: -30 * MINUTE, urgent }),
+    ]);
+    if (urgent) {
+      input.pacing = true;
+      Object.assign(input.seats[0], { week: 0.8, weekResets: 1000 * MINUTE });
+    }
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(
+        input,
+        sizes([
+          [1, 1],
+          [2, 1],
+          [3, 1],
+          [4, 1],
+        ]),
+        { pace },
+      );
+      assert.equal(seen.get(2)!.start, 0);
+      assert.ok(seen.get(3)!.start! < seen.get(1)!.start!);
+      assert.notEqual(seen.get(4)!.done, null);
+    }
+  });
+
+test('a task with only its own review ahead leaves older overdue independent work first', () => {
+  const input = snapshot([
+    work(1, { due: -120 * MINUTE }),
+    work(2, {
+      due: -60 * MINUTE,
+      reviewPlan: {
+        panel: 'review',
+        count: 1,
+        terminal: 'review',
+        stages: [
+          {
+            key: 'review',
+            kind: 'review',
+            agent: 'reviewer',
+            engine: 'codex',
+            usualMs: MINUTE,
+            slowMs: MINUTE,
+            after: [],
+          },
+        ],
+      },
+    }),
+  ]);
+  const seen = play(
+    input,
+    sizes([
+      [1, 1],
+      [2, 1],
+    ]),
+  );
+  assert.ok(seen.get(1)!.start! < seen.get(2)!.start!);
+});

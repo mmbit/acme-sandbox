@@ -1,11 +1,9 @@
 // The guest path's steps its checks share (guestshelf-check.mjs, guestlooks-check.mjs, guestartifact.mjs): the work
 // on a stand-in page with the real coordinator's review mode, the board's Share on it in HQ's viewer, a guest's
-// email-code sign-in by their link, a typed scrap and a page closed. state: guestserver.mjs's (h, mail, origin,
-// opened).
+// email-code sign-in by their link and a page closed (a typed note: guestscreen.mjs's addNote.). state: guestserver.mjs's (h, mail, origin, opened).
 import assert from 'node:assert/strict';
 import { fulfilResponse } from './originroute.mjs';
 import { readyHQ } from './invitechecks.mjs';
-import { named, pointOnPaper } from './guestscreen.mjs';
 import { until } from '../../../shared/browser/browser.mjs';
 
 export const joinPage = `<!doctype html><meta name="viewport" content="width=device-width"><title>Join the crew</title>
@@ -60,29 +58,6 @@ export async function signInByMail(state, page, link) {
   assert.ok(code, 'the sign-in code came by email');
   await page.locator('#code').fill(code);
   await page.locator(`form[action="${path}/verify"] button`).click();
-}
-
-// A typed scrap on the open page, as the book's Text tool writes it
-export async function typeNote(page, words) {
-  await page
-    .locator('#book')
-    .getByRole('button', { name: await named(page, 'toolText'), exact: true })
-    .click();
-  // (below the page's last scrap, on the bare paper: past the 64 px in which words join a drawing above, here the ask)
-  const [x] = await pointOnPaper(page, 0.3, 0.5);
-  const y = await page.evaluate(() =>
-    Math.max(
-      0,
-      ...[...document.querySelectorAll('#book .bk-page:not([hidden]) [data-g]')].map(
-        el => el.getBoundingClientRect().bottom,
-      ),
-    ),
-  );
-  await page.mouse.click(x, y + 100);
-  const field = page.locator('#book .bk-typed-words[contenteditable]');
-  await field.fill(words);
-  await field.press('Escape');
-  await page.locator('#book .bk-typed').filter({ hasText: words }).first().waitFor();
 }
 
 // A page done with: its routes let go first, so a request still on its way when it closes answers nothing

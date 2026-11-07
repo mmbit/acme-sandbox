@@ -20,17 +20,16 @@ import { brandProblems } from './brand.ts';
 import { importProblems } from './imports.ts';
 import { HqUnreachable, NO_ROOM_EXIT, NoRoom, onLent, UNREACHED_EXIT } from './lent.ts';
 import { dataProblems, outputProblems, renderProblems, type Change, type Problem } from './output.ts';
-import { areaOf, git, gitFiles, linkModules, plural, TOOLS_HOME, workingTree } from './repo.ts';
+import { areaOf, git, gitFiles, linkModules, plural, TOOLS_HOME, TYPED, workingTree } from './repo.ts';
 import { reachedRoots, typeErrors } from './typecheck.ts';
 import { crossedLimits, SCRIPT, scriptSizes, SIZE_RULES, sizedChanges } from './sizes.ts';
 
 const CODE = /\.(ts|js|mjs|cjs)$/;
 const PAGE = /\.html$/; // linted for its inline scripts, never formatted (eslint.config.js)
 const FORMATTED = /\.(ts|js|mjs|cjs|css)$/;
-const TYPED = /\.(ts|js|mjs|cjs)$|(^|\/)(package|tsconfig)\.json$/; // a change to one runs the type check
 const BASE_FILES = /\.(ts|js|mjs|cjs)$|(^|\/)package\.json$/; // what the type check reads at the base
 const FALSE_ALARM = 'A finding the tool gets wrong gets a disable comment that says why.';
-// The run's time on the helper, which HQ's runs.ts needs (the worker's gatesLentMs counts it).
+// The run's time on the helper, which HQ's runs.ts needs.
 const HELPER_MINUTES = 5;
 
 const root = git(process.cwd(), 'rev-parse', '--show-toplevel').trim();
@@ -59,7 +58,7 @@ async function onHelper() {
   }
   const tree = workingTree(root);
   const check = { what: 'The gates', base, tree, script: 'gates.ts', args: [], minutes: HELPER_MINUTES };
-  const ran = await onLent(root, { ...check, bring: [], tools: [] });
+  const ran = await onLent(root, { ...check, bring: [], tools: [], waitWhilePresent: true });
   if (!ran) return 2;
   console.log(`${ran.output.trim()}\n(on ${ran.machine})`);
   return ran.exitCode;

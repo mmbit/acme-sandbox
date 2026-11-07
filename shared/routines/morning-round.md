@@ -20,4 +20,4 @@ Your morning round: get stuck work moving, then move existing work forward. With
    anything that spends money or goes public.
 5. Anything that needs the board goes in at most one card (hq request), and only if it can't wait.
 
-Update your working memory. Nothing stuck and nothing to move: end without changes.
+Update your page (`hq pad`), your memory. Nothing stuck and nothing to move: end without changes.

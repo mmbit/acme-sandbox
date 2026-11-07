@@ -54,12 +54,16 @@
   display: flex;
   gap: 8px;
 }
+/* (Klaar a quiet key as ⋯ beside it, bookscrapkeys.css: the look's panel and its ink, never a lit key's ink on a
+   wash, which on a guest's page is white on white.) */
 #book .bk-sheet-keys .bk-btn {
   min-height: 44px;
   min-width: 44px;
   padding: 0 16px;
+  border: var(--bk-ui-border);
   border-radius: 22px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--bk-ui-bg);
+  color: var(--bk-ui-ink);
   box-shadow: 0 1px 3px rgba(40, 30, 0, 0.18);
   font: 600 16px/1 var(--bk-font, system-ui, sans-serif);
 }

@@ -1475,7 +1475,7 @@ test("an item's files: hq guest sends them, the guest downloads each under its i
   const [page, logo] = c.guest.items[0].files;
   assert.deepEqual(await fetched(logo.src, h.boardCookie), {
     status: 200,
-    type: 'application/octet-stream',
+    type: 'image/png',
     bytes: PNG,
   });
   assert.equal((await fetched(page.src)).status, 401, "the card's downloads are behind HQ's sign-in");

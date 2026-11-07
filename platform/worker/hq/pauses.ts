@@ -8,6 +8,7 @@ import { PAUSE_FOR } from './levels.ts';
 type Kind = 'thread' | 'project';
 type Paused = {
   target: string;
+  goingOn: number;
   why: string;
   untilTime: string | null;
   until: { id: number; agent: string; state: string }[];
@@ -31,13 +32,23 @@ const named = (kind: Kind) => (kind === 'thread' ? '<project>/<slug>' : '<projec
 // The command and the word a kind is read by: a thread is a deliverable
 const word = (kind: Kind) => (kind === 'thread' ? 'deliverable' : kind);
 
+// What each pause takes in: a project's is its whole milestone, so the help leads with it, and work filed later is held too
+const REACH: Record<Kind, string> = {
+  project: `pause the whole milestone, every deliverable of the project and
+                                                     those filed in it later (one alone: hq deliverable pause): nothing
+                                                     queued on it starts (work, reviews, fixes)`,
+  thread: `pause one deliverable: its project's other deliverables, and those
+                                                     filed in it later, go on (the whole milestone: hq project pause):
+                                                     nothing queued on it starts (work, reviews, fixes)`,
+};
+
 // (--until-time's forms, the board's own time with its date and no zone among them)
 // A pause is for work that must wait on a condition, never to put other work first: the help says so after what the
 // command does, and every pause's answer ends on it (levels.ts PAUSE_FOR).
 export const help = (kind: Kind) => `
    hq ${word(kind)} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)
-                                                     pause the ${kind === 'thread' ? 'deliverable' : 'project, every deliverable of it'}: nothing queued on it starts
-                                                     (work, reviews, fixes) until it's resumed, and its running work
+                                                     ${REACH[kind]}
+                                                     until it's resumed, and its running work
                                                      yields at its next step, its folder, session and commits kept, to go
                                                      on where it stopped once resumed (the run that pauses it runs on; a
                                                      review, ruling or meeting runs to its end: hq stop pauses a review
@@ -99,9 +110,20 @@ export async function pause(kind: Kind, given: string[]) {
   print(
     `Paused ${text(paused.target)}: ${text(paused.why)}`,
     `${plural(paused.held, 'queued job')} on it held. ${resumes}`,
+    ...goingOnLines(paused),
     ...runningLines(paused),
     `${PAUSE_FOR} If this one puts other work first, resume it and give that work a window instead (hq window): the scheduler makes room for it by itself.`,
   );
+}
+
+// What a deliverable's pause leaves out of its milestone: the other open deliverables, and those filed later, go on
+function goingOnLines(paused: Paused) {
+  const project = text(paused.target.split('/')[0]);
+  return paused.goingOn
+    ? [
+        `${plural(paused.goingOn, 'other open deliverable')} of ${project}, and any filed there later, go on: hq project pause ${project} holds the whole milestone.`,
+      ]
+    : [];
 }
 
 // What the pause does to the work under way on it, as the heartbeat does it (the coordinator's jobs.ts heartbeat): work

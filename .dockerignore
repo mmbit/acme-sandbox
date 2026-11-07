@@ -149,6 +149,9 @@
 !platform/hq/shell/ink/bookversionsof.js
 # a voice note's slip, which the book's page picture draws as the book does (bookvoiceslip.js.)
 !platform/hq/shell/ink/bookvoiceslip.js
+# a scrap's stack of pictures and ink, which the book's page picture draws them in (booklayers.js;
+# platform/coordinator/src/ink/bookrenderstack.ts.)
+!platform/hq/shell/ink/booklayers.js
 !kits
 **/node_modules
 **/*.test.ts

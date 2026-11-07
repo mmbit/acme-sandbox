@@ -56,7 +56,7 @@ export function pause(
   },
   agent: string,
   now = Date.now(),
-): Pause | string {
+): (Pause & { goingOn: number }) | string {
   const found = targetIn(ask);
   if (typeof found === 'string') return found;
   const { project, thread } = found;
@@ -89,8 +89,19 @@ export function pause(
     ? `Kept ${jobs.pauseName(target)} paused, on new conditions`
     : `Paused ${jobs.pauseName(target)}`;
   publish({ type: 'log', agent, text: `${said}: ${why}` });
-  return described(row(id)!);
+  return { ...described(row(id)!), goingOn: thread ? goingOn(project.id, thread) : 0 };
 }
+// The open deliverables of a project that a pause on one of them leaves to go on, as its answer says: every other one no
+// pause of its own holds
+const goingOn = (project: string, thread: string) =>
+  (
+    db
+      .prepare(
+        `select count(*) n from threads t where t.project = ? and t.id != ? and t.status = 'open'
+        and not exists (select 1 from pauses p where p.thread = t.id and ${jobs.pauseHolds('p')})`,
+      )
+      .get(project, thread) as { n: number }
+  ).n;
 // A new pause, or an open one (`kept`) on new conditions and made anew by this run, with the jobs that wake its owner: its
 // id.
 function written(
@@ -223,7 +234,7 @@ export function openPause(target: string): Row | string {
   const found = targetIn(target.includes('/') ? { thread: target } : { project: target }, true);
   if (typeof found === 'string') return found;
   return (
-    openOn(found.project.id, found.thread) ?? `${target} isn't paused (hq deliverable pause or hq project pause first)`
+    openOn(found.project.id, found.thread) ?? `${target} isn't paused (hq project pause or hq deliverable pause first)`
   );
 }
 

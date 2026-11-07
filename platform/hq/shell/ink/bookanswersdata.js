@@ -2,9 +2,10 @@
 // the Notebook (notebookdata.js, on mock/notebook.json.).
 //   GET /api/notebooks/pages/groups?page= → { page, groups: [group] }: each group { id, box: { x, y, w, h }, words,
 //     texts, ink, pictures, waiting: null | { by, name, style: 'text' }, try: null | { state: 'coming' | 'made' |
-//     'empty', expect, by, name, reason }, children }, a child an answer { kind: 'answer', id, by, name, style: 'text' |
-//     'drawing' | 'form' | 'question' | 'version', text, picture, link, ink, form, form_answer, version, branch,
-//     ticked, picked, crossed, cleared, created } or a reply { kind: 'reply',
+//     'empty', expect, by, name, reason, build? } (build: { version, minutes }, a call's prototype being built:
+//     callbuildrows.ts placeholderOf), children }, a child an answer {
+//     kind: 'answer', id, by, name, style: 'text' | 'drawing' | 'form' | 'question' | 'version', text, picture, link,
+//     ink, form, form_answer, version, branch, ticked, picked, crossed, cleared, created } or a reply { kind: 'reply',
 //     answers, ink, box, frame? } (no spot: an answer slips under its group).
 //   GET /api/notebooks/open → { forms: [item], questions: [item] }, an item { id, group, page, notebook, day, by, name,
 //     text, created }.

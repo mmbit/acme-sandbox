@@ -54,7 +54,7 @@ export const now = {
 // (hq project business in the help and the usage line below)
 export const project = {
   get help() {
-    return `
+    return `${pauses.help('project')}
    hq project say <project> "sentence"               where the project stands, in one sentence the board reads at its top
                                                      in the projects view (the project's owner or the CEO). Say a new one
                                                      when it's no longer true
@@ -75,7 +75,7 @@ export const project = {
                                                      project done
    hq project done <project>                         a finished project leaves the lists (its owner or the CEO), once it
                                                      has no open deliverable, work or proposal: a new deliverable or task
-                                                     in it is refused. A finished area that comes back is a new project${pauses.help('project')}`;
+                                                     in it is refused. A finished area that comes back is a new project`;
   },
 
   async run([action, ...args]: string[]) {

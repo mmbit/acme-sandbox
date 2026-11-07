@@ -127,7 +127,7 @@ table. HQ has one call key: the agent makes a call one when someone asks (`desig
 hand down, the page as it is). The agent hears
 once how to take part (`DESIGN_WORDS`: no turns, `say_nothing` the usual reply, silence is thinking; keep an
 organised list of ideas and small sketches on the page, a note of its own per topic drawn as the talk goes, never one
-crammed note at the end, so the page reads back later topic by topic (board, call 275), have prototypes built in the background, no tasks until the
+crammed note at the end, so the page reads back later topic by topic (board, call 275), have prototypes built by colleagues as jobs, no tasks until the
 end, then the list and who does what as they agree it), with the hello's message or the tool's answer, and again in a restarted
 session. Its raised hand (`raise_hand`, with what it's about): HQ shows it on the call screen and the bubble with a
 soft beep (`{type: 'hand', up}`); the line gives the agent a turn of its own once the room has been quiet
@@ -135,22 +135,21 @@ soft beep (`{type: 'hand', up}`); the line gives the agent a turn of its own onc
 saying which (`HAND_WORDS`). The hand comes down when the agent says anything in a later reply, lowers it, or has its
 moment; a reconnect hears both again (`Design.retell`).
 
-Saying nothing and building in the background. The line hands the agent all it
+Saying nothing, and prototypes built as jobs. The line hands the agent all it
 hears, and a model asked something writes something back, a stage direction read aloud. `say_nothing` passes the turn:
 the line reads it from the stream (`SAY_NOTHING_TOOL`), says nothing more of the reply and plays no tick for its later
-steps, so the tick only ever holds a reply someone waits on. `prototype` with a `brief` instead of a page starts a
-builder (`Call.build`): the CLI once on the call's seat, no tools, no HQ token, `BUILD_EFFORT`, the builder's own
-`BUILD_WORDS`, the version before under that name to build on. Its page is saved as the agent's would be, and the line
-raises the agent's hand with its name and version (`Design.built`, `HAND_WORDS['built …']`); for a failed one too, with
-why (`HAND_WORDS['failed …']`): never a blank reason, since a stopped build's `TimeoutError` has no words of its own.
-The builder's CLI streams (`stream-json`), so one still going at `BUILD_SECONDS` says how far it got (`Progress`: no
-answer, still thinking, or how many KB of its page it wrote after how long thinking), and the voice log has the same for
-one that lands. The call's end cancels a build under way. One version per round of feedback, not per remark
-: `DESIGN_WORDS` asks the agent to gather what's said about a prototype until
-the round is done (they move on, or ask for it), then brief it all as one version, say so in a sentence, and give the
-change in a line (`about`, with the brief), which goes on the version's slip and into its hand's words. A next brief
-under a name whose version is still building is refused (`BUILD_TOOL_WORDS['building']`): it would build on the
-version before and lose this one's changes.
+steps, so the tick only ever holds a reply someone waits on. `prototype` with a `brief` instead of a page goes to HQ
+(`prototype-build`, the coordinator's `callbuilds.ts`): a colleague builds it as a job (a try run, at once, committing
+nothing), the agent's choice of who (`by`) and how (`lighter`, `effort`), so it is followed (`activity`) and steered
+(the same tool under its name again, or `add`) like any job the call queued, and its placeholder is on the call's page
+at once. The line runs nothing of it and keeps only its job (`Call.builds`, which keeps the call in use). HQ's answer
+to `call-lines` brings the builds that ended (`built`), and the line raises the agent's hand for each with its name and
+version (`Call.built`, `Design.built`, `HAND_WORDS['built …']`), or with why one didn't land (`HAND_WORDS['failed …']`).
+The call's end stops its builds (HQ's `endedCall`). One version per round of feedback, not per remark: `DESIGN_WORDS`
+asks the agent to gather what's said about a prototype until the round is done (they move on, or ask for it), then
+brief it all as one version, say so in a sentence, and give the change in a line (`about`, with the brief), which goes
+on the version's slip and into its hand's words; what they say while a version is still built goes to that build.
+
 
 Made once they're done. A whole sentence is often followed by more: a
 correction, the rest of the idea. The line still hands the agent each pause Smart Turn hears as finished, so a short

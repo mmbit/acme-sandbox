@@ -4,7 +4,8 @@
 // does: first in the list, unread, and ringing if it's urgent (sweep). requests.hidden_until holds the time; jobs.ts
 // leaves a card out of the desk phone's list while it's ahead (SHOWN). A card can be held the same way until work it
 // waits for is live (holdsFor).
-import { db } from './db.ts';
+import { db, workBranch } from './db.ts';
+import { pauseHolds } from './jobs.ts';
 import { companyDay, companyMoment } from './company.ts';
 import { announceRequest } from './push.ts';
 import * as tips from './tips.ts';
@@ -86,22 +87,45 @@ export function listLaterRequests() {
 }
 
 // Cards held until work is live. A card hq ask files waits off the desk phone for
-// work to be merged and deployed, as hq job --when deployed:<job> hears it (wakes.ts deployed): the work it names with
-// --when deployed:<job> or deployed:pr:<n> (what the job handed out that the card is about), and, from a job doing a
-// call's work (the call's follow-up, or a job carrying one of its items), that job's own. So the board reads it once it
-// can see what it's about. Work that ends without a pull request, or whose pull request is closed, lets the card go
-// then. Held, a card is open as one for later is, and shows as a new card once all its work is live. Its answer is
-// never waited for in a session (hq wait would wait for that work, its own merge for call work): the step that needs it
-// is a job --after request:<id>. So a job doing a call's work can't park on a card (hq request) either.
+// work to be merged and deployed: first a whole milestone's (--when deployed:<project>), every deliverable of it open
+// now or filed later but those a pause of their own keeps out, or one deliverable's (deployed:<project>/<slug>), each
+// once nothing in it is open and its last merge is deployed (wholeLive). So a "ready" card waits for work filed under
+// the milestone after it. One piece also holds it, as hq job --when deployed:<job> hears it (wakes.ts deployed):
+// deployed:<job> or deployed:pr:<n>. From a job doing a call's work (the call's follow-up, or a job carrying one of its
+// items), that job's own work holds it too. So the board reads it once it can see what it's about. Work that ends
+// without a pull request, or whose pull request is closed, lets the card go then. Held, a card is open as one for later
+// is, and shows as a new card once all its work is live. Its answer is never waited for in a session (hq wait would
+// wait for that work, its own merge for call work): the step that needs it is a job --after request:<id>. So a job
+// doing a call's work can't park on a card (hq request) either.
 
-// The work a card from `job` waits for (wake args: '<job>' or 'pr:<n>'), with hq ask's --when, or why it can't
+// The work a card from `job` waits for (a milestone's or deliverable's id, or wake args: '<job>' or 'pr:<n>'), with hq
+// ask's --when, or why it can't
 export function holdsFor(job: number | undefined, when: unknown): string[] | string {
-  const named = wakes.readWhen(when);
+  const texts = (Array.isArray(when) ? when : when == null ? [] : [when]).map(String);
+  const whole = texts.map(wholeNamed);
+  const unknown = whole.find(w => w?.id === null);
+  if (unknown) return `there's no milestone (project) or deliverable ${unknown.named}: hq projects lists them`;
+  const named = wakes.readWhen(texts.filter((_, i) => !whole[i]));
   if (typeof named === 'string') return named;
   if (named.some(w => w.kind !== 'deployed'))
-    return 'a card waits only for work going live: --when deployed:<job> or deployed:pr:<n> (a day: --visible-from)';
+    return `a card waits only for work going live: ${WHOLE_FORMS}, or one piece, deployed:<job> or deployed:pr:<n> (a day: --visible-from)`;
   const own = doesCallWork(job) ? [String(job)] : [];
-  return [...new Set([...own, ...named.map(w => w.arg)])];
+  return [...new Set([...own, ...whole.flatMap(w => (w?.id ? [w.id] : [])), ...named.map(w => w.arg)])];
+}
+const WHOLE_FORMS =
+  '--when deployed:<project> (the whole milestone, work filed in it later too) or deployed:<project>/<slug> (one deliverable)';
+
+// --when deployed:<project> or deployed:<project>/<slug> as the milestone's or deliverable's id (a moved deliverable by
+// its old id too), id null for one HQ doesn't have; undefined for any other --when (wakes.ts reads those)
+function wholeNamed(given: string) {
+  const named = /^deployed:([a-z][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)?)$/i.exec(given.trim())?.[1];
+  if (named === undefined) return undefined;
+  const found = named.includes('/')
+    ? db
+        .prepare('select id from threads where id = coalesce((select id from thread_aliases where old = ?1), ?1)')
+        .get(named)
+    : db.prepare('select id from projects where id = ?').get(named);
+  return { named, id: (found as { id: string } | undefined)?.id ?? null };
 }
 
 // Why `job` can't park on a card (hq request), or null: its card would wait for the job's own merge
@@ -124,8 +148,64 @@ export function heldFor(id: number) {
         and h.work not like ? order by h.rowid`,
       )
       .all(id, `${READ}%`) as { work: string }[]
-  ).map(h => wakes.workOf(h.work));
+  ).map(h => (isWhole(h.work) ? wholeWords(h.work) : wakes.workOf(h.work)));
   return works.length ? `the work of ${works.join(' and ')}` : null;
+}
+
+// The milestones a card's piece-by-piece holds (a job's or pull request's work) are in that no hold of the whole
+// milestone covers, as hq ask's reply names them: work filed there later doesn't hold the card.
+export function leftOutOf(holds: string[]) {
+  const whole = new Set(holds.filter(w => isWhole(w) && !w.includes('/')));
+  const milestones = holds
+    .filter(w => /^(pr:)?\d+$/.test(w))
+    .map(milestoneOf)
+    .filter(m => m && !whole.has(m.id)) as Milestone[];
+  return [...new Map(milestones.map(m => [m.id, m])).values()];
+}
+type Milestone = { id: string; name: string };
+const MILESTONE_OF = `select pr.id, pr.name from jobs j join threads t on t.id = j.thread join projects pr on pr.id = t.project
+  where j.kind = 'work' and`;
+const milestoneOf = (work: string) =>
+  (work.startsWith('pr:')
+    ? db
+        .prepare(`${MILESTONE_OF} ${workBranch('j')} = (select branch from prs where number = ?) order by j.id limit 1`)
+        .get(Number(work.slice(3)))
+    : db.prepare(`${MILESTONE_OF} j.id = ?`).get(Number(work))) as Milestone | undefined;
+
+// A hold on a whole milestone or deliverable (its id), not one piece's work nor the card reader's read
+const isWhole = (work: string) => !/^(pr:)?\d+$/.test(work) && !work.startsWith(READ);
+// Whether a milestone (`id`, a project's) or a deliverable (a thread's) is live: nothing in it open but what a pause of
+// its own keeps out of a milestone, and its last merge deployed
+function wholeLive(id: string) {
+  if (db.prepare(`select 1 from threads t where ${IN_WHOLE} and t.status = 'open' and not ${KEPT_OUT}`).get({ id }))
+    return false;
+  const last = db
+    .prepare(
+      `select p.number from prs p where p.status = 'merged' and p.branch in (select ${workBranch('j')} from jobs j
+      join threads t on t.id = j.thread where j.kind = 'work' and ${IN_WHOLE}) order by p.merged_at desc limit 1`,
+    )
+    .get({ id }) as { number: number } | undefined;
+  return !last || wakes.deployed(`pr:${last.number}`) !== null;
+}
+// A thread (`t`) of the whole `$id`: the deliverable itself (moved, by its old id), or one of the milestone's
+const IN_WHOLE = '(t.id = coalesce((select id from thread_aliases where old = $id), $id) or t.project = $id)';
+// A milestone's deliverable (`t`) that a pause of its own keeps out of it
+const KEPT_OUT = `(t.project = $id and exists (select 1 from pauses p where p.thread = t.id and ${pauseHolds('p')}))`;
+// A whole hold in words: a milestone's with what it covers and keeps out now, or a deliverable's name
+function wholeWords(id: string) {
+  if (id.includes('/')) {
+    const thread = db.prepare(`select t.name from threads t where ${IN_WHOLE}`).get({ id }) as { name: string };
+    return `the deliverable "${thread.name}"`;
+  }
+  const { name } = db.prepare('select name from projects where id = ?').get(id) as { name: string };
+  const open = db
+    .prepare(`select t.name, ${KEPT_OUT} kept from threads t where ${IN_WHOLE} and t.status = 'open' order by t.id`)
+    .all({ id }) as { name: string; kept: number }[];
+  const covered = open.filter(t => !t.kept).length;
+  const kept = open.filter(t => t.kept).map(t => `"${t.name}"`);
+  return `${name}'s whole milestone (${covered} open deliverable${covered === 1 ? '' : 's'} and any filed in it later${
+    kept.length ? `, not ${kept.join(', ')}, kept out by ${kept.length === 1 ? 'its' : 'their'} own pause` : ''
+  })`;
 }
 
 // The hold of a card waiting for the card reader before the board's desk phone (cardread.ts): 'read:<the reader's job>',
@@ -176,7 +256,7 @@ function release(now: string) {
     .all(`${READ}%`) as { request: number; work: string }[];
   if (!holds.length) return [];
   wakes.readDeploys();
-  const met = holds.filter(h => wakes.deployed(h.work) !== null);
+  const met = holds.filter(h => (isWhole(h.work) ? wholeLive(h.work) : wakes.deployed(h.work) !== null));
   return [...new Set(met.map(h => h.request))].filter(id =>
     unhold(
       id,

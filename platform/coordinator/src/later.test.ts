@@ -336,6 +336,45 @@ test("a card held on a thread's first task stays held when that task ends, and g
   assert.equal((await titles())[0], 'The post: go?');
 });
 
+test('a card held for the whole milestone (--when deployed:<project>) waits for work filed in it later, never for a deliverable its own pause keeps out', async () => {
+  const projects = await import('./projects.ts');
+  const threadends = await import('./threadends.ts');
+  const juno = await running('juno');
+  const made = await h.hq(juno, 'project', 'new', 'shelf', 'The shelf', '--code', 'SHF', '--owner', 'juno');
+  assert.equal(made.code, 0, made.out);
+  const draw = (slug: string, name: string) => {
+    assert.notEqual(typeof projects.createThread({ project: 'shelf', slug, name, goal: 'It ships' }), 'string');
+    return `shelf/${slug}`;
+  };
+  const books = draw('books', 'Books'),
+    tips = draw('tips', 'Tips');
+  const paused = await h.hq(juno, 'deliverable', 'pause', tips, 'The board wants it held', '--by-hand');
+  assert.equal(paused.code, 0, paused.out);
+  const wren = await running('wren');
+  const ask = (title: string, when: string) =>
+    h.hq(wren, 'ask', 'decision', 'today', title, body('Go?'), '--topic', 'shelf', '--when', when);
+  assert.equal((await ask('Nowhere: ready?', 'deployed:nowhere')).code, 1, 'a milestone HQ has');
+  const whole = await ask('The shelf: ready?', 'deployed:shelf');
+  assert.equal(whole.code, 0, whole.out);
+  assert.match(whole.out, /The shelf's whole milestone \(1 open deliverable and any filed in it later, not "Tips"/);
+  const book = await h.start({ agent: 'kit', thread: books });
+  const piece = await ask('The books: ready?', `deployed:${book.id}`);
+  assert.equal(piece.code, 0, piece.out);
+  assert.match(piece.out, /Work filed in The shelf later doesn't hold it: --when deployed:shelf/);
+  const [shelfCard, booksCard] = ['The shelf: ready?', 'The books: ready?'].map(
+    title => (db.prepare('select id from requests where title = ?').get(title) as { id: number }).id,
+  );
+
+  await h.finish(book, { status: 'done', branch: `job/${book.id}`, sha: 'd'.repeat(40) });
+  const afterBooks = merge(774, book.id, 'kit');
+  threadends.close(projects.findThread(books)!);
+  const fitted = draw('fitted', 'Fitted'); // filed after the card
+  deploy('books', afterBooks);
+  assert.deepEqual(later.sweep(), [booksCard], 'the piece is live; the milestone has work filed since');
+  threadends.close(projects.findThread(fitted)!);
+  assert.deepEqual(later.sweep(), [shelfCard], 'all of it is in and live but the paused tips');
+});
+
 test("a job's cards, and the one it's blocked on, say whether they're on the desk phone now: held and later ones aren't", async () => {
   const titled = (title: string) =>
     (db.prepare('select id from requests where title = ?').get(title) as { id: number }).id;

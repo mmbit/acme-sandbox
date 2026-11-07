@@ -5,13 +5,14 @@
 import * as ordering from './ordering.ts';
 import * as carries from './carries.ts';
 import { seatRunLimit, windowUsed } from '../../worker/src/pace.ts';
+import { windowsOf } from '../../worker/src/seatstatus.ts';
 import * as sizes from './sizes.ts';
 import * as predictions from './predictions.ts';
 import * as reviewroom from './reviewroom.ts';
 import * as redraws from './redraws.ts';
 import { lastPlayed } from './forecast.ts';
 import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
-import { measuredMb, plannerCapacity, pauseBudget } from './room.ts';
+import { inPushChecks, measuredMb, plannerCapacity, pauseBudget } from './room.ts';
 import { checksFirst, taskUrgent } from './urgency.ts';
 import {
   db,
@@ -761,11 +762,12 @@ export function extendJob(id: number, by: string, text: string) {
   return addToBrief(id, by, text, 'and queued_by is not null') ? { ok: true } : 404;
 }
 // The text, signed, at the end of a work job's brief its session hasn't read yet (and only: more conditions on the
-// row), and HQ's line that it was added; whether it was.
+// row), and HQ's line that it was added; whether it was. A try run's too: a call's prototype build takes the call's
+// word so (callbuilds.ts).
 function addToBrief(id: number, by: string, text: string, only = '') {
   const added = db
     .prepare(
-      `update jobs set prompt = prompt || ? where id = ? and kind = 'work' and status = 'queued' and session is null ${only}`,
+      `update jobs set prompt = prompt || ? where id = ? and kind in ('work', 'try') and status = 'queued' and session is null ${only}`,
     )
     .run(`\n\n${text}\n(Added by ${by}.)`, id).changes;
   if (added) publish({ type: 'log', agent: by, text: `Added to job #${id}` });
@@ -875,24 +877,24 @@ export function outstandingWaitsByJob(jobIds: number[]) {
   ).all({ jobs: JSON.stringify(jobIds) }) as (Pick<Job, 'id' | 'status'> & { job: number })[];
   return Map.groupBy(rows, row => row.job);
 }
-// hq waits: a queued job's further waits (db.ts waits) are added, moved to the work that replaces the job they wait for,
+// hq waits: an open job's further waits (db.ts waits) are added, moved to the work that replaces the job they wait for,
 // or dropped. Only the waiting job's agent, whoever queued it, the CEO and the process role can change its waits (the
 // morning round cuts waits a job doesn't need). A wait on a job is refused when
 // that job needs the waiting job first (through `after`, waits, pauses, task order, thread needs or a redraw, at any depth).
 // Neither would ever start. Deployment wakes and expanded review edges are checked atomically by writePlan.
 // The shared checks each return why a change is refused, or nothing when it may go ahead.
 // (add, and the shared checks)
-function whyNotYours(job: number, by: string, waitsFor: number | null) {
+function whyNotYours(job: number, by: string, waitsFor: number | null, running = false) {
   const anyQueuedJob = by === ceo() || inProcess(by);
   const yours = db
     .prepare(
-      `select 1 from jobs j where j.id = $job and j.kind = 'work' and j.status = 'queued'
+      `select 1 from jobs j where j.id = $job and j.kind = 'work' and (j.status = 'queued' or ($running and j.status = 'running'))
     and (j.agent = $by or j.queued_by = $by or $anyQueuedJob)
     and ($on is null or exists (select 1 from waits w where w.job = j.id and w.on_job = $on))`,
     )
-    .get({ job, by, on: waitsFor, anyQueuedJob: Number(anyQueuedJob) });
+    .get({ job, by, on: waitsFor, anyQueuedJob: Number(anyQueuedJob), running: Number(running) });
   if (!yours)
-    return `job #${job} isn't a queued job of yours, or one you queued${waitsFor == null ? '' : `, that waits for #${waitsFor}`}`;
+    return `job #${job} isn't a ${running ? 'queued or running' : 'queued'} job of yours, or one you queued${waitsFor == null ? '' : `, that waits for #${waitsFor}`}`;
 }
 // The job waited for must still be able to meet the wait: open work, or done work whose latest pull request merged or is
 // still pending. Work that ended any other way already did, so nothing would ever release the job or say it's held.
@@ -969,7 +971,7 @@ function dependencyEdges() {
 export function addWait(job: number, on: number, by: string, why = '') {
   why = oneLine(why);
   const refused =
-    whyNotYours(job, by, null) ?? whyMadeByHq(job, by, why) ?? whyCantMeet(job, on, `#${job} can wait for`);
+    whyNotYours(job, by, null, true) ?? whyMadeByHq(job, by, why) ?? whyCantMeet(job, on, `#${job} can wait for`);
   if (refused) return refused;
   // Repeatable: it only writes rows and publishes after its step, so writePlan may run it twice.
   return redraws.writePlan(
@@ -1018,7 +1020,7 @@ function whyMadeByHq(job: number, by?: string, why = '') {
     );
 }
 export function moveWait(job: number, from: number, to: number, by: string, why = '') {
-  const refused = whyNotYours(job, by, from) ?? whyCantMeet(job, to, `can replace #${from}'s`);
+  const refused = whyNotYours(job, by, from, true) ?? whyCantMeet(job, to, `can replace #${from}'s`);
   if (refused) return refused;
   // Repeatable, as addWait's.
   return redraws.writePlan(
@@ -1031,7 +1033,7 @@ export function moveWait(job: number, from: number, to: number, by: string, why 
   );
 }
 export function dropWait(job: number, from: number, by: string, why = '') {
-  const refused = whyNotYours(job, by, from);
+  const refused = whyNotYours(job, by, from, true);
   if (refused) return refused;
   db.prepare('delete from waits where job = ? and on_job = ?').run(job, from);
   publishWaitChange(job, by, `#${job} no longer waits for #${from}${why ? `: ${oneLine(why)}` : ''}`);
@@ -1729,7 +1731,7 @@ function claimOrderOn(
     const expedited = fits.filter(j => j.expedite && (j.ready || j.yielding)).sort((a, b) => a.id - b.id);
     if (expedited.length) return expedited;
     const order = reviewroom.claimOrder<Claimable>(
-      running.filter(r => !yielding.includes(r.id)),
+      running.filter(r => !yielding.includes(r.id) && !inPushChecks(r.id)),
       limit,
       base,
       j => key(j).latestStart !== null,
@@ -1896,40 +1898,42 @@ export function seatReadyFor(job: number, t = now(), on: string | null = null, p
 }
 
 // Whether a queued job waits only for seats at their limits or their pace, read as claim reads them (SEAT_READY,
-// pacedTakes): every seat that would take it (seatTakes, or its agent's fallback's before it has started) is draining
-// or asleep until a time still ahead (a reset, its stop level's), ready but paced, and this job isn't one it takes
-// before its weekly reset, or ready with its runs at the worker's limit for it (pace.ts seatRunLimit: one run at a time
-// near its stop level), which a run's end or the window's reset frees. No seat for it, or one signed out, won't come
-// back by itself: that's no such wait. A paused seat takes no work, so it doesn't count.
+// pacedTakes). Every seat that would take it (seatTakes, or its agent's fallback's before it has started) is one of:
+// - draining or asleep until a time still ahead (a reset, its stop level's).
+// - ready with its runs at the worker's limit for it (pace.ts seatRunLimit: one run at a time near its stop level),
+//   which a run's end or the window's reset frees.
+// - ready with room for a run but paced, and this job isn't one it takes before that seat's weekly reset.
+// No seat for it, or one signed out, won't come back by itself: that's no such wait. A paused seat takes no work, so it
+// doesn't count.
 export function seatsOut(job: number, t = now()) {
   const { agent, board } = db.prepare(`select agent, ${LANE('j')} board from jobs j where id = ?`).get(job) as {
     agent: string;
     board: number;
   };
   const theirs = seatsTaking(job, agent, t);
-  const placed = theirs.filter(s => s.placed);
+  const withRoom = theirs.filter(s => s.roomOn);
   if (
     !theirs.length ||
-    placed.some(s => s.pacedUntil === null) ||
+    withRoom.some(s => s.pacedUntil === null) ||
     theirs.some(s => !s.ready && !['draining', 'sleeping'].includes(s.state))
   )
     return false;
-  if (!placed.length) return true;
+  if (!withRoom.length) return true;
   const order = ordering.key(job, board, ordering.current(t).timings);
-  return placed.every(s => !pacedTakes(order, s.pacedUntil!));
+  return withRoom.every(s => !pacedTakes(order, s.pacedUntil!));
 }
 
-// The unpaused seats that would take the job (seatTakes, or its agent's fallback's), each with whether it's ready with a
-// run's place free (`placed`: its running jobs under pace.ts seatRunLimit, as the worker gives it places).
+// The unpaused seats that would take the job (seatTakes, or its agent's fallback's), each with whether it's ready with
+// room for a run (`roomOn`, as the worker's places.ts: its running jobs under pace.ts seatRunLimit).
 function seatsTaking(job: number, agent: string, t: number) {
   const seats = db
     .prepare(
       `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.state, ${SEAT_READY} ready,
       ${PACED_UNTIL} pacedUntil, s.util, s.resets, s.week, s.week_resets, s.credits, l.stop,
-      (select count(*) from jobs where status = 'running' and seat = s.id) running
+      (select count(*) from jobs where status = 'running' and seat = s.id and id not in (select value from json_each($checks))) running
       from seats s left join seat_list l on l.id = s.id where s.state != 'paused'`,
     )
-    .all({ now: t }) as {
+    .all({ now: t, checks: JSON.stringify(plannerCapacity(t)?.memory?.checks ?? []) }) as {
     id: string;
     engine: string;
     cli: string;
@@ -1948,14 +1952,6 @@ function seatsTaking(job: number, agent: string, t: number) {
     `select ${seatTakes('$seat', '$cli')} own, ${FALLS_BACK} fallsBack from jobs j where j.id = $job`,
   );
   const limits = plannerCapacity(t)?.seatRuns ?? {};
-  const windows = (s: (typeof seats)[number]) => ({
-    util: s.util ?? undefined,
-    resets: s.resets ?? 0,
-    week: s.week ?? undefined,
-    weekResets: s.week_resets ?? 0,
-    credits: !!s.credits,
-    drainAt: s.stop === null ? undefined : s.stop / 100,
-  });
   return seats
     .filter(s => {
       const { own, fallsBack } = takes.get({ job, seat: s.id, cli: s.cli, engine: s.engine }) as {
@@ -1964,7 +1960,7 @@ function seatsTaking(job: number, agent: string, t: number) {
       };
       return own || (fallsBack && models.fallingBackTo(s.engine, s.cli).includes(agent));
     })
-    .map(s => ({ ...s, placed: !!s.ready && s.running < seatRunLimit(windows(s), limits[s.engine], t) }));
+    .map(s => ({ ...s, roomOn: !!s.ready && s.running < seatRunLimit(windowsOf(s), limits[s.engine], t) }));
 }
 
 // The model and effort a run asks for, those of the engine and CLI the job is on: its fallback's once it moved there, the
@@ -2097,6 +2093,7 @@ function makesRoom(id: number, room: InTheWay) {
   if (!ordering.live()) return roomFor(room, t).get(id); // (tests and scripts: every heartbeat reads afresh)
   const key = JSON.stringify([
     room,
+    plannerCapacity(t)?.memory?.checks,
     db
       .prepare(
         `select count(*) n, total(id) ids, total(julianday(created)) made, total(not_before) held, total(coalesce(room_for, 0)) freed,
@@ -2211,8 +2208,8 @@ function roomClaims(t: number, plan: ReturnType<typeof ordering.current>, yielde
 function readySeats(t: number) {
   const seats = db
     .prepare(
-      `select id, engine, coalesce(cli, engine) cli, util, resets, week, week_resets,
-      ${PACED_UNTIL} pacedUntil from seats where ${SEAT_READY}`,
+      `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.util, s.resets, s.week, s.week_resets, s.credits, l.stop,
+      ${PACED_UNTIL} pacedUntil from seats s left join seat_list l on l.id = s.id where ${SEAT_READY}`,
     )
     .all({ now: t }) as {
     id: string;
@@ -2222,20 +2219,13 @@ function readySeats(t: number) {
     resets: number | null;
     week: number | null;
     week_resets: number | null;
+    credits: number | null;
+    stop: number | null;
     pacedUntil: number | null;
   }[];
   return seats.map(s => ({
     ...s,
-    util:
-      windowUsed(
-        {
-          util: s.util ?? undefined,
-          resets: s.resets ?? 0,
-          week: s.week ?? undefined,
-          weekResets: s.week_resets ?? 0,
-        },
-        t,
-      ) ?? 1,
+    util: windowUsed(windowsOf(s), t) ?? 1,
   }));
 }
 
@@ -2259,7 +2249,7 @@ function expeditedRoom(room: InTheWay, t: number) {
     running.map(r => r.id),
     t,
   );
-  const candidates = running.filter(r => r.kind === 'work' && !r.expedite);
+  const candidates = running.filter(r => r.kind === 'work' && !r.expedite && !inPushChecks(r.id, t));
   const selected = reviewroom.pauseGroup(
     candidates,
     (remaining, chosen) => remaining.find(r => open || chosen.length || waiter.seats.includes(r.seat)),
@@ -2287,7 +2277,7 @@ function roomVictims(
   );
   for (const w of waiting) {
     const open = w.seats.some(s => !room.capped.includes(s));
-    const candidates = running.filter(r => !victims.has(r.id) && !r.expedite);
+    const candidates = running.filter(r => !victims.has(r.id) && !r.expedite && !inPushChecks(r.id, t));
     const limit = plannerCapacity(t)?.seatRuns[w.engine] ?? Infinity;
     const reviewSeat = w.seats.find(s =>
       reviewroom.needsRoom(
@@ -3179,7 +3169,8 @@ function insertCard(
 }
 
 // hq ask and hq request's card (server.ts): held for the work it waits for (later.ts holdsFor), which hq ask names with
-// --when; the reply says so (held). A refusal says why.
+// --when; the reply says so (held), and names the milestones its piece-by-piece holds leave later work out of
+// (leftOut). A refusal says why.
 // read: it waits for the read of org.yaml's card reader too (cardread.ts), whom the reply names (reading)
 export function fileCard(r: Parameters<typeof createRequest>[0] & { when?: unknown; read?: boolean }) {
   const holds = later.holdsFor(r.job, r.when);
@@ -3187,7 +3178,13 @@ export function fileCard(r: Parameters<typeof createRequest>[0] & { when?: unkno
   const card = createRead(r.read, { ...r, holds });
   if (typeof card !== 'object') return card;
   const reading = later.awaitsRead(card.id) && { reading: roles().cards };
-  return { ...card, ...(holds.length && { held: later.heldFor(card.id) }), ...reading };
+  const leftOut = later.leftOutOf(holds);
+  return {
+    ...card,
+    ...(holds.length && { held: later.heldFor(card.id) }),
+    ...(leftOut.length && { leftOut }),
+    ...reading,
+  };
 }
 // The card, and with read the card reader's job reading it before the desk phone (cardread.ts), in one step
 function createRead(read: boolean | undefined, r: NewCard) {

@@ -5,9 +5,12 @@
 // connects only to HQ's host and the package registries (FIXED in this file, which follows HQ's code), and never to a
 // private address. Everything it makes is named for its HQ, so a machine can lend itself to several.
 // MANAGER=install (re)creates the manager's own container and exits; MANAGER=remove takes all of it away again.
+// MANAGER=proxy runs the proxy alone, for this server's socket helpers (infra/run_helpers.py).
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import { cpus, totalmem } from 'node:os';
 
 const HQ_URL = process.env.HQ_URL ?? '';
 const SOCKET = process.env.DOCKER_SOCKET ?? '/var/run/docker.sock';
@@ -83,14 +86,16 @@ function docker(method, path, body, headers = {}) {
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
 
-// The proxy's code, run in its own container: CONNECT to an allowed host and port only, never to a private address
+// The proxy's code, run in its own container: CONNECT to an allowed host and port only, never to a private address.
+// A name outside the list is refused before any lookup, so a run sends nothing out by asking for it.
 const proxyCode = (allowed, privateOk) => `const http=require('http'),net=require('net'),dns=require('dns').promises;
 const ok=${JSON.stringify(allowed)};
 const inside=a=>!${privateOk}&&(/^(10\\.|127\\.|169\\.254\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[01])\\.|0\\.|100\\.(6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])\\.)/.test(a)||/^(::1?$|::ffff:|f[cd]|fe[89ab])/i.test(a));
 const s=http.createServer((q,r)=>{r.writeHead(403);r.end()});
 s.on('connect',async(q,c)=>{c.on('error',()=>{});const [h,p]=q.url.split(':');
+if(!ok.includes(q.url)){c.end('HTTP/1.1 403 Forbidden\\r\\n\\r\\n');return}
 const all=await dns.lookup(h,{all:true}).catch(()=>[]);
-if(!ok.includes(q.url)||!all.length||all.some(x=>inside(x.address))){c.end('HTTP/1.1 403 Forbidden\\r\\n\\r\\n');return}
+if(!all.length||all.some(x=>inside(x.address))){c.end('HTTP/1.1 403 Forbidden\\r\\n\\r\\n');return}
 const u=net.connect(+p,all[0].address,()=>{c.write('HTTP/1.1 200 Connection established\\r\\n\\r\\n');u.pipe(c);c.pipe(u)});u.on('error',()=>c.destroy())});
 s.listen(${PORT});`;
 
@@ -225,6 +230,21 @@ const CODE = createHash('sha256')
 // Why a helper isn't in step, as the last tick found it ({ name: message }): HQ shows them, so nobody needs this log
 let problems = {};
 
+// What the machine has, as the manager sees it on the host, with no caps of its own: its threads and memory, and its
+// physical cores where /proc/cpuinfo tells them apart (null where it doesn't). Its helpers report their containers' caps
+// as their size, and HQ needs the machine's before it makes them, so the manager measures it. HQ shows it, and sizes a
+// kind's caps given as a share of the machine from it (runs.ts capsOn). machines.ts SERVER_HOST measures HQ's server
+// the same way: a change to one is made in the other.
+function hostSize() {
+  const cores = new Set();
+  for (const block of readFileSync('/proc/cpuinfo', 'utf8').split(/\n\s*\n/)) {
+    const field = name => new RegExp(`^${name}\\s*:\\s*(\\d+)`, 'm').exec(block)?.[1];
+    if (field('core id') !== undefined) cores.add(`${field('physical id') ?? 0}:${field('core id')}`);
+  }
+  return { cores: cores.size || null, threads: cpus().length, memoryMb: Math.round(totalmem() / 2 ** 20) };
+}
+const HOST = hostSize();
+
 // What HQ wants on this machine: its kinds, and which helpers here have a run ({ kind, slot })
 async function setup() {
   const res = await fetch(`${HQ_URL}/api/helper/setup`, {
@@ -232,7 +252,7 @@ async function setup() {
     redirect: 'error',
     headers: { authorization: `Bearer ${key()}`, 'content-type': 'application/json' },
     // (`follows`, so HQ waits for it to take new code rather than card the board)
-    body: JSON.stringify({ code: CODE, follows: true, problems }),
+    body: JSON.stringify({ code: CODE, follows: true, problems, host: HOST }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(`HQ said ${res.status} to the setup`);
@@ -361,7 +381,11 @@ async function remove() {
   console.log(`Removed this machine's helpers for ${HQ_URL}, and its key.`);
 }
 
-if (process.env.MANAGER === 'install') await install();
+if (process.env.MANAGER === 'proxy') {
+  const proxy = spawn(process.execPath, ['-e', proxyCode(FIXED, false)], { stdio: 'inherit' });
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => proxy.kill(signal));
+  proxy.on('exit', code => process.exit(code ?? 1));
+} else if (process.env.MANAGER === 'install') await install();
 else if (process.env.MANAGER === 'remove') await remove();
 else {
   log(`Manager started for ${HQ_URL}, helpers reach only ${ALLOWED.join(', ')}`);

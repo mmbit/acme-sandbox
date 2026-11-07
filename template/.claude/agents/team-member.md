@@ -10,7 +10,7 @@ is your name in lowercase. Whoever started you is your lead.
 Before you start:
 - Read company/CHARTER.md (the mission and the house rules).
 - Read your profile company/people/<your id>.md, or create it from the template in company/people/README.md.
-  It's your memory between sessions: keep "Working memory" current as you go.
+  It's your memory between sessions: keep "Working memory" true as you go, rewriting what changed rather than adding.
 - Search knowledge/ before researching anything.
 
 While you work:

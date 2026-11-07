@@ -41,7 +41,8 @@ const NO_ROOM_TRIES = 3;
 // (one an earlier process launched takes its place too, so the checks still running count against the limit).
 // A check here runs to its end: it's our own code, so a slow one is fixed where it is, its time in the log (outcomeOf).
 // here: what a launch here waits for and holds to its end (fresh: false for one an earlier process launched, which
-// holds it too). lent: a launch that sends it to a lent machine's helper, with a time limit of its own where it has one:
+// holds it too), and for a fresh one with a lent launch, `lent`: that launch, which it runs instead when a helper came
+// while it waited for its place. lent: a launch that sends it to a lent machine's helper, with a time limit of its own where it has one:
 // a pass or a failure there is the check's, and any other end (not taken, lost, its limit) launches it here. Each
 // launch, a run again included, goes there while `present` says a helper is there now (asked again each time: a first
 // answer goes stale), and here once the lent machine gave no verdict.
@@ -49,7 +50,7 @@ export type CheckSpec<Name extends string = string> = {
   name: Name;
   launch: () => Launched;
   turn?: (f: () => Promise<CheckOutcome>) => Promise<CheckOutcome>;
-  here?: (f: () => Promise<CheckOutcome>, fresh: boolean) => Promise<CheckOutcome>;
+  here?: (f: () => Promise<CheckOutcome>, fresh: boolean, lent?: () => Promise<CheckOutcome>) => Promise<CheckOutcome>;
   lent?: { ms?: number; launch: () => Launched; present?: () => Promise<boolean> };
 };
 // keep: writes the run's record with these checks in it; watch and unwatch: the shares' view of a running check
@@ -129,11 +130,13 @@ async function runCheck<Name extends string>(
   // One launch watched to its end: started first unless it's the one the record has. One here waits for its place.
   const attempt = async (fresh: boolean) => {
     const place = fresh ? await where() : check.lent ? 'lent' : 'here';
-    const watch = async () => {
-      if (fresh) start(place === 'lent' ? spec.lent!.launch : spec.launch, place === 'lent' ? spec.lent : undefined);
+    const watch = async (at = place) => {
+      if (fresh) start(at === 'lent' ? spec.lent!.launch : spec.launch, at === 'lent' ? spec.lent : undefined);
       return watchLaunch(spec.name, check, o, wait, tracked);
     };
-    return place === 'here' && spec.here ? spec.here(watch, fresh) : watch();
+    // A helper may have appeared while a fresh local launch waited for its turn.
+    const lent = fresh && spec.lent && !noVerdict ? () => watch('lent') : undefined;
+    return place === 'here' && spec.here ? spec.here(() => watch(), fresh, lent) : watch();
   };
   for (let fresh = !check.launched; ; fresh = true) {
     o.signal?.throwIfAborted();

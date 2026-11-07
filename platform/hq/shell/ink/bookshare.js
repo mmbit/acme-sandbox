@@ -153,7 +153,7 @@ const blobOf = (canvas, type, quality) =>
     ),
   );
 
-// A file downloaded, never the share sheet: the board keeps it, or shares it from its downloads.
+// A file downloaded: the board keeps it, or shares it from its downloads (in the pinned app, fileview.js's sheet opens it).
 export async function downloaded(file) {
   const ready = await file;
   const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(ready), download: ready.name });

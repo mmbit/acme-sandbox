@@ -570,10 +570,10 @@ export const cancel = {
 
 export const waits = {
   help: `
-   hq waits <job id> add <job>                       a queued job waits for that job's work to merge too (besides any
+   hq waits <job id> add <job>                       a queued or running job waits for that job's work to merge too (besides any
    hq waits <job id> move <waited for> <replacement> --after and its other waits), for the replacement's instead, or
    hq waits <job id> drop <waited for>               no longer for it. Yours or one you queued (the CEO and Process:
-                                                     any queued job's). A job HQ made (a pull request's fix, the board's
+                                                     any queued or running job's). A job HQ made (a pull request's fix, the board's
                                                      answer) takes an added wait from the CEO or Process with --why
                                                      "reason", shown on the feed. Refused when that job ended without
                                                      work that merged or still can, or waits for this one. HQ sends you a

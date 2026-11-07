@@ -151,6 +151,8 @@ export const nl = {
   copy: 'Kopiëren',
   paste: 'Plakken',
   duplicate: 'Dupliceren',
+  forward: 'Naar voren', // (a step up its scrap's stack: booklayers.js.)
+  backward: 'Naar achteren',
   duplicatePage: 'Deze pagina dupliceren',
   duplicatePageHint: 'Een nieuwe pagina met alles van deze, om verder te tekenen',
   deletedToast: '<b>Verwijderd.</b> Tik om terug te nemen',

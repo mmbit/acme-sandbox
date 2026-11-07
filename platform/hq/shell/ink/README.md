@@ -264,9 +264,10 @@ The board's rules for the book as a real book, seen from the side.
   marker are one tool. Its card holds what draws, its colour and its width, one tap away. A tap picks a tool, and
   nothing waits on a hold.
 - **The marker under the ink:** the more see-through ink lies under the less, whichever came first: the marker's
-  under the pencil's and the pen's, the pencil's under the pen's (`inkshape.js` `layered`), while it's drawn just as it
-  dries, so nothing changes as it's lifted (`bookwet.js`); and over the page's words and a note's picture as all ink
-  does (the board, call 262: never half over the letters).
+  under the pencil's and the pen's, the pencil's under the pen's (`booklayers.js`; a line put forward or back keeps its
+  own place instead: Layers in a scrap), while it's drawn just as it dries, so nothing changes as it's lifted
+  (`bookwet.js`); and over the page's words and a note's picture as all ink does (the board, call 262: never half over
+  the letters).
 - **Delete crumples and falls:** what's deleted or archived balls up and falls straight down off the screen's foot,
   never thrown aside or up, heard landing below (`bookpaper.js` `crumple`).
 - **A voice note at a spot:** the mic tapped lights and waits; a spot then pressed and held on the page records there
@@ -333,8 +334,15 @@ The board's rules for what a Notebook page lets you do with what's on it.
 
 - **Assign** hands any scrap of an open page to someone invited, never an agent (`bookassign.js`, the store's
   `bookassign.ts`): by circle and line on the grid, Geef aan… in an opened scrap's ⋯, or Select's bar.
-- **Select's bar** is one line of icons: Assign, Duplicate, Move to page… and Delete (`bookselectclip.js`). Duplicate
-  is the copy and paste, Move to page… and a drag the cut.
+- **Select's bar** is one line of icons: Assign, Duplicate, Bring forward and Send backward, Move to page… and Delete
+  (`bookselectclip.js`). Duplicate is the copy and paste, Move to page… and a drag the cut.
+- **Layers in a scrap:** a picture or a drawing picked on an opened scrap goes in front of or behind the others from
+  Select's bar (⌘] and ⌘[), so a moodboard's pictures and drawing can lie either way, a step at a time: past the next
+  picture or line over or under it that it overlaps: a step past one it doesn't touch would change nothing on the
+  paper (`bookselectlayer.js`). Then everything on the scrap keeps its place in the stack (`layer`, saved with it),
+  and one order draws it everywhere: the card, the opened scrap, the share and page pictures (`booklayers.js`, the
+  store's `bookrenderstack.ts`). What comes after a step lies on top; one never moved lies as before: its pictures,
+  then its ink. The words stay over it all, and our scraps never move. Its icons: `layer-up`, `layer-down`.
 - **Moving to a page** takes what's picked to an open page of its chapter, or to a new page, from one list: this page
   muted, New page last (`bookmoveto.js`). Select's Move to page… opens it under its button; on the grid, circle and
   line shows the pages as a drop zone.
@@ -394,6 +402,31 @@ Run `hq run --kind render --bring .data/guest-shots -- node platform/hq/book-che
 the coordinator's packages, which the check's own browser dispatch doesn't.
 `--chromium-only` is for local debugging when WebKit is absent.
 The real-server story needs the coordinator's pinned dependencies as well as Playwright.
+
+## Checking what the board sees
+
+The board reads the book on its own screens (`company/screens.json`: its phone, its iPad mini both ways, its Mac's
+window and full screen, a monitor), and it drags the book wider and narrower. Check in this order:
+
+1. **Fit, everywhere, in minutes.** `hq run --kind render --minutes 20 --bring .data/fit -- node
+   platform/hq/fit-check.mjs --out .data/fit` measures HQ's screens and the book, in each look, at each of the
+   board's screens and every width the book drags to: text running into another part, text cut off, anything past
+   the screen's side or under its status bar and home indicator, and text drawn far bigger or smaller at one size than
+   at the others. Each finding comes with a crop in `.data/fit`. It measures the page, so a fault already
+   on main fails too: fix it or say whose it is, never re-run main to see.
+2. **Stories for behaviour, recorded.** Run the stories a change needs with `--out .data/book-check`: the record keeps
+   what code each story ran. A story stuck past `--stall` (300 s) fails as stalled and the next one runs: read it as a
+   failure, not a reason to rerun the whole set.
+3. **After each fix, only what it touched.** `node platform/hq/book-check.mjs --stories '…' --out .data/book-check
+   --touched` (and the fit check's own `--touched`) says here, in a second, which recorded stories or cases the fix
+   touches. None: there's nothing to render. Some: `hq run --kind render --with .data/book-check/touched.json --bring
+   .data/book-check -- node platform/hq/book-check.mjs --stories '…' --out .data/book-check --again` runs only those
+   and keeps the rest's results (the fit check the same, with `.data/fit`). Send it to the helper even for one story:
+   on the shared worker the same stories take several times as long. A change to a module book-check imports (the
+   Notebook's words, its layout, masonry) touches every story: there `--again` reruns the whole set.
+
+Pictures still matter for what boxes can't judge (a colour, a drawing, a feel): open the crops and the screenshots you
+asked for, but let the fit check find what spills and what's out of scale.
 
 ## The notebook's link
 

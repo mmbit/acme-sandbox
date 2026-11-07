@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { PORT, REPO_DIR, KITS_DIR, COMMIT, WORKER_TOKEN, VOICE_TOKEN, ORIGIN, ZONE } from './config.ts';
 import { isAuthed, enrollOptions, enrollVerify, loginOptions, loginVerify, keepOwnDevice, startAppSession } from './auth.ts';
 import { loginPage, enrollPage, pairPage, csp, checkoutCsp, hqIndex, hqManifest, darkLogo, logo } from './pages.ts';
-import { brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads } from './company.ts';
+import { brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads, boardStatuses } from './company.ts';
 import { library, unshelvedProblem } from './library.ts';
 import { TYPES } from './types.ts';
 import { attachment, findFile, inside, rangeOf, HQ_DIR, THEME_DIR, hqDir } from './files.ts';
@@ -144,6 +144,7 @@ import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
 import * as trypreview from './ink/trypreview.ts';
 import * as earlierVersions from './earlier.ts';
 import * as callprototypes from './callprototypes.ts';
+import * as callbuilds from './callbuilds.ts';
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
 import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers there, a call's agent's too
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
@@ -179,6 +180,8 @@ import * as smallmodel from './smallmodel.ts';
 import { boardJob, boardJobs } from './boardnames.ts'; // (the jobs the board reads, by its names)
 import * as sizes from './sizes.ts';
 import * as moves from './moves.ts';
+import * as messageabout from './messageabout.ts';
+import * as sentmessages from './sentmessages.ts';
 import * as projects from './projects.ts';
 import * as pad from './pad.ts';
 import * as goals from './goals.ts';
@@ -1659,12 +1662,19 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // (messages.ts); hq inbox --hook (the worker's hook) takes this job's own, then acknowledges the ones it printed (only
   // that marks them delivered); hq sent says what became of yours.
   // On a call: the board's word to one job under way, by its number (call.ts reach).
+  // The job (to's) or the deliverable the message is about picks the session (messageabout.ts sendAbout); 422 says why
+  // one can't be (hq say prints it).
   'POST /api/agent/message': (b, me) => { if (me.call) return refusal(call.reach(me, String(b.to ?? ''), Number(b.job), String(b.what ?? ''), String(b.goal ?? ''), String(b.text ?? '')));
-    const agent = speaker(b.as, me), to = String(b.to ?? '');
+    const agent = speaker(b.as, me), to = b.to === undefined ? undefined : String(b.to);
     if (b.needsAnswer !== undefined && typeof b.needsAnswer !== 'boolean') return 400;
-    const r = !agent ? 403 : !assignable(to) ? 404 : messages.send({ agent, job: me.id }, to, String(b.text ?? ''), undefined, undefined, b.needsAnswer === true);
+    const job = b.job === undefined ? undefined : Number(b.job), deliverable = b.deliverable === undefined ? undefined : String(b.deliverable);
+    if (job !== undefined && (!Number.isInteger(job) || job < 1)) return new Refused(422, 'name the job by its number');
+    if (!agent) return 403;
+    if (to !== undefined && !assignable(to)) return 404;
+    const r = messageabout.sendAbout({ agent, job: me.id }, to, { job, deliverable }, String(b.text ?? ''), b.needsAnswer === true);
+    if (Array.isArray(r)) return refusal(r);
     // (and to the call with the board the recipient is on: callmessages.ts.)
-    return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : typeof r === 'object' ? { ...r, ...callmessages.offer(r.id, to) } : r; },
+    return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : typeof r === 'object' ? { ...r, ...(to ? callmessages.offer(r.id, to) : {}) } : r; },
   // (a meeting seat's lines, and the server's memory: lowmemory.ts)
   'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...chat.take(me.id), ...meetingseats.take(me.id), ...lowmemory.take(me.id, b.stopping === true), ...diskwarnings.take(me.id, b.stopping === true)],
   // (and the meeting lines it printed, lines)
@@ -1675,7 +1685,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     return messages.ack(me.id, b.ids);
   },
   'GET /api/agent/sent': (b, me) => { const agent = speaker(b.as, me);
-    return agent ? messages.sent(agent, me, Number(b.id) || undefined) : 403; },
+    return agent ? sentmessages.sent(agent, me, Number(b.id) || undefined) : 403; },
   // hq search, hq history, hq call (memory.ts): the shared files and the board's calls (with their summaries) for
   // everyone, and only the token's own agent's jobs and requests (a team member's go through its lead's). What holds a
   // customer's own details only for the job working on it (memory.ts readsDoc). Never on the board's HQ.
@@ -1894,6 +1904,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/prototype': async b => refusal(await callprototypes.fromVoice(b)),
   // (its versions to pick from)
   'POST /api/voice/try': b => refusal(callpage.versions(b)),
+  // (a prototype built from a brief, as a job: callbuilds.ts.)
+  'POST /api/voice/prototype-build': b => refusal(callbuilds.build(b)),
   // (the voices the board's calls recognise by name, and what to tell a person before saving theirs: voiceprints.ts.)
   'GET /api/voice/voiceprints': () => voiceprints.listForVoice(),
   'POST /api/voice/voiceprint': b => refusal(voiceprints.saveVoiceprint(b)),
@@ -2078,7 +2090,7 @@ const extraRoutes = (table: Record<string, string>): RouteTable => Object.fromEn
   }]));
 // The board's own rows, from HQ's pages and its apps (kits.ts)
 const board: RouteTable = {
-  '* /api/events': ({ res }) => subscribe(res),
+  '* /api/events': ({ res }) => subscribe(res, boardStatuses()),
   // a workspace whole, and one version of its file, for the Companies app (workspaces.ts)
   'GET /api/workspaces/file': ({ res, url }) => {
     const q = url.searchParams;

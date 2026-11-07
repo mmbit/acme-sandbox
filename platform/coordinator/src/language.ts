@@ -32,11 +32,11 @@ export const SMALL_WORDS: Record<BoardLanguage, string> = {
 };
 const KEY = 'board.language';
 
-const known = (v: unknown): v is BoardLanguage => typeof v === 'string' && Object.hasOwn(LANGUAGES, v);
+export const isBoardLanguage = (v: unknown): v is BoardLanguage => typeof v === 'string' && Object.hasOwn(LANGUAGES, v);
 // English until the board picks one
 export const boardLanguage = (): BoardLanguage => {
   const v = setting(KEY);
-  return known(v) ? v : 'en';
+  return isBoardLanguage(v) ? v : 'en';
 };
 export const languageName = (lang: BoardLanguage = boardLanguage()) => LANGUAGES[lang].name;
 
@@ -47,7 +47,7 @@ export const language = () => ({
 });
 // POST /api/language: the board's (or the intake's) choice, or why it isn't one
 export function setLanguage(lang: unknown) {
-  if (!known(lang)) return `lang is one of ${Object.keys(LANGUAGES).join(', ')}`;
+  if (!isBoardLanguage(lang)) return `lang is one of ${Object.keys(LANGUAGES).join(', ')}`;
   remember(KEY, lang);
   return language();
 }

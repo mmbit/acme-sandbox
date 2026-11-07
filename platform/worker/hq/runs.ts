@@ -27,6 +27,9 @@ const BUNDLE_SEND_MS = 10 * 60_000;
 export type Spec = { command: string; kind: string; cwd: string; bring: string[]; minutes: number };
 // A run's kind on the lent machines (the fastest one's size), and this server's helper of it
 type Helper = Presence & {
+  // present: a helper that may take the run is asking for work, on a lent machine or this server; lentPresent: on a
+  // lent machine
+  lentPresent: boolean;
   name: string;
   kind: string;
   // how many machines the board lends
@@ -111,7 +114,7 @@ async function send(args: string[]) {
   const checkout = machine?.kinds.find(kind => kind.name === spec.kind && kind.checkout);
   if (checkout) {
     if (fallback) stop('hq run: checks stay on the helper, leave out --fallback here');
-    return checkOnHelper(root, spec, commit || treeNow(root, ['.'], carried), checkout.browsers);
+    return checkOnHelper(root, spec, commit || treeNow(root, ['.'], carried), checkout);
   }
   const folders = runFolders(paths, spec.cwd);
   const here = fallback ? { root, spec } : null;
@@ -230,11 +233,8 @@ async function collect(id: number, here: Here | null = null) {
 
 // No helper that may take it has asked for work for as long as a run waits to be taken (a helper restarting asks again
 // well within it). A kind for the lent machine only waits for it, unless the run may run here.
-const noTaker = ({ helper, passed }: Run, started: number, orHere: boolean) =>
-  (!helper.lentOnly || orHere) &&
-  !(helper.present && (!passed || !helper.serverTakes)) &&
-  !(helper.server.present && helper.serverTakes) &&
-  Date.now() - started > helper.takeMinutes * 60_000;
+const noTaker = ({ helper }: Run, started: number, orHere: boolean) =>
+  (!helper.lentOnly || orHere) && !helper.present && Date.now() - started > helper.takeMinutes * 60_000;
 
 const noTakerLine = (helper: Helper) =>
   helper.serverTakes
@@ -245,11 +245,11 @@ function stateLine({ state, helper, taken, why, on, machine, passed }: Run) {
   const size = ({ cpus, memoryGb }: Presence) => (cpus ? ` (${cpus} cores, ${memoryGb} GB)` : '');
   const where = on === 'server' ? `${SERVER}${size(helper.server)}` : (machine ?? helper.name);
   if (state === 'waiting' && helper.lentOnly)
-    return `${why ? `${why}; ` : ''}waiting for ${helper.name}${helper.present ? size(helper) : ", which isn't asking for work now"} (this kind runs there alone)`;
+    return `${why ? `${why}; ` : ''}waiting for ${helper.name}${helper.lentPresent ? size(helper) : ", which isn't asking for work now"} (this kind runs there alone)`;
   if (state === 'waiting' && !helper.serverTakes)
     return `waiting for ${helper.name}${size(helper)}: ${SERVER} takes no ${helper.kind} run until it has finished one`;
   if (state === 'waiting' && passed) return why ?? `waiting for ${SERVER}`;
-  if (state === 'waiting' && !helper.present) return `${helper.name} isn't asking for work: waiting for ${SERVER}`;
+  if (state === 'waiting' && !helper.lentPresent) return `${helper.name} isn't asking for work: waiting for ${SERVER}`;
   if (state === 'waiting')
     return `waiting for ${helper.name}${size(helper)}, or ${SERVER} after ${helper.takeMinutes} min`;
   if (state === 'running') return `running on ${where}${present(taken) ? ` since ${minute(taken)}` : ''}`;

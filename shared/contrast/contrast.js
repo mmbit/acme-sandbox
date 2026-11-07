@@ -11,6 +11,13 @@ export function luminanceChannels(rgb, { threshold = 0.03928 } = {}) {
   return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
 }
 
+// A computed rgb() or rgba() string's sRGB channels, 0 to 255, its alpha left out
+export const cssChannels = colour =>
+  colour
+    .match(/[\d.]+/g)
+    .slice(0, 3)
+    .map(Number);
+
 // From 1 (the same luminance) to 21 (black against white), whichever of the two is lighter.
 export function contrastChannels(a, b) {
   const [hi, lo] = [luminanceChannels(a), luminanceChannels(b)].sort((x, y) => y - x);

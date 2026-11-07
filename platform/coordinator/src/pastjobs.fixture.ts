@@ -2,6 +2,7 @@
 // what reads history (estimates, the play, the backtest, the counts) sets it here. The harness gives it as h.pastJob.
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { recordedReviews } from './reviewfixture.ts';
+import type { Scope } from './carryscope.ts';
 
 // Planning links retained by tasks made before the queue paths saved attribution and scope sizes.
 export type WorkEvidence =
@@ -35,6 +36,7 @@ export function recordedWorkEvidence(db: DatabaseSync, job: number, evidence: Wo
 // `files`, with review's lines and verdict; byBranch: that pull request known by the job's branch alone, the job's `pr`
 // left unset (a work job's). sized: the agent time the estimate stored when the job was queued.
 export type PastJobFields = {
+  carryScope?: Scope;
   created?: number;
   finished?: number;
   run?: Run;
@@ -68,6 +70,7 @@ export function recordedPastJobs(
 ) {
   let prs = 9000;
   return ({
+    carryScope,
     run,
     runs = run ? [run] : [],
     merged,
@@ -98,6 +101,7 @@ export function recordedPastJobs(
     const values = names.map(name => row[name]) as SQLInputValue[];
     const { lastInsertRowid } = statement.run(...values);
     const id = Number(lastInsertRowid);
+    storeCarry(db, String(columns.carry), carryScope);
     storeRuns(db, id, runs);
     storeFollowups(db, id, fixFor, previewFor);
     if (followupFor !== undefined) storeReviewFollowup(db, id, followupFor);
@@ -161,4 +165,13 @@ function storePrediction(db: DatabaseSync, job: number, created: string, sized?:
     `insert into predictions (job, made, agent_ms, picks, basis, slow_agent_ms)
     values (?, ?, ?, '[]', '{"kind":"work","agent":null,"words":[]}', ?)`,
   ).run(job, created, sized, slowSized === undefined ? sized : slowSized);
+}
+
+function storeCarry(db: DatabaseSync, sha: string, scope?: Scope) {
+  if (scope === undefined) return;
+  db.prepare('insert into carry_commits (sha, code, scope) values (?, ?, ?)').run(
+    sha,
+    scope.typecheck || scope.tests.length ? 1 : 0,
+    JSON.stringify(scope),
+  );
 }

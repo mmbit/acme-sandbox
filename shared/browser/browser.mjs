@@ -1,5 +1,5 @@
-// Playwright for the browser checks: the module wherever it's installed, a page that keeps its errors, a tap, a wait and
-// a sound player's loudness.
+// Playwright for the browser checks: the module wherever it's installed, a page that keeps its errors, a tap, a wait, a
+// budget for a run and a sound player's loudness.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -81,6 +81,22 @@ export async function until(page, selector, pattern, timeout) {
     const words = await page.evaluate(s => document.querySelector(s)?.innerText.replace(/\s+/g, ' ').trim(), selector);
     if (words === undefined) assert.fail(`${selector} never appeared`);
     assert.fail(`${selector} never read ${pattern}: "${words}"`);
+  }
+}
+
+// A check's run, given up once it has run ms: abandon() closes what it opened under it (touched.mjs's Watcher has
+// one), and it fails with an error whose stalled is true.
+export async function withinBudget(running, ms, abandon) {
+  const stall = Object.assign(new Error(`stalled: not done within ${ms / 1000} s`), { stalled: true });
+  let timer;
+  running.catch(() => {}); // (once it's given up, its own failure as its pages close is no one's)
+  try {
+    return await Promise.race([running, new Promise((_, reject) => (timer = setTimeout(() => reject(stall), ms)))]);
+  } catch (e) {
+    if (e === stall) await abandon();
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

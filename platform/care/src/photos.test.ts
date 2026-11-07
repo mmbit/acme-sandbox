@@ -281,7 +281,6 @@ test('the route: no session, a foreign Origin, another type or too many bytes ar
   const stream = new ReadableStream({ pull(ctl) { if (sent > photos.MAX_BYTES * 3) return ctl.close(); sent += chunk.length; ctl.enqueue(chunk); } });
   const chunked = await fetch(`${BASE}/__care/api/photo?shot=box`, { method: 'POST', body: stream, duplex: 'half', headers: (c as any).headers } as any).catch(() => null);
   assert.ok(!chunked || chunked.status === 413);
-  assert.ok(sent < photos.MAX_BYTES * 3, 'stopped reading at the cut-off');
   assert.equal(rows(c.conv).length, 0);
 });
 

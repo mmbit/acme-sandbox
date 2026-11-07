@@ -3,6 +3,6 @@
 # and entrypoint are replaced, as the start command replaces them.
 ARG IMAGE=node:24.22.1-slim
 FROM ${IMAGE}
-COPY helper.mjs /opt/helper/helper.mjs
+COPY helper.mjs manager.mjs /opt/helper/
 USER 0:0
 ENTRYPOINT ["node", "/opt/helper/helper.mjs"]

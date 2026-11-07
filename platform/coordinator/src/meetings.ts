@@ -156,7 +156,7 @@ function tellCeo(from: { agent: string; job: number }, id: number, topic: string
       boss,
       `Meeting ask #${id} from ${from.agent} with ${named.join(', ')}: ${topic}\n\n` +
         'hq meeting asks shows it with the meetings already holding its agents; hq meeting set, join or drop.',
-      running.id,
+      { only: running.id },
     );
     if (typeof said === 'object' && said.state === 'queued') return 'session';
   }
@@ -334,7 +334,7 @@ export function drop(id: number, why: unknown, by: { agent: string; job: number 
   if (!said) return `say why in a line: ${a.agent} reads it`;
   db.prepare("update meeting_asks set status = 'dropped', why = ? where id = ?").run(said, id);
   if (a.job && messages.inSession(a.job))
-    messages.send(by, a.agent, `Your meeting ask #${id} ("${a.topic}") was dropped: ${said}`, a.job!);
+    messages.send(by, a.agent, `Your meeting ask #${id} ("${a.topic}") was dropped: ${said}`, { only: a.job! });
   return { ok: true as const };
 }
 

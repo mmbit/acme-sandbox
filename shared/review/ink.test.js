@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as inkjs from './ink.js';
-import { HALO, layered } from './inkshape.js';
+import { HALO } from './inkshape.js';
 
 const K = 2; // device px to the CSS px, an iPad's
 const RED = { color: '#ff5a5f', size: 5 };
@@ -367,13 +367,4 @@ test("the strip's pens are among the notebook's, red first", () => {
       k.name,
     );
   assert.equal(inkjs.INKS[0].name, 'Red');
-});
-
-test('the highlighter lies under the pencil and the pen, whichever came first; each kind in its own order', () => {
-  const pen1 = { color: '#000' },
-    marker1 = { color: '#ff0', alpha: 0.42 },
-    pencil = { color: '#555', alpha: 0.7 },
-    marker2 = { color: '#0f0', alpha: 0.42 },
-    pen2 = { color: '#00f' };
-  assert.deepEqual(layered([pen1, marker1, pencil, marker2, pen2]), [marker1, marker2, pencil, pen1, pen2]);
 });

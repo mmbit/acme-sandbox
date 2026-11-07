@@ -1,5 +1,6 @@
 // Consolidator starts from the shared play and weekly room relative to time until reset.
 import { db } from './db.ts';
+import { reviewSettings } from './company.ts';
 import { findAgent } from './jobs.ts';
 import * as latency from './latency.ts';
 import { preparedInParts, type prepared } from './predictions.ts';
@@ -10,13 +11,26 @@ import type { ProspectiveRun } from './reviewplan.ts';
 const WEEK_MS = 7 * 24 * 3_600_000;
 
 export function brief(pr: number, candidates: string[]) {
-  const seats = db.prepare('select engine, state, pace, week, week_resets from seats').all();
   const ruling = choices(pr, candidates, 'ruling');
-  return `Engine availability: ${JSON.stringify(seats)}.
-Consolidator capacity (start is epoch milliseconds, weekLeft is allowance left divided by time left in the week, null is unknown): ${JSON.stringify(ruling)}.
-Suggest a ruling consolidator by weighing the projected starts and each engine's weekly room against its resets above.
-Spare the scarce engine
-when the other can do the work and start in time.`;
+  const selected = choose(ruling);
+  const preferred = reviewSettings().consolidatorEngine;
+  const eligible = ruling.filter(choice => !preferred || choice.engine === selected.engine).map(choice => choice.agent);
+  return `Projected ruling starts (epoch milliseconds, ready means the run can start now): ${JSON.stringify(ruling.map(({ agent, engine, start, ready }) => ({ agent, engine, start, ready })))}.
+HQ's projected ruling engine: ${selected.engine}. ${preferred ? 'Eligible candidates on it' : 'Eligible suggestions'}: ${JSON.stringify(eligible)}.
+You may suggest one of these agents. HQ checks starts again when it queues the ruling.`;
+}
+
+// Immediate starts share one admission point. Otherwise the preferred engine must start at least as soon.
+// Stable sorting preserves the suggested agent within the chosen engine.
+export function choose(choices: Choice[]) {
+  const preferred = reviewSettings().consolidatorEngine;
+  return choices.toSorted((a, b) => {
+    const favored = Number(b.engine === preferred) - Number(a.engine === preferred);
+    if (a.ready && b.ready && preferred) return favored;
+    const sooner = (a.start ?? Infinity) - (b.start ?? Infinity);
+    const roomier = a.weekLeft === null || b.weekLeft === null ? 0 : b.weekLeft - a.weekLeft;
+    return sooner || (preferred ? favored : roomier);
+  })[0];
 }
 
 export type Choice = { agent: string; engine: string } & Room;
@@ -118,6 +132,7 @@ function engineRoom({ snapshot: queue, sizes }: ReturnType<typeof prepared>, id:
   const weeks = measured.reduce((sum, seat) => sum + (seat.weekResets! - queue.now) / WEEK_MS, 0);
   return {
     start,
+    ready: start !== null && start <= queue.now,
     // A ratio of one leaves the same fraction of allowance as time in the week. Unknown readings cast no vote.
     weekLeft: weeks ? left / weeks : null,
   };

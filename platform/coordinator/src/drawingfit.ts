@@ -5,7 +5,13 @@
 // drawing's viewBox takes in whatever still reaches past it. The frame tells the agent what was fitted and which words
 // still overlap. Each function here runs in the frame as its own source (FITTED), so it calls only the others here.
 
-type Placed = { text: SVGTextElement; shape: SVGGeometryElement | null; words: string; how: Set<string> };
+type Placed = {
+  text: SVGTextElement;
+  shape: SVGGeometryElement | null;
+  words: string;
+  how: Set<string>;
+  drawn: number;
+};
 type Line = { words: string[]; like: Element | null };
 type Span = { left: number; right: number };
 
@@ -37,8 +43,12 @@ function fitWords() {
         .flatMap(l => l.words)
         .join(' '),
       how: new Set(),
+      drawn: 0,
     }));
-  for (const p of placed) p.shape = shapeOf(p.text, shapes);
+  for (const p of placed) {
+    p.shape = shapeOf(p.text, shapes);
+    p.drawn = p.text.getBoundingClientRect().top;
+  }
   for (const p of placed) if (!holds(p.shape, p.text.getBoundingClientRect(), padOf(p.text))) fit(p);
   for (const shape of new Set(placed.map(p => p.shape))) if (shape) stack(placed.filter(p => p.shape === shape));
   roomFor(svg, Math.max(4, ...placed.map(p => padOf(p.text).x)));
@@ -300,10 +310,12 @@ function scaled(shape: SVGGeometryElement, across: number, down: number, top: bo
   }
 }
 
-// The texts in one shape stacked so that none covers one above it, and the shape grown down to hold them all
+// The texts in one shape stacked so that none covers one above it, and the shape grown down to hold them all. They keep
+// the order they were drawn in (their tops before any fitting), so a heading stays above the sentence below it however
+// high that sentence's wrapped lines start.
 function stack(group: Placed[]) {
   const box = (p: Placed) => p.text.getBoundingClientRect();
-  group.sort((a, b) => box(a).top - box(b).top);
+  group.sort((a, b) => a.drawn - b.drawn);
   for (const [i, p] of group.entries()) {
     const r = box(p),
       above = group.slice(0, i).map(box);

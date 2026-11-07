@@ -10,10 +10,10 @@ import { availableParallelism } from 'node:os';
 const WORKER_BYTES = 2.3e9;
 
 // Plays parts ({ engine, name }, in order) on count workers of entry (none: workersHere()), each started with args and
-// --worker, every part's line logged as it comes, each part through the memory hold (below). Returns how many failed,
-// on how many workers, the most memory in use and how much of it the check's (bytes), and how long parts waited for
-// memory (ms).
-export async function sharedOut(entry, args, parts, count) {
+// --worker, every part's line logged as it comes, each part through the memory hold (below), and each part with what
+// its worker sent back given to played. Returns how many failed, on how many
+// workers, the most memory in use and how much of it the check's (bytes), and how long parts waited for memory (ms).
+export async function sharedOut(entry, args, parts, count, played = () => {}) {
   const queue = [...parts],
     workers = Math.min(count || workersHere(), queue.length),
     hold = memoryHold(queue),
@@ -33,9 +33,10 @@ export async function sharedOut(entry, args, parts, count) {
         hold.ended(child.pid);
         doing = null;
       };
-      child.on('message', ({ ok, line }) => {
-        console.log(line);
-        if (!ok) failed++;
+      child.on('message', result => {
+        console.log(result.line);
+        if (!result.ok) failed++;
+        played(doing, result);
         ended();
         next();
       });

@@ -11,6 +11,7 @@
 // and when the tool changes. Every change is one step through hooks.begin(view) (bookedit.js).
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
+import { clearOn } from '../floating.js';
 import { grownTo } from './bookrow.js';
 import { boundsOf, gestureOf, groupOf, membersOf, picked, topAt, union, wholeOf, within } from './bookselectmath.js';
 import { fixed, unitAt } from './bookunits.js';
@@ -327,6 +328,9 @@ export function framed(sel, b = bounds(sel)) {
     x = Math.min(Math.max((b.x0 + b.x1) / 2, shown.x0 + half), shown.x1 - half);
   bar.dataset.side = under ? 'under' : 'over';
   Object.assign(bar.style, { left: `${x}px`, top: `${y}px` });
+  // (clear of the controls on the paper that shows it, an opened scrap's sheet.)
+  const d = clearOn(bar, bar.closest('.bk-flyer')?.querySelector('.bk-sheet') ?? sel.book.desk, BAR.side);
+  Object.assign(bar.style, { left: `${x + d.x / s}px`, top: `${y + d.y / s}px` });
 }
 // The frame shown at a box while the selection is held (its bar away), or back as it was
 export function frameAt(sel, b) {

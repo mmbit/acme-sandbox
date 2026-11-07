@@ -50,8 +50,7 @@ from voices import VOICE_WORDS, Voices
 from voices import ENROL_WORDS, FORGET_WORDS, NAME_LENGTH
 from design import ABOUT_LENGTH, DESIGN_TOOL_WORDS, HAND_PAUSE_SECONDS, HAND_TOOL_WORDS, LANGUAGES, Design
 from design import DESIGN_OPEN_SECONDS, MADE_EARLY_WORDS, MADE_WORDS, MAKE_MOST_SECONDS, MAKE_QUIET_SECONDS, MAKES
-from design import (BRIEF_MOST, BUILD_EFFORT, BUILD_SECONDS, BUILD_TOOL_WORDS, BUILD_WORDS, Progress, build_ask,
-                    built_page, prototype_key)
+from design import BUILD_TOOL_WORDS, build_asked
 
 HQ, TOKEN, ORIGIN = os.environ['HQ_URL'], take_token(os.environ), os.environ['ORIGIN']  # (guard.py: who can read what)
 MODELS = Path(os.environ.get('VOICE_MODELS', '/models'))  # (replay.py runs the real models outside the image)
@@ -1471,10 +1470,8 @@ class Call:
         self.page = CallNotes(self)
         # A design session, and the agent's raised hand (design.py).
         self.design, self.hand_waits = Design(self.send_event), None
-        # Prototypes built in the background (build): each page saved on the call by its name, the last one (the next
-        # version builds on it), and the builders at work, and the names they build (one at a time under a name). Both
-        # by the name as the store compares it (prototype_key).
-        self.prototypes, self.builders, self.building = {}, set(), set()
+        # The prototypes being built for the call, by their jobs (prototype_tool; built hears them end).
+        self.builds = set()
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
         # (the AI line and the transcript line) whole in each of its languages (care_first), and a reply in another
@@ -3130,126 +3127,46 @@ class Call:
             await asyncio.sleep(0.1)
         return None
 
-    # ---- prototypes, built in the background from a brief (design.py BUILD_WORDS).
+    # ---- prototypes, built from a brief as a colleague's job (the coordinator's callbuilds.ts).
     async def prototype_tool(self, asked):
-        """The agent's prototype tool: a page of its own (html) saved at once (CallNotes), or a brief a builder takes in
-        the background (build) while the agent goes on."""
+        """The agent's prototype tool: a page of its own (html) saved at once (CallNotes), or a brief a colleague
+        builds as a job, its placeholder on the call's page at once, while the agent goes on: the call follows it
+        (activity) and steers it (another brief under its name), as any job it queued. The line hears it land with the
+        call's lines (built)."""
         given = asked.get('prototype')
         if not isinstance(given, dict) or 'brief' not in given:
-            got = await self.page.prototype_tool(asked)
-            if 'error' not in got and isinstance(given, dict):
-                self.prototypes[prototype_key(one_line(given['name']))] = given['html'].strip()
-            return got
-        name = one_line(given['name']) if isinstance(given.get('name'), str) else ''
-        brief = given['brief'].strip() if isinstance(given['brief'], str) else ''
-        # (what a next version changes, said in a line on its slip)
-        about = one_line(given.get('about', '')) if isinstance(given.get('about', ''), str) else None
-        if set(given) - {'name', 'brief', 'about'} or not 0 < len(name) <= PROTOTYPE_NAME or \
-                not 0 < len(brief) <= BRIEF_MOST or about is None or len(about) > PROTOTYPE_ABOUT:
+            return await self.page.prototype_tool(asked)
+        if not (build := build_asked(given)):
             return {'error': BUILD_TOOL_WORDS['shape']}
         if refusal := self.page.refused(PROTOTYPE_WORDS):
             return {'error': refusal}
-        # (taken here, not when the builder starts: a second brief under the name may come before it has)
-        if (key := prototype_key(name)) in self.building:
-            return {'error': BUILD_TOOL_WORDS['building'].format(name=name)}
-        self.building.add(key)
-        builder = asyncio.create_task(self.build(name, brief, about))
-        self.builders.add(builder)
-        builder.add_done_callback(self.builders.discard)
-        builder.add_done_callback(lambda _: self.building.discard(key))
-        print(f'call: {self.agent} had a prototype built in the background', flush=True)
-        return {'ok': BUILD_TOOL_WORDS['started']}
+        got = await self.page.answer('prototype-build', {**build, 'lang': self.lang}, PROTOTYPE_WORDS)
+        if 'error' in got:
+            return got
+        if isinstance(got.get('job'), int):
+            self.builds.add(got['job'])
+        print(f"call: {self.agent} had a prototype built as job #{got.get('job')}", flush=True)
+        return {'ok': f"{one_line(got['ok'])} {BUILD_TOOL_WORDS['started']}"}
 
-    async def build(self, name, brief, about=''):
-        """A prototype built from the agent's brief while the call goes on: the CLI once, with no tools, at BUILD_EFFORT,
-        on the call's seat (the next version of one the call has builds on its page, about: what it changes). Its page
-        is saved as the agent's would be, and the agent's hand goes up for it (design.py built); for one that fails
-        too, with why. One at a time under a name (building): the next builds on the one it makes."""
-        start = self.wiring.monotonic()
-        try:
-            result = await self.builder(build_ask(name, brief, self.lang, self.prototypes.get(prototype_key(name))))
-            if not (page := built_page(result)):
-                raise ValueError('no whole page in its answer')
-            got = await self.page.prototype_tool({'prototype': {'name': name, 'html': page[0],
-                                                                **({'about': about} if about else {})}})
-            if 'error' in got:
-                raise ValueError(got['error'])
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            # (always a reason, though an error may have no words of its own: a TimeoutError has none.)
-            why = str(err).strip() or f'{type(err).__name__}, with no words of its own'
-            print(f'call: {self.agent}: a prototype built in the background failed after '
-                  f'{self.wiring.monotonic() - start:.0f} s: {why}'[:400], flush=True)
-            if not self.ended and await self.design.built(name[:ABOUT_LENGTH], f'{name}: {why}', failed=True):
+    async def built(self, builds):
+        """The call's builds that ended, from HQ (the coordinator's callbuilds.ts heard): the agent's hand goes up for
+        each, for one that landed with what changed and what to try first, for one that didn't with why (design.py
+        built)."""
+        for b in builds:
+            if not (isinstance(b, dict) and isinstance(b.get('name'), str) and isinstance(b.get('version'), int)):
+                continue
+            self.builds.discard(b.get('job'))
+            shown, by = f"{b['name']} v{b['version']}", b.get('by') or 'a colleague'
+            if failed := isinstance(b.get('failed'), str):
+                why = b['failed'].strip().rstrip('.')  # (the hand's words end its sentence)
+                self.write(f"({shown}, built by {by}, didn't land: {why}.)")
+                words = f'{shown}: {why}'
+            else:
+                self.write(f'({shown}, built by {by}, landed on their screens.)')
+                said = f"{shown} (what changed: {b['about']})" if b.get('about') else shown
+                words = f"{said}: {b['line']}" if b.get('line') else said
+            if not self.ended and await self.design.built(shown[:ABOUT_LENGTH], words, failed=failed):
                 self.wait_for_moment()
-            return
-        self.prototypes[prototype_key(name)] = page[0]
-        print(f'call: {self.agent}: a prototype built in the background after {self.wiring.monotonic() - start:.0f} s',
-              flush=True)
-        if self.ended:
-            return
-        shown = f"{name} v{got['version']}" if type(got.get('version')) is int else name
-        said = f'{shown} (what changed: {about})' if about else shown
-        if await self.design.built(shown[:ABOUT_LENGTH], f'{said}: {page[1]}' if page[1] else said):
-            self.wait_for_moment()
-
-    async def builder(self, ask):
-        """The builder's answer to ask: the CLI's result text. The call's seat, no tools and nothing of the call's own
-        (no HQ token, no screen socket), its session not kept."""
-        paths = self.wiring.paths
-        signs = sign_in_pipe(seat_token(paths.seat))
-        try:
-            env = agent_env(os.environ, HQ, signs, '', self.agent, None, self.brain.tz, work=paths.work,
-                            cli_config=paths.cli_config)
-            proc = await self.wiring.start_cli(
-                'claude', '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-                '--model', MODEL, '--effort', BUILD_EFFORT, '--tools', '',
-                '--strict-mcp-config', '--setting-sources', 'user', '--permission-mode', 'dontAsk',
-                '--no-session-persistence', '--system-prompt', BUILD_WORDS, cwd=paths.work, env=env, pass_fds=(signs,),
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                limit=1 << 24)
-        finally:
-            os.close(signs)
-        return await self.builder_answer(proc, ask)
-
-    async def builder_answer(self, proc, ask):
-        """The builder's CLI (proc) asked ask: its result text, read from its stream as it comes (design.py Progress),
-        or why not: its error, or how far it got by BUILD_SECONDS."""
-        progress, result, said = Progress(self.wiring.monotonic()), {}, []
-
-        async def read():
-            nonlocal result
-            proc.stdin.write(ask.encode())
-            await proc.stdin.drain()
-            proc.stdin.close()
-            while line := await proc.stdout.readline():
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(event, dict):
-                    progress.seen(event, self.wiring.monotonic())
-                    result = event if event.get('type') == 'result' else result
-
-        async def errors():  # (its last words on stderr, for a CLI that ends with no result)
-            while line := await proc.stderr.readline():
-                if words := line.decode(errors='replace').strip():
-                    said[:] = [words[:200]]
-
-        try:
-            await asyncio.wait_for(asyncio.gather(read(), errors(), proc.wait()), BUILD_SECONDS)
-        except TimeoutError:
-            raise RuntimeError(f'not done after {BUILD_SECONDS / 60:.0f} minutes, so the line stopped it: '
-                               f'{progress.said(self.wiring.monotonic())}') from None
-        finally:
-            if proc.returncode is None:  # (given up on, or the call ended: cancelled)
-                proc.kill()
-        if proc.returncode or result.get('is_error') or not isinstance(result.get('result'), str):
-            words = str(result.get('result') or '').strip()[:200] or (said[0] if said else 'no words')
-            raise RuntimeError(f'the builder ended with {proc.returncode}: {words}')
-        print(f'call: {self.agent}: its builder answered: {progress.said(self.wiring.monotonic())}', flush=True)
-        return result['result']
 
     async def enrol_tool(self, asked):
         """The agent's save_voice tool (voices.py), the board having asked: with a name alone, what to tell them and ask
@@ -3339,9 +3256,6 @@ class Call:
             self.pictures = []
             self.drawing.end()
             self.driving.end()
-            # (its page has no call to go to.)
-            for builder in list(self.builders):
-                builder.get_loop().call_soon_threadsafe(builder.cancel)  # (this runs in a thread of its own)
             if self.voices and self.voices.prints:
                 print(self.voices.report(self.agent), flush=True)
                 if heard := self.voices.heard():  # (the saved voices it heard, refined)
@@ -3395,7 +3309,8 @@ async def hand_over_held(paths, hq, every=HELD_EVERY):
 
 # Every LINES_EVERY seconds: each call's transcript so far goes to HQ as it grows (call-lines), so what was said is in HQ
 # even if the call never ends cleanly, and the CEO reads a call still going on; HQ answers with the colleagues' messages
-# for the call, which its agent hears (Call.messaged). (A call that's over is hand_over_held's.)
+# for the call, which its agent hears (Call.messaged), and the prototypes built for it that ended since (Call.built).
+# (A call that's over is hand_over_held's.)
 LINES_EVERY = 15
 
 
@@ -3403,14 +3318,15 @@ async def kept_in_hq(wiring):
     sent = {}  # (each file's last change sent, by name)
     while True:
         await asyncio.sleep(LINES_EVERY)
-        for name, messages in await asyncio.to_thread(keep_in_hq, wiring, sent):
+        for name, news in await asyncio.to_thread(keep_in_hq, wiring, sent):
             if call := next((c for c in LIVE if c.file.name == name), None):
-                call.messaged(messages)
+                call.messaged(news.get('messages') or [])
+                await call.built(news.get('built') or [])
 
 
 def keep_in_hq(wiring, sent):
-    """Sends each live call's lines when they changed (sent: the last change sent, by file), or its token alone. The
-    messages HQ had for each call, by its file's name."""
+    """Sends each live call's lines when they changed (sent: the last change sent, by file), or its token alone. What
+    HQ had for each call, by its file's name: {'messages', 'built'}, each a list when there's any."""
     live, heard = {f.name for f in wiring.paths.live.iterdir()}, []
     files = list(wiring.paths.calls.glob('*.json'))
     for file in files:
@@ -3425,8 +3341,10 @@ def keep_in_hq(wiring, sent):
             answer = wiring.hq('POST', 'call-lines', {'agent': call.get('agent'), 'token': call['token'],
                                                       **({'lines': call.get('lines'), 'times': call.get('times')} if fresh else {})})
             sent[file.name] = changed
-            if isinstance(answer, dict) and isinstance(answer.get('messages'), list) and answer['messages']:
-                heard.append((file.name, answer['messages']))
+            if isinstance(answer, dict):
+                news = {k: answer[k] for k in ('messages', 'built') if isinstance(answer.get(k), list) and answer[k]}
+                if news:
+                    heard.append((file.name, news))
         except FileNotFoundError:
             pass
         except Exception as err:  # (HQ busy, or the file half written: the next round sends it)
@@ -3490,7 +3408,7 @@ async def watch_live(every=LIVE_EVERY):
     while True:
         for call in list(LIVE):
             now = call.wiring.monotonic()
-            if call.turn and not call.turn.done() or call.builders:  # (the agent at work)
+            if call.turn and not call.turn.done() or call.builds:  # (the agent at work, or a build for it)
                 call.active = now
             quiet, idle = now - call.signal, now - call.active
             if quiet < LIVE_QUIET or call.away:  # (away: held, hang_up_later ends it)

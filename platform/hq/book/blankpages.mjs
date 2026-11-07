@@ -53,8 +53,11 @@ async function leftBlank(browser, c, viewport, name, options) {
 // New page, by a click dispatched on the bar's key: on a narrow page the dots menu has it (the bar's own stories press
 // it there)
 const newPage = page => page.locator('#book .bk-bar .bk-btn[aria-label="New page"]').dispatchEvent('click');
-// My journal's pages as the played store has them
-const stored = play => play.route('/api/notebooks/pages', { notebook: 1 });
+// My journal's Sketch pages as the played store has them: the chapter the bar counts (its Calls are its own)
+const stored = play => {
+  const read = play.route('/api/notebooks/pages', { notebook: 1 });
+  return { ...read, pages: read.pages.filter(p => p.chapter === 'sketch') };
+};
 const blanks = read => read.pages.filter(p => p.kind === 'free' && !p.title && !p.groups);
 const ids = pages => pages.map(p => p.id);
 // The page shown and its chapter's page count, as the bar reads them ("2 / 3": [2, 3])

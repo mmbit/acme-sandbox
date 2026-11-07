@@ -584,8 +584,27 @@ test("a call's additions join one job and stop at the hourly cap", async () => {
   const received = await h.agent(`sent?id=${first.message}`, authorized.token);
   assert.equal(received.status, 200);
   assert.match(received.body[0].text, /And a voucher/);
-  const { sent } = await import('./messages.ts');
+  const { sent } = await import('./sentmessages.ts');
   assert.notEqual(sent('kit', { id: followUp, agent: 'kit' }, first.message), 404, 'the follow-up also sees delivery');
+});
+
+// A review a paused project holds waits with its pause: the briefing lists only reviews that can start, so a held one
+// never reads as a backlog of reviews.
+test("the briefing's queued reviews leave out one a pause holds", async () => {
+  fresh();
+  const pauses = await import('./pauses.ts');
+  const live = h.dueThread(), paused = h.dueThread();
+  const ready = h.queue({ agent: 'rook', kind: 'review', pr: 5101, round: 1, title: 'Live work', thread: live });
+  const held = h.queue({ agent: 'rook', kind: 'review', pr: 5102, round: 1, title: 'Paused work', thread: paused });
+  assert.equal(typeof pauses.pause({ thread: paused, why: 'Not yet', byHand: true }, 'juno'), 'object');
+  try {
+    const { prompt } = await context('juno');
+    const listed = prompt.split('Reviews queued')[1].split('\nThe intercom chat')[0];
+    assert.match(listed, new RegExp(`- #${ready}, rook: `));
+    assert.doesNotMatch(listed, new RegExp(`#${held}\\b`));
+  } finally {
+    pauses.resume({ thread: paused }, 'juno');
+  }
 });
 
 // The board's settled word to work under way (call.ts reach, hq say on a call), as often as it needs: a running Claude job's
@@ -601,7 +620,7 @@ test('the call reaches a running job, as often as it needs, by its number and it
   const waiting = jobs.createJob({ agent: 'moss', title: 'Not yet', prompt: 'x' }).id;
   const ctx = await context('juno');
   assert.match(ctx.prompt, new RegExp(`- #${running.id}, moss: The site \\(job on seat-\\d+, since [^)]*\\), in no deliverable\\.`), 'the briefing lists work under way by number');
-  assert.match(ctx.prompt, /Reviews queued:\n- none/);
+  assert.match(ctx.prompt, /Reviews queued \([^)]*\):\n- none/);
   assert.match(ctx.prompt, /When the board's settled word matters to work already under way before the call ends[\s\S]*pass it on with reach, as often as the board's word needs; anything still\s+being worked out goes to the follow-up\./);
   const own = (await h.agent('job', ctx.token, { agent: 'moss', title: 'Queued here', prompt: 'x' })).body.id as number;
   const reach = (job: number, to: string, text = 'Only something insecure blocks it now.') =>
@@ -634,7 +653,7 @@ test('the call reaches a running job, as often as it needs, by its number and it
   await hangUp('juno', [said], { token: ctx.token });
   const followUp = (db.prepare('select job from calls where id = ?').get(ctx.call) as { job: number }).job;
   assert.match((db.prepare('select prompt from jobs where id = ?').get(followUp) as { prompt: string }).prompt, /So has a message item \(the board's word it passed on to work under way, recorded handled\)/);
-  const { sent: sentOf } = await import('./messages.ts');
+  const { sent: sentOf } = await import('./sentmessages.ts');
   const mine = sentOf('juno', { id: followUp, agent: 'juno' }) as { id: number; call?: number; offered: string | null }[];
   assert.deepEqual(mine.map(x => [x.id, x.call, !!x.offered]), [[more.message, ctx.call, true], [sent.message, ctx.call, true]], "the follow-up's hq sent shows it");
 

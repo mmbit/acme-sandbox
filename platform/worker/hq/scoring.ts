@@ -235,12 +235,13 @@ export function byThread(b: ByThread) {
   );
 }
 
-export type Carries = { jobs: number; now: Spread; mixed: Spread };
+export type Carries = { jobs: number; scoped?: number; now: Spread; mixed: Spread };
 export function carries(c: Carries) {
   const words = (s: Spread) => (s.count ? spreadWords(s) : 'no jobs');
   print(
     `  mechanical carry checks, worker occupancy: ${plural(c.jobs, 'job')}`,
-    `    on the latest of their own kind (code, or nothing the checks run on), HQ's way now: ${words(c.now)}`,
+    `    recorded required-check scope: ${c.scoped ?? 0}/${c.jobs}`,
+    `    on their required checks (type check and test areas), HQ's way now: ${words(c.now)}`,
     `    on the latest of every kind, as before: ${words(c.mixed)}`,
   );
 }

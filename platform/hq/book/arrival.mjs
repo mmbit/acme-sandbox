@@ -118,11 +118,13 @@ async function landsOnce(page, c, n, what) {
   assert.equal(await landed(page), n, `${what}: lands once`);
 }
 
-// New page pressed: the page it makes in the store (its id)
+// New page pressed: the page it makes in the store (its id), wherever the journal puts it among the seed's
 async function newPage(page, play, c) {
+  const ids = () => play.route('/api/notebooks/pages', { notebook: 1 }).pages.map(p => p.id),
+    before = ids();
   await press(page, 'New page');
   await page.waitForTimeout(c.settle);
-  return play.route('/api/notebooks/pages', { notebook: 1 }).pages.at(-1).id;
+  return ids().find(id => !before.includes(id));
 }
 
 // Cmd/Ctrl+V of a picture made here

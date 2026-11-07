@@ -44,10 +44,12 @@ export type PlannerCapacity = {
   seatRuns: Record<string, number>;
   room: number;
   memory?: Memory;
+  resourceWaits?: { job: number; on: number; resource: string }[];
 };
 let capacity: { at: number; reading: PlannerCapacity } | undefined;
 export const plannerCapacity = (at = Date.now()) =>
   capacity && at - capacity.at <= STALE_MS ? capacity.reading : null;
+export const inPushChecks = (id: number, at = Date.now()) => plannerCapacity(at)?.memory?.checks?.includes(id) ?? false;
 const capacities = (value: unknown): Record<string, number> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const entries = Object.entries(value);
@@ -61,7 +63,37 @@ function recordCapacity(report: unknown, at: number) {
     seatRuns = capacities(given.seatRuns);
   if (!slots || !seatRuns || !Number.isInteger(given.room) || Number(given.room) < 0) return;
   const memory = memoryReading(given.memory);
-  capacity = { at, reading: { slots, seatRuns, room: Number(given.room), ...(memory ? { memory } : {}) } };
+  const resourceWaits = resourceReading(given.resourceWaits);
+  capacity = {
+    at,
+    reading: {
+      slots,
+      seatRuns,
+      room: Number(given.room),
+      ...(memory ? { memory } : {}),
+      ...(resourceWaits ? { resourceWaits } : {}),
+    },
+  };
+}
+
+function resourceReading(value: unknown): PlannerCapacity['resourceWaits'] {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      edge =>
+        !edge ||
+        !Number.isSafeInteger(edge.job) ||
+        edge.job <= 0 ||
+        !Number.isSafeInteger(edge.on) ||
+        edge.on <= 0 ||
+        edge.job === edge.on ||
+        typeof edge.resource !== 'string' ||
+        !edge.resource,
+    )
+  )
+    return undefined;
+  return value;
 }
 
 function memoryReading(value: unknown): Memory | null {
@@ -92,6 +124,11 @@ function memoryReading(value: unknown): Memory | null {
       ([job, mb]) =>
         !Number.isInteger(Number(job)) || (mb !== null && (typeof mb !== 'number' || !Number.isFinite(mb) || mb < 0)),
     )
+  )
+    return null;
+  if (
+    memory.checks !== undefined &&
+    (!Array.isArray(memory.checks) || memory.checks.some(id => !Number.isInteger(id) || id <= 0))
   )
     return null;
   return memory;
@@ -196,7 +233,9 @@ export function pauseBudget(running: number[], at: number) {
     db
       .prepare("select id from jobs where id in (select value from json_each(?)) and kind != 'chat' and off_worker = 0")
       .all(JSON.stringify(running)) as { id: number }[]
-  ).map(r => r.id);
+  )
+    .map(r => r.id)
+    .filter(id => !inPushChecks(id, at));
   const demand = (id: number) => measuredMb(id) ?? memory?.defaultRunMb ?? 0;
   let slots = memory ? memory.totalSlots - memory.heldSlots - occupants.length : Infinity;
   let freeMb = memory

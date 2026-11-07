@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { gitFlow } from './git.ts';
-import { pushThrew } from './landing.ts';
+import { profilePull, pushThrew } from './landing.ts';
 import { agentEnv } from './safety.ts';
 
 test("a fix round's landing whose fetch of main can't reach GitHub goes back in the queue with its completed work", async () => {
@@ -70,4 +70,32 @@ test("a fix round's landing whose fetch of main can't reach GitHub goes back in 
   assert.match(ended.result, /^The report\n\nmain couldn't be fetched before the push: .*Authentication failed/s);
   assert.equal(job.ag(dir, 'rev-parse', 'HEAD'), completed);
   assert.equal(job.ag(dir, 'status', '--porcelain'), '');
+});
+
+test("a profile pull request GitHub couldn't be reached for goes back in the queue to land, and a refused one fails", () => {
+  const run = {
+    job: 7,
+    session: 's',
+    branch: 'job/7',
+    summary: 'Ruled on it',
+    result: 'The report',
+    failure: (report: string, why: string) => `${report}\n\n${why}`,
+    log: () => {},
+  };
+  const thrown = (pr: Parameters<typeof profilePull>[0]) => {
+    try {
+      profilePull(pr, 'profile/7');
+    } catch (err) {
+      return err;
+    }
+    return assert.fail('the pull request opened');
+  };
+  assert.equal(profilePull(5185, 'profile/7'), 5185);
+  const unreached = pushThrew(run, thrown('unreached'));
+  assert.equal(unreached.status, 'snagged');
+  assert.deepEqual('landing' in unreached && unreached.landing, { summary: 'Ruled on it', result: 'The report' });
+  assert.match(unreached.result, /couldn't be reached to open the pull request for profile\/7$/);
+  const refused = pushThrew(run, thrown({ refused: 'HTTP 422: no commits' }));
+  assert.equal(refused.status, 'failed');
+  assert.match(refused.result, /GitHub refused it \(HTTP 422: no commits\)/);
 });

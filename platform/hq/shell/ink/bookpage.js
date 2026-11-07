@@ -5,7 +5,8 @@
 // big as the unit and what's drawn on it; our scraps' photos are taped onto their post-its under all of the page's ink
 // (photos). (were tiles across an endless page; what's drawn)
 import { draw } from '/__review/ink.js';
-import { layered, opacityOf } from '/__review/inkshape.js'; // (opacityOf)
+import { opacityOf } from '/__review/inkshape.js'; // (opacityOf)
+import { runsOf } from './booklayers.js';
 import { drawScrap, drawnBox, photoOf, tapeOf } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
 import { boxOf, pageBox } from './bookrow.js';
@@ -129,9 +130,9 @@ function unitInk(el, page, held) {
   st.redraw = paintAll;
   return tiles;
 }
-// A unit's canvas painted: its pictures, then a highlighter's strokes under the ink, as on paper; what's landing is
-// drawn once it's down (bookarrive.js). box: only what's in it (page px), on the canvas as it is while all that's
-// drawn still fits it
+// A unit's canvas painted: its pictures and ink in their stack (booklayers.js), a highlighter's strokes under the ink as
+// on paper; what's landing is drawn once it's down (bookarrive.js). box: only what's in it (page px), on the canvas as
+// it is while all that's drawn still fits it
 function paint(st, p, box = null) {
   const { page, units } = st;
   if (!units.has(p.id)) made(st, p.id);
@@ -170,9 +171,12 @@ function paint(st, p, box = null) {
   g.setTransform(k, 0, 0, k, -x * k, -y * k);
   if (fit) onFit(g, fit, page.origins.get(p.id));
   const shows = b => !clip || meets(b, clip);
-  for (const s of scraps) if (shows(drawnBox(s))) drawScrap(g, withPicture(st, s));
-  const here = page.ink.filter(s => s.g === p.id && inked(st, s) && shows(boxOf(s)));
-  draw(g, layered(here));
+  const here = page.ink.filter(s => s.g === p.id && inked(st, s) && shows(boxOf(s))),
+    pictures = scraps.filter(s => shows(drawnBox(s)));
+  // (in its stack: booklayers.js.)
+  for (const run of runsOf(pictures, here))
+    if (run.ink) draw(g, run.ink);
+    else for (const s of run.pictures) drawScrap(g, withPicture(st, s));
   g.restore();
 }
 // What a unit's canvas holds (page px): the unit and whatever's drawn on it reaches, a scrap's tape and shadow too, so
@@ -192,8 +196,10 @@ function made(st, id) {
   st.units.set(id, { canvas, id });
 }
 // Whether paint() draws a stroke: not while it's landing, nor while a see-through line is drawn under it (inkUnder):
-// st.under is that line's opacity, and what's less see-through lies over it (inkshape.js layered).
-const inked = (st, s) => !landing(st.page, s) && (!st.under || opacityOf(s) <= st.under);
+// st.under is that line's opacity, and what's less see-through lies over it, but for a stroke with its place in the
+// stack, which lies under what's drawn after it (booklayers.js).
+const inked = (st, s) => !landing(st.page, s) && !overLine(st, s);
+const overLine = (st, s) => !!st.under && s.layer === undefined && opacityOf(s) > st.under;
 // A see-through line being drawn (bookwet.js): the units painted without the ink that will lie over it, which
 // paintOver draws to lie over the line; and painted whole again once it's gone, before the screen shows them (a lift's
 // own paint, addInk, comes first).
@@ -206,7 +212,7 @@ function inkUnder(st, on) {
 }
 // The ink paint() leaves out under a see-through line being drawn, to lie over it: unit by unit from the bottom up (each
 // lies over the ones after it), what its pictures cover cut away and its ink drawn but for what's as see-through as
-// the line or more.
+// the line or more, or has its place in the stack (overLine).
 function paintOver(st, g, box) {
   const { page } = st;
   for (const p of (page.places ?? []).toReversed()) {
@@ -219,7 +225,7 @@ function paintOver(st, g, box) {
     g.restore();
     draw(
       g,
-      page.ink.filter(s => s.g === p.id && opacityOf(s) > st.under && !landing(page, s) && meets(boxOf(s), box)),
+      page.ink.filter(s => s.g === p.id && overLine(st, s) && !landing(page, s) && meets(boxOf(s), box)),
     );
   }
 }

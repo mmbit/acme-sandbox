@@ -12,14 +12,29 @@ the machine's GPUs. Each lent machine and our server run one helper per kind, ea
 image, and each takes only its own kind's runs. A machine may leave a kind out (a laptop with no graphics card runs no
 render helper). A new kind is a few lines of settings, never new code, and nobody at the machines.
 
-
 Kinds with `checkout: true` carry a git snapshot of the checkout, its comparison base and pinned dependencies with
 `hq run --kind <kind> -- <command>`. `hq run helper` lists a company's kinds and their checkout and browser support.
 `--bring <folder>` returns screenshots and reports even when the command fails. A kind with `browsers: true` receives
-the worker's Chromium and its libraries. Otherwise its image supplies the browsers. Setup lives in `shared/gates` in
-the checkout, so older jobs rebase on main first. Checkout checks use `sockets: true` for loopback page servers and
-package installation, stay on the lent machine, and return the command's exit code. Example commands are in
+the worker's Chromium and its libraries. Otherwise its image supplies the browsers. A kind with `tools: true` receives
+the worker's infrastructure tools too (age, versitygw, caddy, docker-compose, jq: 202 MB), for infra's tests; others go
+without. Setup lives in `shared/gates` in the checkout, so older jobs rebase on main first. Checkout checks use
+`sockets: true` for loopback page servers and package installation and return the command's exit code. Socket kinds
+default to lent machines alone. A kind with `lentOnly: false` also runs on this server's locked helper, through the
+same registry proxy. `serverImage` optionally builds its server helper from one of this server's compose services
+(`service:<name>`, such as `service:worker`, the worker's build) instead of pulling the lent machine's private image.
+Nothing else is taken: compose reads any other build context as a path or URL on the host. Example commands are in
 `shared/browser/README.md`.
+
+**A checkout stands on HQ's commit**. The whole repo is a 314 MB bundle, and
+sending it (made, sent to HQ, fetched by the helper, unpacked) was 87 of the 106 s before a render's check started.
+So `hq run` asks HQ for its checkout's commit (`GET /api/agent/runs/base`) and, when the job's repo has it, sends only
+what came after it: the job's base and tree as commits on top of it, a few MB. The helper keeps the repo the runs
+stand on in its cache (`/cache/base.git`, the helper's own, so a run reads it but can't change it for the next). A
+run on a commit it lacks fetches from HQ only what's new since the commits it has (`GET /api/helper/runs/<attempt>/base
+?have=…`: HQ's checkout's HEAD and its fetched main), once per helper and HQ deploy. The run's own repo borrows the
+kept objects (`base.git` in its tree, git's alternates). A helper with no cache ends such a run at once, exit 2,
+saying so. HQ on a shallow checkout names no commit, and the whole repo goes, as it does when the job's repo hasn't
+fetched HQ's commit.
 
 ## The flow
 
@@ -40,7 +55,6 @@ package installation, stay on the lent machine, and return the command's exit co
    code. Then it kills every process of the runs' user and removes all it left (below). `hq run` prints the output,
    unpacks the files into the tree and exits with the run's code (124 past its limit).
 
-
 The immutable bundle download and the result uploads share the existing HQ recovery window. A broken connection,
 including a response cut off after its headers, repeats that transfer while the same attempt keeps beating. The
 helper starts the command only after the complete bundle arrives. It does not re-take the run or repeat its command.
@@ -59,6 +73,7 @@ its kind unless a faster machine is free for it:
 
 A machine the board paused takes no run and counts for none of this. A run a machine lost goes to this server's helper
 (below).
+
 
 **This server's helpers.** The machines may be off, asleep or stuck, so our server runs the same helper.mjs for each
 kind, in a container of the kind's image (`run-helper-<kind>`, below: its key is the server's `RUNS_TOKEN`, made by
@@ -101,8 +116,10 @@ Anything else is left out and named.
 ## Setting it up
 
 The board keeps the machines in HQ's **Settings › Machines**, as it keeps the seats in Settings › Seats. Each row is a
-machine with its state (taking runs, running one, away, paused), what it has (cores, memory, a GPU) and its speed next
-to this server's. A machine's page shows it live (below), and has:
+machine with its state (taking runs, running one, away, paused), what it has (its cores, threads and memory as its
+manager measures them on the host, and a GPU) and its speed next to this server's. Its helpers report their containers'
+caps, which are their kind's, as their size, and HQ needs the machine's before it makes them, so the manager measures it
+. A machine's page shows it live (below), and has:
 
 - **Pause**: its helpers take no new run and finish the one they have. They still beat and show live.
 - **Rename**: the name the board gives it, which agents read too (`hq run` says which machine a run is on).
@@ -117,7 +134,10 @@ Desktop on Windows with WSL2 included), pasted in PowerShell, cmd or sh alike. I
 `GET /api/helper/manager` and checked against the sha256 in the command, which saves the key in its volume (named for
 HQ's host, at `/state`) and starts its own container, `<host>-manager`, with the Docker socket. From then on the
 manager asks HQ every minute what the machine should run (`POST /api/helper/setup`: every kind with its image and caps,
-and which helpers have a run) and keeps it so:
+and which helpers have a run) and keeps it so. Each call says what the machine has (`{ host: { cores, threads, memoryMb
+} }`, from `/proc/cpuinfo` and the kernel's count of threads and memory, which no cap of the manager's own narrows; on
+Docker Desktop that's its virtual machine's size), and HQ sizes a kind's caps given as a share from it, refusing a call
+whose size isn't one with why:
 
 - a container per helper, `<host>-<kind>_<n>`, `helpers` of them per kind (1 unless the kind says more), each with the
   kind's caps and `--gpus all` for `gpus: true`, the helper as root and its runs as uid 1000, as below. A changed kind
@@ -196,9 +216,11 @@ assumes it could be hostile:
   uid 1000, so no process of the runs' user is ever unfiltered. So a run reaches no address at
   all: not HQ, the machine, its local network or the internet. The filter accepts x86-64 calls only, and the helper
   refuses to start on another architecture.
-- **A kind whose runs keep their sockets** (`sockets: true`, a push's tests, which start local servers) runs without
-  that filter, on the machines set up with their install command alone: HQ gives its runs only to a helper that says
-  it's on the manager's network (`locked`), never to this server's or one started by hand. So a run reaches what its
+- **A kind whose runs keep their sockets** (`sockets: true`, a push's tests, which start local servers) runs with the
+  filter's other rules (x86-64 calls only, no io_uring) but not its socket and connect ones: HQ gives its runs only to a
+  helper on a closed network (`locked`). A socket kind defaults to lent
+  machines alone. With `lentOnly: false`, this server also starts its helper locked on the internal `runs` network,
+  behind the manager's proxy, which reaches npm and PyPI alone. The server's helper has 4 cores and 3 GB. The tests read their concurrency from the helper's cgroup, without the worker's local two-file limit. So a run reaches what its
   helper does: its own loopback, HQ and the registries through the proxy, for its packages (cached in the helper's
   `/cache`, which npm and a wheel's pinned hash check), and the other helpers of the machine for that HQ, which share
   its network.
@@ -260,7 +282,10 @@ harnesses stay on the worker). `kinds` maps each kind's name to its settings:
 
 - `about`: a line on what the kind is for, shown in `hq run helper` and HQ's refusals;
 - `image`: the kind's Docker image (default `node:24.22.1-slim`);
-- `cpus`, `memoryGb` and `diskGb`: positive whole numbers for its container's caps (default 4, 8 and 16);
+- `cpus`, `memoryGb` and `diskGb`: positive whole numbers for its container's caps (default 4, 8 and 16). `cpus` and
+  `memoryGb` may be a share of each lent machine instead (`75%`): of its threads and memory as its manager measured them,
+  rounded down, at least 1. A machine whose manager hasn't said (one started by hand) has no helper of such a kind, and
+  `hq run helper` says why under the machine; it has no start command either;
 - `gpus`: `true` gives its container the machine's GPUs;
 - `lentOnly`: `true` gives this server no helper of it: its runs wait for the lent machines alone;
 - `serverAfterLent`: `true` keeps its runs off this server until a lent machine has finished one (above);
@@ -281,7 +306,8 @@ Files brought into a job are limited to 1 GiB unpacked and 100,000 entries.
    image as well as the helper code: every kind can read its machine's key. Prefer an image pinned by digest
    (`name@sha256:...`) so an image update cannot silently change its programs.
 2. Add the kind under `runs.kinds` in org.yaml, with its caps and, for work on a graphics card, `gpus: true`. Kinds run
-   at the same time, so their CPU and memory caps must fit the machine's budget together, with headroom for its owner.
+   at the same time, so their CPU and memory caps must fit the machine's budget together, with headroom for its owner. A
+   share (`cpus: 75%`) fits each machine as it is, a small one and a big one alike.
    Each kind also adds a 4-CPU, 3 GB helper on the server. Budget those helpers together with its other services.
 3. Once that's on main, each machine's manager starts its helpers within a minute, with nobody at the machine. The
    next deploy starts this server's helper of the kind (none for `lentOnly` or `sockets`). Agents send its runs with

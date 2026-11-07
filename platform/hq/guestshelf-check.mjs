@@ -9,8 +9,8 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { coordinator, openVisitor } from './book/guestserver.mjs';
-import { readyNotebook } from './book/guestscreen.mjs';
-import { serveWork, openShare, addPerson, signInByMail, typeNote, close } from './book/guestpath.mjs';
+import { readyNotebook, addNote } from './book/guestscreen.mjs'; // (addNote)
+import { serveWork, openShare, addPerson, signInByMail, close } from './book/guestpath.mjs';
 import { playwright, until } from '../../shared/browser/browser.mjs';
 
 const arg = name => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
@@ -163,7 +163,7 @@ async function journey(visitor, engine, size, viewport, name) {
 
   if (size === 'mini-landscape') {
     const words = `Bigger button, ${engine}`;
-    await typeNote(page, words);
+    await addNote(page, words);
     const shelf = await page.evaluate(() => fetch('/guest/notebooks/api/shelf').then(r => r.json()));
     const pageId = shelf.books[0].artifacts.find(
       a => a.notebook === Number(new URL(page.url()).searchParams.get('notebook')),
