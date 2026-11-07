@@ -16,6 +16,7 @@ type Task = {
   started: string | null;
   size_ms: number | null;
   split: boolean;
+  turn: string | null;
 };
 type Thread = {
   id: string;
@@ -70,6 +71,7 @@ hq plan done <deliverable>, hq plan rename <deliverable> "name" ["done when"] [-
 export const plan = {
   get help() {
     const own = companyLevels();
+    // (plan done's tasks still at work)
     return `
    hq plan <project> [--json]                        the project's plan: its open deliverables, those another needs
                                                      first, each with its "done when", deadline, needs, ETA and
@@ -97,7 +99,8 @@ export const plan = {
    hq plan move <job> <place>                        a task to its place among its deliverable's tasks still to start
                                                      (1: next)
    hq plan drop <job> "why"                          a task that never started leaves the plan (cancelled, why on its feed)
-   hq plan done <deliverable>                        a deliverable whose "done when" is met with nothing to merge
+   hq plan done <deliverable>                        a deliverable whose "done when" is met with nothing to merge and
+                                                     none of its tasks queued or at work
    hq plan rename <deliverable> "name" ["done when"] [--slug <slug>]
                                                      an open deliverable's new name, maybe its "done when" and slug (the
                                                      old id keeps finding it, its jobs and pauses following)
@@ -164,7 +167,11 @@ function threadLines(t: Thread, split: Plan['split']) {
     const size = j.size_ms === null ? 'unsized' : duration(j.size_ms / 60_000);
     const toStart = j.status === 'queued' && j.started === null;
     const line = `  ${toStart ? `${++place}.` : '-'} #${j.id} ${text(j.agent)} (${size}, ${text(j.status)}): ${text(j.title)}`;
-    return j.split ? [line, `     Sized past ${duration(split.task_ms! / 60_000)}: ${SPLIT_TASK}`] : [line];
+    // (its turn)
+    const turn = j.turn ? [`     ${text(j.turn)}`] : [];
+    return j.split
+      ? [line, ...turn, `     Sized past ${duration(split.task_ms! / 60_000)}: ${SPLIT_TASK}`]
+      : [line, ...turn];
   });
   const splitLine = t.split
     ? [

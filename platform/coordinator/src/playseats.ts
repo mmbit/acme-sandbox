@@ -1,7 +1,7 @@
 // Reported seat windows renewed and consumed by simulated runs.
 import type { MixRate } from './workmix.ts';
 import type { QueuedJob, SeatNow, Snapshot, Wait } from './eta.ts';
-import { pacedTakes, spareOnly, type Order } from './planner.ts';
+import { spareOnly, type Order } from './planner.ts';
 import {
   CLAUDE_RECHECK_MS,
   drainLifts,
@@ -13,8 +13,10 @@ import {
   nextWindowReset,
   paceChange,
   pacedUntil,
+  pacedRest,
+  pacedRuns,
+  pacedRunsRise,
   paceTo,
-  pacingLifts,
   reserveElsewhere,
 } from '../../worker/src/pace.ts';
 const HOUR_MS = 3_600_000;
@@ -64,13 +66,17 @@ function resetWindows(seat: Seat, now: number) {
 
 // The seats at one moment of the play, with whether each is paced and until when, as the worker paces it (pace.ts): by
 // its week as the play has used it so far, toward the level the worker aims it at with the seats as the play has them
-// now (aim). Worked out once a moment, since only the play's advance uses a seat.
+// now (aim), and how many ordinary runs it takes at a time (pace.ts pacedRuns). Worked out once a moment, since only
+// the play's advance uses a seat.
 export type Moment = ReturnType<typeof at>;
 export function at(seats: Seat[], now: number) {
   const windows = seats.map(windowsOf);
-  const aims = new Map(seats.map((s, i) => [s, aim(s, windows, i, now)]));
-  const paced = new Map(seats.map((s, i) => [s, pacedUntil(windows[i]!, aims.get(s), now)]));
-  return { seats, now, aims, paced };
+  const aims = seats.map((s, i) => aim(s, windows, i, now));
+  const paced = new Map(seats.map((s, i) => [s, pacedUntil(windows[i]!, aims[i], now)]));
+  const paceRuns = new Map(
+    seats.map((s, i) => [s, pacedRuns(windows[i]!, aims[i], s.weekRate, now, restOf(s))?.runs] as const),
+  );
+  return { seats, now, paced, paceRuns };
 }
 
 // The level a seat's pacing aims for, as the worker works it out (pace.ts paceTo): its stop level, or its limit while
@@ -93,8 +99,20 @@ export const windowsOf = (s: Seat) => ({
   drainAt: s.stopConfigured === false ? undefined : s.stop,
 });
 
-export const runLimit = (seat: Seat, limits: Record<string, number>, now: number) =>
-  seatRunLimit(windowsOf(seat), limits[seat.engine], now);
+// The runs a seat takes at a time this moment: urgent work past its pacing, as the worker's places.ts.
+export function runLimit(seat: Seat, limits: Record<string, number>, moment: Moment, urgent: boolean) {
+  const limit = limits[seat.engine] ?? Infinity;
+  const paced = urgent ? limit : Math.min(limit, moment.paceRuns.get(seat) ?? Infinity);
+  return seatRunLimit(windowsOf(seat), paced, moment.now);
+}
+
+// A run of `ranMs` leaves the seat now, which rests after it as the worker's does (pace.ts pacedRest).
+export function rest(seat: Seat, ranMs: number, now: number, seats: Seat[]) {
+  const windows = seats.map(windowsOf);
+  const to = aim(seat, windows, seats.indexOf(seat), now);
+  seat.paceRest = pacedRest(windows[seats.indexOf(seat)]!, to, seat.weekRate, ranMs, restOf(seat), now) ?? null;
+}
+const restOf = (seat: Seat) => seat.paceRest ?? undefined;
 
 export function available(seat: Seat, now: number, seats = [seat]) {
   return (
@@ -154,29 +172,26 @@ export function choose(
   others: boolean,
 ): Seat | Wait {
   const { seats, now } = moment;
-  // (a paced seat takes what the claim's pacedTakes lets through)
   let picked: Seat | undefined;
   let eligible = false;
   const spare = spareOnly(row, order) && others;
   for (const seat of seats) {
     if (!takes(seat, row, order, moment)) continue;
     eligible = true;
-    if (spare || (busy.get(seat.id) ?? 0) >= runLimit(seat, limits, now)) continue;
+    if (spare || (busy.get(seat.id) ?? 0) >= runLimit(seat, limits, moment, !!order.urgent)) continue;
     if (!picked || compareSeats(seat, picked, now) < 0) picked = seat;
   }
   if (picked) return picked;
   // (downtime work behind other work, on an open seat, waits in the queue too)
   if (eligible) return { on: 'queue', engine: row.engine, minutes: 0 };
-  // (an open seat that doesn't take it is paced, so it aims somewhere: it may take it once its pacing lifts)
   const primary = seats.filter(s => fits(s, row));
   const own = primary.some(s => available(s, now, seats))
     ? primary
     : seats.filter(s => fits(s, row) || fallsBackOnto(s, row));
   const returns = own
     .flatMap(seat => {
-      const open = available(seat, now, seats);
-      const until = open ? pacingLifts(windowsOf(seat), moment.aims.get(seat)!, now) : holding(seat, now, seats)?.until;
-      return until && until > now ? [{ until, reason: open ? ('pacing' as const) : ('unavailable' as const) }] : [];
+      const until = holding(seat, now, seats)?.until;
+      return until && until > now ? [{ until, reason: 'unavailable' as const }] : [];
     })
     .sort((a, b) => a.until - b.until);
   if (returns.length) return { on: 'seats', engine: row.engine, from: now, ...returns[0] };
@@ -189,11 +204,7 @@ export function choose(
 // These seats decide reserve sharing and fallback availability for the claim.
 export function takes(seat: Seat, row: Claimed, order: Order, moment: Moment, seats = moment.seats) {
   const ownOut = () => !seats.some(s => fits(s, row) && available(s, moment.now, seats));
-  return (
-    (fits(seat, row) || (fallsBackOnto(seat, row) && ownOut())) &&
-    available(seat, moment.now, seats) &&
-    pacedTakes(order, moment.paced.get(seat))
-  );
+  return (fits(seat, row) || (fallsBackOnto(seat, row) && ownOut())) && available(seat, moment.now, seats);
 }
 
 // A seat of its own: of its engine, the one it's pinned to if it is, running the CLI it must run on, as claim's.
@@ -214,7 +225,6 @@ const compareSeats = (a: Seat, b: Seat, now: number) =>
 export function choices(moment: Moment, busy: Map<string, number>, limits: Record<string, number>) {
   type Pick = { seat: Seat | Wait; roomSeat: Seat | Wait };
   const cached = new Map<string, Map<string, Map<number, Pick>>>();
-  const paced = [...new Set(moment.paced.values())].filter((until): until is number => until !== undefined);
   const empty = new Map<string, number>();
   return (row: Claimed, order: Order, others = false) => {
     // Work no seat takes, not even its fallback's, is stuck whatever comes back. Its wait names it for the CEO's summary
@@ -228,10 +238,7 @@ export function choices(moment: Moment, busy: Map<string, number>, limits: Recor
     const binding = JSON.stringify([row.for_seat, row.cli ?? null, row.fallsBack ? row.agent : null]);
     let bound = engine.get(binding);
     if (!bound) engine.set(binding, (bound = new Map()));
-    // Pacing thresholds are nested. The count identifies the same set of seats for every claim.
-    let admitted = 0;
-    for (const until of paced) admitted += Number(pacedTakes(order, until));
-    const key = 2 * admitted + Number(spareOnly(row, order) && others);
+    const key = 2 * Number(!!order.urgent) + Number(spareOnly(row, order) && others);
     let picked = bound.get(key);
     if (!picked) {
       const seat = choose(row, order, moment, busy, limits, others);
@@ -276,24 +283,27 @@ export function seatEvent(
     seat.fiveHourResets = nextWindowReset(seat.fiveHourResets, now, false);
     windows[index] = windowsOf(seat);
   }
-  const events = [seat.until, seat.fiveHourResets, seat.weekResets, seat.recheckAt].filter(
+  const events = [seat.until, seat.fiveHourResets, seat.weekResets, seat.recheckAt, restOf(seat) ?? null].filter(
     (t): t is number => t !== null && t > now,
   );
+  const rates =
+    typeof running === 'number'
+      ? [{ five: seat.fiveRate, week: seat.weekRate, count: running }]
+      : running.map(row => ({ ...burnRates(seat, row), count: 1 }));
+  const spend = (window: 'five' | 'week') => rates.reduce((sum, price) => sum + (price[window] ?? 0) * price.count, 0);
+  const to = aim(seat, windows, index, now);
   for (const change of [
-    paceChange(windows[index]!, aim(seat, windows, index, now), now),
+    paceChange(windows[index]!, to, now),
+    pacedRunsRise(windows[index]!, to, seat.weekRate, spend('week'), now, restOf(seat)),
     drainLifts(windows[index]!, now),
   ])
     if (change !== undefined) events.push(change);
   if (count && available(seat, now, seats) && !seat.credits) {
-    const rates =
-      typeof running === 'number'
-        ? [{ five: seat.fiveRate, week: seat.weekRate, count: running }]
-        : running.map(row => ({ ...burnRates(seat, row), count: 1 }));
     for (const [used, window, weekly] of [
       [seat.fiveHour, 'five', false],
       [seat.week, 'week', true],
     ] as const) {
-      const rate = rates.reduce((sum, price) => sum + (price[window] ?? 0) * price.count, 0);
+      const rate = spend(window);
       const stop = drainLevel(windows[index]!, weekly, now);
       if (used !== null && used < stop && rate > 0)
         events.push(Math.max(now + 1, now + ((stop - used) * HOUR_MS) / rate));

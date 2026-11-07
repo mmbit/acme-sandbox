@@ -39,6 +39,9 @@ export const job = {
   // (--deliverable new:'s booked-for-later words)
   // (and its card's)
   // (--needs, and the drawn deliverable's chain)
+  // (--when deployed:<project>)
+  // (--lands: what waits on the job it replaces)
+  // (--after in its deliverable)
   help: `
    hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...] [--check]
           [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
@@ -68,7 +71,10 @@ export const job = {
                                                      with the answer at the end of its brief. --after repeats, jobs and cards
                                                      mixed: one job that joins the rest waits for all of them. So queue each
                                                      piece that can start now without --after, all at once, and only the step
-                                                     that needs them with it. Queued is not started: nobody is
+                                                     that needs them with it. In its deliverable, a task held by
+                                                     a card, a time or other work holds none drawn after it: --after
+                                                     a task there keeps this one behind it, for a step that needs its
+                                                     work (the answer says its turn). Queued is not started: nobody is
                                                      on it until it runs. --downtime: maintenance
                                                      (refactoring, hardening, log scans) that runs only on spare capacity
                                                      and pauses when other work needs the room. A job queued from a
@@ -96,16 +102,23 @@ export const job = {
                                                      the item is handled when the job ends done. One open job per item.
                                                      --lands <job>: replace that failed or stopped job for its own agent, landing
                                                      its saved work or retrying a deliverable's task that saved nothing.
-                                                     It keeps its place, code, call and item. No brief file is needed:
-                                                     HQ reuses the failed job's brief. Work on a PR continues there.
+                                                     It keeps its place, code, call and item, and what waits on that
+                                                     job waits for it. HQ lands a failed push's saved work itself. No
+                                                     brief file is needed: HQ reuses the failed job's brief. Work on a
+                                                     PR continues there.
                                                      --findings names the review findings a fix task answers.
                                                      It carries any call item, handled when it ends done.
 ${asHelp(ONE_DEADLINE)}
                                                      --when <event>: it starts once that has happened, and reads what did
                                                      (repeat it: all of them). deploy or deploy:<n>, the next n deploys from
                                                      now; recreated:<service>, a deploy that recreates that container
-                                                     (worker, coordinator, caddy, product-<slug>...); deployed:<job> or
-                                                     deployed:pr:<n>, that work merged and deployed; or a time: 2h, 90m
+                                                     (worker, coordinator, caddy, product-<slug>...); deployed:<project>,
+                                                     the whole milestone live: every deliverable of it open then or filed
+                                                     later done and its last merge deployed, but one its own pause keeps
+                                                     out and this job's own (a job in it gets a deliverable of its own
+                                                     after the release); deployed:<project>/<slug>, one deliverable;
+                                                     deployed:<job> or deployed:pr:<n>, that one piece merged and deployed
+                                                     (work filed later isn't waited for); or a time: 2h, 90m
                                                      or 1h30m from now; the board's own with its date and no zone
                                                      (2026-10-26 09:00, on the company's clock); one with Z or a time of
                                                      day alone (14:30) is UTC. Never wait in your session for a later
@@ -279,8 +292,8 @@ function readArguments(args: string[]) {
 }
 
 // The deliverable a queued job is in. One it joined is read back with its done when, so its queuer reads what the work
-// is filed under (board, call 172), and the way out offers drawing one first, as hq job's refusal does, so the
-// nearest open one isn't the easiest pick.
+// is filed under, and the way out offers drawing one first, as hq job's refusal
+// does, so the nearest open one isn't the easiest pick.
 function printFiled(id: string, queued: Record<string, unknown>) {
   if (!present(queued.thread)) return;
   if (!present(queued.threadGoal)) return print(`In deliverable ${text(queued.thread)}.`);
@@ -302,6 +315,7 @@ function printQueued(
   print(`Queued job #${id}${present(queued.code) ? ` ${text(queued.code)}` : ''} for ${agent}: ${title}`);
   printFiled(id, queued);
   if (present(queued.chain)) print(text(queued.chain));
+  if (present(queued.turn)) print(text(queued.turn));
   if (present(queued.lighter))
     print(
       `It runs on ${text(queued.lighter)}, and hands itself up to ${agent}'s own model if it's bigger than it looks.`,
@@ -309,12 +323,13 @@ function printQueued(
   if (present(queued.followOn))
     print(
       `Not in ${text(queued.followOn)}: a deliverable is one pull request, and this waits for that deliverable's own ` +
-        `work to be deployed, so it's a deliverable of its own after the release.`,
+        `work to be deployed (alone or with its whole milestone), so it's a deliverable of its own after the release.`,
     );
   const paused = queued.paused as
-    { target: string; why: string; untilTime: string | null; until: number[] } | undefined;
+    | { target: string; why: string; untilTime: string | null; until: number[]; untilWhole: { words: string }[] }
+    | undefined;
   if (paused) {
-    const lift = liftWords({ untilTime: paused.untilTime, until: paused.until.map(id => ({ id })) });
+    const lift = liftWords({ ...paused, until: paused.until.map(id => ({ id })) });
     print(`Held: ${text(paused.target)} is paused (${text(paused.why)}) until ${lift}. It starts once that's resumed.`);
   }
   if (when.length > 0) print(`It starts once these have happened: ${when.join(', ')}.`);
@@ -570,14 +585,14 @@ export const cancel = {
 
 export const waits = {
   help: `
-   hq waits <job id> add <job>                       a queued or running job waits for that job's work to merge too (besides any
-   hq waits <job id> move <waited for> <replacement> --after and its other waits), for the replacement's instead, or
-   hq waits <job id> drop <waited for>               no longer for it. Yours or one you queued (the CEO and Process:
-                                                     any queued or running job's). A job HQ made (a pull request's fix, the board's
-                                                     answer) takes an added wait from the CEO or Process with --why
-                                                     "reason", shown on the feed. Refused when that job ended without
-                                                     work that merged or still can, or waits for this one. HQ sends you a
-                                                     job when work it waits for ends without merging
+   hq waits <job id> add <job>                       a queued or running job waits for that job's work to merge too
+   hq waits <job id> move <waited for> <replacement> (besides any --after and its other waits), for the replacement's
+   hq waits <job id> drop <waited for>               instead, or no longer for it. Yours or one you queued (the CEO and
+                                                     Process: any queued or running job's). A job HQ made (a pull
+                                                     request's fix, the board's answer) takes an added wait from the
+                                                     CEO or Process with --why "reason", shown on the feed. Refused when
+                                                     that job ended without work that merged or still can, or waits for
+                                                     this one. HQ sends you a job when work it waits for ends without merging
    hq waits <job id> add|drop request:<id>           a queued job that hasn't started waits for a card's answer too (or no
                                                      longer): it starts once the board has answered, with the answer at the
                                                      end of its brief. A card that leaves the desk phone unanswered lets it
@@ -663,15 +678,17 @@ const target = (given: string | undefined) => {
   return match[3] ? { thread: match[3] } : { [match[1] ? 'pr' : 'job']: Number(match[2]) };
 };
 // A window's time and who set it, here and in the help.
-const WINDOW_USAGE = `usage: hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--try] (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)`;
+const WINDOW_USAGE = `usage: hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--tell "why"] [--try] (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)`;
 type Miss = { project: string; name: string; deadline: number; finish: number | null; board: boolean };
 
+// (its urgent line leads with the whole milestone)
 export const window = {
   help: `
-   hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--try]
+   hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--tell "why"] [--try]
                                                      a deliverable's window (named by it, or a job or PR on it), the way
                                                      to order work within seat pacing. Only urgent work bypasses pacing
-                                                     (hq urgent milestone|job|task <id> on|off). The deadline,
+                                                     (hq urgent <milestone> on|off, work filed under it
+                                                     later too). The deadline,
                                                      the latest it may be merged and deployed and still be what was
                                                      agreed, orders its work; --aim, the time we said, at or before it
                                                      (else the aim stays, or is the deadline). 2h, 90m or 1h30m from now;
@@ -681,11 +698,18 @@ export const window = {
                                                      to plan with, never news to the board. --board-set only when the
                                                      board named the time itself or asked for it by then: its one miss
                                                      is told to it once (a time we offered and it took stays ours).
+                                                     --tell "why it slips and what you did": the one way a new time
+                                                     reaches the board. HQ files a quiet notice with it only when the
+                                                     time it replaces was the board's own and the new one is later, and
+                                                     only once, since the new one is ours (an earlier one is refused:
+                                                     keep the board's time with --board-set and aim sooner with --aim).
+                                                     A new time on our own reaches nobody: the board reads it on the
+                                                     projects overview.
                                                      Prints the deliverables whose planned finish moves and the windows
                                                      the plan misses; --try: nothing saved`,
 
   async run(given: string[]) {
-    const { values, args } = takeValues(given, ['--aim'], 'No window was set');
+    const { values, args } = takeValues(given, ['--aim', '--tell'], 'No window was set');
     const tried = args.includes('--try');
     const boardSet = args.includes('--board-set');
     const [named, deadline, ...rest] = args.filter(arg => arg !== '--try' && arg !== '--board-set');
@@ -697,6 +721,7 @@ export const window = {
       ...(values.aim !== undefined && { aim: values.aim }),
       ...(tried && { try: true }),
       ...(boardSet && { board_set: true }),
+      ...(values.tell !== undefined && { tell: values.tell }),
     };
     const answer = await api.change('window', { body: api.withSpeaker(body) });
     const set = api.parseOrNull(answer.body);
@@ -712,6 +737,10 @@ export const window = {
             : 'our own time: its misses are ours to plan with, never news to the board.'),
       );
     if (present(set.deadline) && !tried) print(`${WINDOW_FIRST} Nothing needs pausing for it.`);
+    // (--tell)
+    if (set.tell?.told)
+      print(`Told the board in a quiet notice, request #${text(set.tell.card)}: it hears nothing more of this time.`);
+    else if (set.tell) print(`The board isn't told: ${text(set.tell.why)}.`);
     if (tried) print('Nothing was saved.');
     if (Array.isArray(set.moves)) {
       if (!set.moves.length) print('Moves no deliverable.');

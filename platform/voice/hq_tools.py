@@ -124,7 +124,7 @@ TOOLS = [
          'item': {'type': 'integer', 'minimum': 1, 'description': 'if this job carries out something written down '
                   'or corrected on this call: the item number write_down or replace answered with (it is then done '
                   'when the job is). The recorded goal of that item wins over goal here'},
-         # (drawing one is as easy as joining one: the board, call 172)
+         # A new deliverable is as easy to draw as an open one is to join.
          'deliverable': {'type': 'string', 'pattern': DELIVERABLE.pattern, 'description': 'the open deliverable '
                          'the work serves (<project>/<slug>), when you know the feature it is a step of: its answer '
                          "repeats that deliverable's done when, so check it's what this work delivers. Needed (or "
@@ -371,7 +371,7 @@ MANAGE = {'urgent': None, 'cancel': None, 'stop': None, 'waits': None, 'window':
           'overseer': {''}, 'route': {'log'}, 'items': {''}, 'estimate': {'set', '--audit', '--accuracy', '--calibration'}}
 TOOLS += [
     # (a window puts work first, a pause only waits on a condition: worker/hq levels.ts WINDOW_FIRST and PAUSE_FOR say
-    # the same rule).
+    # the same rule). Urgency and pauses lead with the whole milestone.
     {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
      'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
      '(stop), mark or clear the board’s urgent work on its whole milestone (urgent <milestone> on|off: work filed under '
@@ -379,8 +379,9 @@ TOOLS += [
      'lift it; the scheduler makes room for it and gives the seat back after, by itself), pause or resume a whole '
      'milestone or one deliverable only for work that must wait on a condition (something from the board, a decision '
      'it has to make, a hold it asked for), never to put other work first (project pause <project> "why", every '
-     'deliverable of it and those filed later, with --until <job>, --until-time <time> or --by-hand: what wakes you to '
-     'judge it, never lifts it; project resume; deliverable pause <project>/<slug> for one deliverable, as for work '
+     'deliverable of it and those filed later, with --until <project> (its whole milestone live, work filed in it later '
+     'too; <project>/<slug> one deliverable), --until <job> for one job, --until-time <time> or --by-hand: what wakes '
+     'you to judge it, never lifts it; project resume; deliverable pause <project>/<slug> for one deliverable, as for work '
      'that must stay out of its milestone\'s urgency; deliverable resume), move a job to another deliverable (job move <job> <project>/<slug>), drop, order or retitle a '
      'task (plan drop <job> "why", plan move, plan title), draw, rename or close deliverables (plan deliverable, plan '
      'need, plan rename, plan done, deliverable move), a job\'s waits (waits), its size (estimate set), projects '

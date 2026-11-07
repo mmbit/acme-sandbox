@@ -123,8 +123,10 @@ function proxySpec() {
 }
 
 // A kind's helper, with the caps the start commands always had, on the closed network. A kind whose runs keep their
-// sockets gets a cache for their packages, which outlives each run (npm and pip check what they read from it).
-function helperSpec(kind, slot) {
+// sockets gets a cache for their packages, which outlives each run (npm and pip check what they read from it). The
+// hash of the helpers' code HQ serves is in it, as a helper fetches its code only as it starts: new code is a new
+// container.
+function helperSpec(kind, slot, helperCode) {
   const proxy = `http://${PROXY}:${PORT}`;
   return {
     Image: kind.image,
@@ -139,6 +141,7 @@ function helperSpec(kind, slot) {
       NODE_USE_ENV_PROXY: 1,
       HTTPS_PROXY: proxy,
       HTTP_PROXY: proxy,
+      HELPER_CODE: helperCode,
     }),
     HostConfig: {
       Init: true,
@@ -276,7 +279,7 @@ async function ours() {
 
 async function tick() {
   if (!key()) return log(`waiting for the key in ${KEY_FILE}`);
-  const { kinds, busy = [], code } = await setup();
+  const { kinds, busy = [], code, helperCode } = await setup();
   // HQ serves other code: Docker starts the container again (unless-stopped), and its bootstrap fetches it
   if (code && code !== CODE) {
     log('HQ serves new manager code: starting again on it');
@@ -302,7 +305,7 @@ async function tick() {
       const name = helperName(kind.name, slot);
       wanted.add(name);
       const running = busy.some(one => one.kind === kind.name && one.slot === slot);
-      await ensure(name, helperSpec(kind, slot), running).catch(error => {
+      await ensure(name, helperSpec(kind, slot, helperCode), running).catch(error => {
         log(`${name}: ${error.message}`);
         now[name] = error.message;
       });

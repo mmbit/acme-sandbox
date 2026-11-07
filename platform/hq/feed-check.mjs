@@ -13,8 +13,8 @@
 //    slowed 4×.
 // 3. reduced motion: with prefers-reduced-motion the dashboard comes with no animation in the computer.
 // The screens: as shared/deck/check.mjs has them, a company's board's in company/screens.json (or --screens <file>), each
-// { name, width, height, touch, ratio: device pixels per CSS pixel (default 1) }; without one, a generic phone, tablet,
-// laptop and monitor. A screen under 500 px either way is a phone, in a mobile browser.
+// { name, width, height, touch, ratio: device pixels per CSS pixel (default 1) }; without one, the generic phone, tablet,
+// laptop and monitor of shared/browser/screens.mjs. A screen under 500 px either way is a phone, in a mobile browser.
 // --only: the screens whose name has that in it (repeat it for more); none matching is an error.
 // --ref: the commit to serve HQ from (git show; a file it lacks comes from the working tree); repeat it to compare,
 // `worktree` is the working tree (the default). --runs: time each screen n times, show the median run (by its worst frame).
@@ -31,6 +31,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, errorsOf } from '../../shared/browser/browser.mjs';
+import { SCREENS_FILE, screensIn } from '../../shared/browser/screens.mjs';
 
 const { chromium, webkit } = playwright();
 const args = process.argv.slice(2), arg = k => args.flatMap((a, i) => a === k ? [args[i + 1]] : []);
@@ -38,13 +39,9 @@ const RUNS = Number(arg('--runs')[0] ?? 1), REFS = arg('--ref').length ? arg('--
 const BROWSERS = { chromium, webkit }, WHICH = arg('--browser').length ? arg('--browser') : ['chromium', 'webkit'];
 const WINDOW = 2500, LONG = 25, FAIL = 50, JITTER = 1; // ms (a gap of three 60 Hz frames, 50.0 ms give or take a hair, isn't over 50)
 
-const OWN = arg('--screens')[0] ?? join(ROOT, 'company/screens.json');
+const OWN = arg('--screens')[0] ?? join(ROOT, SCREENS_FILE);
 if (arg('--screens').length && !existsSync(OWN)) { console.error(`feed-check: no such screens file: ${OWN}`); process.exit(1); }
-const SCREENS = (existsSync(OWN) ? JSON.parse(await readFile(OWN)).screens : [
-  { name: 'phone portrait', width: 390, height: 844, touch: true, ratio: 3 },
-  { name: 'tablet portrait', width: 820, height: 1180, touch: true, ratio: 2 },
-  { name: 'laptop', width: 1440, height: 800, ratio: 2 }, { name: 'QHD monitor', width: 2560, height: 1300 },
-]).filter(s => !ONLY.length || ONLY.some(o => s.name.includes(o)))
+const SCREENS = screensIn(OWN).filter(s => !ONLY.length || ONLY.some(o => s.name.includes(o)))
   .map(s => ({ name: s.name, short: `${s.width}x${s.height}@${s.ratio ?? 1}`, viewport: { width: s.width, height: s.height },
     deviceScaleFactor: s.ratio ?? 1, isMobile: Math.min(s.width, s.height) < 500, hasTouch: !!s.touch }));
 if (!SCREENS.length) { console.error(`feed-check: no screen ${ONLY.length ? `named like ${ONLY.map(o => `"${o}"`).join(' or ')} ` : ''}in ${OWN}`); process.exit(1); }

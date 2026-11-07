@@ -8,6 +8,7 @@ import { wholeSeconds } from './arithmetic.ts';
 import type { mergeWaits } from './mergewait.ts';
 import type { Row } from './backlog.ts';
 import type { QueuedJob } from './eta.ts';
+import { onWhole, wholeWork } from './whole.ts';
 
 export type Context = {
   open: Map<number, Row>;
@@ -36,7 +37,7 @@ export function queuedJob(row: Row, c: Context): QueuedJob {
   job.cards = [...new Set(cards)].map(request => ({ request, at: c.answers(request) }));
   if (row.status === 'blocked' && !row.request) job.reasons.push({ on: 'board' });
   const wakes = JSON.parse(row.wakes) as Wake[];
-  job.wakes = wakes.map(w => wakeOf(w, c));
+  job.wakes = wakes.flatMap(w => wakeOf(w, row, c));
   // (its sort comes at the end of the owner's job that took it: held there, it holds this one too.)
   if (row.sorter !== null && row.sorter !== row.id && c.open.has(row.sorter))
     job.dependencies = [{ job: row.sorter, until: 'done' }];
@@ -139,9 +140,19 @@ const released = (id: number) =>
   !!prepared("select 1 from jobs where id = ? and status in ('done', 'failed', 'stopped', 'cancelled')").get(id);
 
 // A time wakes it then, and a call's follow-up or end at once (end). A deploy comes the median lag from a merge to its deploy after
-// now (each of the next n deploys), and a job's or pull request's work deployed that long after it merges in the play.
+// now (each of the next n deploys), and a job's or pull request's work deployed that long after it merges in the play,
+// a whole milestone's or deliverable's that long after each open job in it (but those of the waiting job's own
+// deliverable: whole.ts wholeLive) merges.
 type Wake = { kind: string; arg: string };
-function wakeOf(wake: Wake, c: Context): QueuedJob['wakes'][number] {
+function wakeOf(wake: Wake, row: Row, c: Context): QueuedJob['wakes'] {
+  if (onWhole(wake)) {
+    const work = prepared(wholeWork('?1')).all(wake.arg) as { id: number }[];
+    const open = work.filter(j => c.open.has(j.id) && c.open.get(j.id)!.thread !== row.thread);
+    return open.length ? open.map(j => ({ deployOf: j.id })) : [{ at: c.now + c.lag, deploy: true }];
+  }
+  return [pieceWake(wake, c)];
+}
+function pieceWake(wake: Wake, c: Context): QueuedJob['wakes'][number] {
   if (wake.kind === 'at') return { at: Number(wake.arg) };
   // (sorted: the owner's job that sorts it, queuedJob)
   if (wake.kind === 'followed' || wake.kind === 'ended' || wake.kind === 'sorted') return { at: c.now };

@@ -27,6 +27,7 @@ import * as reviewclosure from './reviewclosure.ts';
 import { claim } from './jobcodes.ts';
 import * as sizes from './sizes.ts';
 import * as acceptance from './acceptance.ts';
+import { oneTaskThread } from './made.ts';
 
 const TITLE_MAX = 140,
   WHY_MAX = 300;
@@ -246,10 +247,10 @@ export function list(agent: string, all = false, job?: number) {
 }
 
 // hq inbox accept: the owner or the CEO (`by`) queues it, in the thread it names (an open one, or new:<project> "name"
-// "done when"), else the one proposed, else the proposer's job's when that's in the proposal's project. A thread of a
-// plan `by` may change only. The answer is the job, or why not, with an HTTP status for a refusal.
-// Its code's word is the accepter's (--code), as hq job's is the queuer's (jobcodes.ts claim). job: the accepter's own,
-// whose deliverable one drawn here chains after (newthread.ts chainedAfter).
+// "done when"), else the one proposed, else one of its own in its project, never the proposing job's (in a fix round, a
+// pull request under review). With no project (the CEO's) it gets none: requireThread refuses it. A thread of a plan `by` may change only. The answer is the job and where it went, or why not, with
+// an HTTP status for a refusal. Its code's word is the accepter's (--code), as hq job's is the queuer's (jobcodes.ts
+// claim). job: the accepter's own, whose deliverable one drawn here chains after (newthread.ts chainedAfter).
 export function accept(id: number | string, by: string, o: acceptance.Ask, job?: number) {
   const external = typeof id === 'string' ? id : reviewinbox.externalId(id);
   if (typeof external === 'string') return reviewinbox.accept(external, by, o);
@@ -266,37 +267,43 @@ export function accept(id: number | string, by: string, o: acceptance.Ask, job?:
   if (typeof title !== 'string') return title.refused;
   // the owner assigns it (--for), else it's for whom it was proposed
   if (o.for != null && !jobs.findAgent(String(o.for))) return `${o.for} isn't a colleague in org.yaml`;
-  const own = p.job ? jobs.threadOf(p.job) : null;
-  const inherited = own && findThread(own)?.project === p.project ? p.job! : undefined;
-  const ask = o.thread == null && o.newThread == null && p.thread ? { thread: p.thread } : o;
+  const named = o.thread != null || o.newThread != null;
+  const ask = !named && p.thread ? { thread: p.thread } : o;
   const target =
     ask.thread != null
       ? findThread(String(ask.thread))?.project
       : ask.newThread != null
         ? String(ask.newThread.project ?? '')
-        : inherited && p.project;
+        : p.project;
   const project = target ? findProject(target) : undefined;
   const refused = project && refusal(project, by);
   if (refused) return refused;
-  const placed = acceptedIn({ title }, ask, { by, job, inherited, code: o.code });
-  if (typeof placed === 'string') return placed;
-  const { chain, ...thread } = placed;
-  const named = claim(o.code, 'thread' in thread ? thread.thread : thread.from ? jobs.threadOf(thread.from) : null);
-  if ('refused' in named) return named.refused;
+  const own = !named && !p.thread && project ? project.id : null;
+  const placed: Placed | undefined = named ? 'named' : p.thread ? 'proposed' : own ? 'own' : undefined;
   const agent = o.for != null ? String(o.for) : (p.for_agent ?? p.agent);
-  return { ...acceptance.queue(p, by, { code: named.code, agent, title, size, ...thread }), chain };
+  const into = own ? {} : acceptedIn({ title }, ask, { by, job, code: o.code });
+  if (typeof into === 'string') return into;
+  const { chain, ...thread } = into;
+  const word = claim(o.code, own ? { project: own } : 'thread' in thread ? thread.thread : null);
+  if ('refused' in word) return word.refused;
+  return inOneStep(() => {
+    const queued = acceptance.queue(p, by, { code: word.code, agent, title, size, ...thread });
+    return { ...queued, thread: own ? oneTaskThread(own, { id: queued.job, title }) : queued.thread, chain, placed };
+  });
 }
 
+// Where accept put the job: in its accepter's deliverable, the one proposed, or its own
+export type Placed = 'named' | 'proposed' | 'own';
+
 // The thread an accepted proposal is queued in (accept), or why not: one drawn for it in the plan, with its chain's
-// words, its word for its code checked first so a refused code draws none (jobcodes.ts claim.), else the one named or
-// inherited
+// words, its word for its code checked first so a refused code draws none (jobcodes.ts claim.), else the one named
 function acceptedIn(
   p: { title: string },
   ask: JobThreadAsk,
-  o: { by: string; job: number | undefined; inherited: number | undefined; code: unknown },
+  o: { by: string; job: number | undefined; code: unknown },
 ): (({ thread: string } | { from?: number }) & { chain?: string }) | string {
   if (ask.newThread == null || ask.thread != null) {
-    const found = threadForJob({ ...ask, title: p.title }, { agent: o.by, job: o.inherited });
+    const found = threadForJob({ ...ask, title: p.title }, { agent: o.by });
     return 'refusal' in found ? found.refusal : found;
   }
   const project = String(ask.newThread.project ?? '');

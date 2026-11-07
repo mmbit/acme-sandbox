@@ -67,16 +67,21 @@ export const sum = (body: string) => `export const sum = (a: number, b: number) 
 // out at once, in `env`, as a lent machine "attic" would, with the files it brings back. Each ask for a run's state
 // takes the next of `states` (the last stays). RUN_STATES gives each submitted run a sequence of its own. A run the
 // check stops answers stopped from then on, after PLAYED_STOP_MS. PLAYED_TIMED_OUT: each run stopped at its limit,
-// as a helper's is (exit code 124, with its output). The network fails as `env` says: REPORT_DISCONNECTS drops that many
-// GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it ('body': after its answer's headers;
-//.), and RESTARTING plays HQ restarting (RESTART_MS: down that long from the run's
+// as a helper's is (exit code 124, with its output). PLAYED_BUNDLE_BROKEN: each run's bundle reaches the helper broken,
+// so its repo can't be set up. The network fails as `env` says:
+// REPORT_DISCONNECTS drops that many GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it
+// ('body': after its answer's headers;.), and RESTARTING plays HQ restarting (RESTART_MS: down that long from the run's
 // first poll).
+// PLAYED_BASE: the commit HQ's checkout has (none: an HQ that names none; PLAYED_BASE_STATUS: one that fails to;
+// PLAYED_BASE_KINDLESS: one whose answer names no kind), which PLAYED_BASE_GIT's
+// objects hold, lent to a run that stands on it as the helper lends its kept base; each run's base and its bundle's
+// heads go in PLAYED_SEEN.
 // playedHq returns its HQ_URL and HQ_TOKEN, for the check's environment, with `env`. It listens on loopback alone, as
 // it runs any command a run names.
 // (#5575 and #5602's network failures)
 const PLAYED_HQ = `
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 const states = JSON.parse(process.argv[2]);
@@ -100,6 +105,11 @@ const answer = async (req, res) => {
   }
   // (the work Stop hook asks first, hq complete)
   if (req.url === '/api/agent/followthrough-owed') return res.end(JSON.stringify({ owed: false }));
+  // (the kind it names)
+  if (req.url.startsWith('/api/agent/runs/base?'))
+    return process.env.PLAYED_BASE_STATUS ? res.writeHead(Number(process.env.PLAYED_BASE_STATUS)).end()
+      : res.end(JSON.stringify({ commit: process.env.PLAYED_BASE ?? null,
+        kind: process.env.PLAYED_BASE_KINDLESS ? undefined : new URL(req.url, 'http://hq').searchParams.get('kind') }));
   if (req.method === 'GET' && disconnects-- > 0) return res.destroy();
   if (req.url === '/api/agent/runs/helper') return res.end(JSON.stringify({
     browser: process.env.HELPER_BROWSER ?? 'render',
@@ -108,12 +118,21 @@ const answer = async (req, res) => {
     const spec = JSON.parse(Buffer.from(req.headers['x-run'], 'base64url').toString());
     const tree = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'played-helper-'));
     execFileSync('tar', ['-xzf', '-', '-C', tree], { input: await read(req) });
+    if (process.env.PLAYED_BUNDLE_BROKEN) writeFileSync(join(tree, 'tests.bundle'), 'not a bundle');
+    if (spec.base) symlinkSync(process.env.PLAYED_BASE_GIT, join(tree, 'base.git'));
+    if (process.env.PLAYED_SEEN) {
+      const bundle = readFileSync(join(tree, 'tests.bundle'), 'latin1');
+      const heads = bundle.slice(0, bundle.indexOf('\\n\\n')).split('\\n').slice(1);
+      appendFileSync(process.env.PLAYED_SEEN, JSON.stringify({ base: spec.base ?? null, heads }) + '\\n');
+    }
     let output = '', exitCode = 0;
     try { output = execFileSync('sh', ['-c', spec.command], { cwd: tree, encoding: 'utf8',
       env: { ...process.env, RUN_KIND: spec.kind, ...JSON.parse(process.env.HELPER_ENV ?? '{}') } }); }
     catch (err) { output = err.stdout; exitCode = err.status; }
     if (process.env.PLAYED_TIMED_OUT) exitCode = 124;
-    if (spec.bring.length) execFileSync('tar', ['-czf', 'files.tar.gz', ...spec.bring], { cwd: tree });
+    // (as the helper packs them: a file the run didn't make is left out.)
+    if (spec.bring.length)
+      execFileSync('tar', ['-czf', 'files.tar.gz', '--ignore-failed-read', ...spec.bring], { cwd: tree, stdio: 'ignore' });
     const runStates = JSON.parse(process.env.RUN_STATES ?? 'null')?.[runs.length] ?? states;
     runs.push({ tree, output, exitCode, states: [...runStates] });
     if (process.env.DROP_SUBMIT === 'body' && runs.length === 1) {
@@ -140,10 +159,11 @@ const answer = async (req, res) => {
 };
 if (!process.env.RESTARTING) createServer(answer).listen(0, '127.0.0.1', function () { console.log(this.address().port); });
 // as a deploy does: down (connections refused) as the push sends its run, and again from the run's first poll, which
-// it drops unanswered
+// it drops unanswered (the base lookup before it isn't one)
 let dropped = false;
 const restarting = createServer((req, res) => {
-  if (dropped || req.method !== 'GET' || req.url.split('/').length !== 5) return answer(req, res);
+  if (dropped || req.method !== 'GET' || req.url.split('/').length !== 5 || req.url.startsWith('/api/agent/runs/base?'))
+    return answer(req, res);
   dropped = true;
   down(Number(process.env.RESTART_MS ?? 3000));
 });

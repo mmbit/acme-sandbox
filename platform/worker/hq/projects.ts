@@ -51,7 +51,7 @@ export const now = {
 };
 
 // (help reads the company's line for a project when it's shown)
-// (hq project business in the help and the usage line below)
+// (hq project business in the help and the usage line below; its pause first)
 export const project = {
   get help() {
     return `${pauses.help('project')}

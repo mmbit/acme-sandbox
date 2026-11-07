@@ -2,7 +2,7 @@
 // summary (summary.ts) lists each while it lasts. One that began shortly after a deploy is an incident (incidents.ts).
 import { db, remember, setting } from './db.ts';
 import { publish } from './events.ts';
-import { readyOn, type ReadySeat } from './jobs.ts';
+import { readyOn, readySeats } from './jobs.ts';
 import { cap, ceo, companyFormats } from './company.ts';
 import * as incidents from './incidents.ts';
 
@@ -55,14 +55,7 @@ export function stallSweep(t = Date.now()) {
 }
 
 function stallInputs(t: number) {
-  // the seats that would take a job now: ready (or past a drain or sleep), and not paused by the board
-  const seats = db
-    .prepare(
-      `select s.id, s.engine, coalesce(s.cli, s.engine) cli, iif(s.pace is null or s.week_resets <= ?, null, s.week_resets) pacedUntil from seats s
-      left join seat_list l on l.id = s.id
-      where coalesce(l.paused, 0) = 0 and (s.state = 'ready' or s.state in ('draining', 'sleeping') and s.until <= ?)`,
-    )
-    .all(t, t) as (ReadySeat & { engine: string })[];
+  const seats = readySeats(t);
   const engines = new Set([
     ...(db.prepare('select distinct engine from seats').all() as { engine: string }[]).map(s => s.engine),
     ...(db.prepare("select key from settings where key like 'stall.%'").all() as { key: string }[]).map(s =>

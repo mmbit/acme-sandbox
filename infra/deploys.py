@@ -11,6 +11,8 @@ python3 infra/deploys.py <folder> <commit> <fetched> <exit status> <containers b
   reloaded: services restarted in place (the worker's process on new code)
 DEPLOY_BROKE: what infra/hq-up.sh said of a deploy that broke HQ (sync.sh went back to the last good one), and
 DEPLOY_REVERTED: what infra/revert.py said then (the revert's commit on main, or why there's none), for the CEO
+DEPLOY_KEPT: a folder with one file for each service kept on its current image: its first line says why, and a failed
+  build's output tail follows (infra/builds.sh)
 
 """
 import json, os, sys, tempfile
@@ -28,6 +30,7 @@ def containers(lines):
 
 def record(folder, sha, fetched, status, before, after, reloaded=(), now=None):
     now = now or datetime.now(timezone.utc)
+    reasons = kept()
     rec = {
         'sha': sha,
         'fetched': fetched,
@@ -38,6 +41,10 @@ def record(folder, sha, fetched, status, before, after, reloaded=(), now=None):
         'services': sorted(after),
         'broke': os.environ.get('DEPLOY_BROKE', '')[-2000:],
         'reverted': os.environ.get('DEPLOY_REVERTED', '')[-500:],
+        'kept': reasons,
+        # A coordinator from before job #20842 reads only this key: one kept on its image (its build failed) takes in this
+        # checkout's record. Written until such a coordinator can't come back.
+        'failed_builds': reasons,
     }
     os.makedirs(folder, mode=0o755, exist_ok=True)
     data = os.stat(os.path.dirname(os.path.abspath(folder)))
@@ -49,6 +56,18 @@ def record(folder, sha, fetched, status, before, after, reloaded=(), now=None):
     os.chmod(part, 0o644)
     os.replace(part, os.path.join(folder, name))
     return name, rec
+
+
+def kept():
+    folder = os.environ.get('DEPLOY_KEPT')
+    if not folder:
+        return {}
+    reasons = {}
+    for service in sorted(os.listdir(folder)):
+        # builds.sh trims the output by bytes, so a tail can start or end inside a character
+        with open(os.path.join(folder, service), encoding='utf-8', errors='replace') as file:
+            reasons[service] = file.read()
+    return reasons
 
 
 def main(argv):

@@ -40,7 +40,6 @@ Thread context: ${JSON.stringify(context)}.
 Eligible staff (sole author excluded, co-authors eligible): ${JSON.stringify(candidates)}.
 A sole author cannot review or rule on their own work. Co-authors may review and rule on work they wrote together.
 General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidators: ${JSON.stringify(panel.consolidators(pr))}.
-HQ assigns the ruling's engine from projected starts. You may suggest an eligible candidate on that engine.
 ${base ? `Eligible original finders: ${JSON.stringify(finders(pr, files).map(reader => reader.agent))}.` : ''}
 ${earlier}
 ${capacity.brief(pr, panel.consolidators(pr))}

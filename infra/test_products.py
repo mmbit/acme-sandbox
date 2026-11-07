@@ -941,7 +941,8 @@ check("run helpers: before HQ has published its kinds, one for the default kind,
       list(helpers) == ['run-helper-default'] and helpers['run-helper-default']['build']['args'] == {'IMAGE': 'node:24.22.1-slim'})
 publish([{'name': 'simulation', 'image': 'node:24.22.1-slim'}, {'name': 'render', 'image': 'registry.example/render@sha256:0a1b'},
          {'name': 'true', 'image': 'node:24.22.1-slim'}])
-helpers = runHelpers(run()[0])
+compose = run()[0]
+helpers = runHelpers(compose)
 check("run helpers: one per kind HQ published, built from the kind's image",
       {n: v['build'] for n, v in helpers.items()} == {
           f'run-helper-{kind}': {'context': '../platform/helper', 'args': {'IMAGE': image}}
@@ -949,10 +950,13 @@ check("run helpers: one per kind HQ published, built from the kind's image",
 check("run helpers: each takes its kind's runs, with the server's caps, no GPUs, the sandbox, and the runs network alone",
       all(v['environment'] == {'HQ_URL': 'http://coordinator:8080', 'RUN_KIND': n[len('run-helper-'):]}
           and (v['cpus'], v['mem_limit'], v['memswap_limit'], v['pids_limit']) == (4, '3g', '3g', 4096)
-          and v['tmpfs'] == ['/tmp:size=64m,mode=755', '/work:exec,mode=1777,size=1g'] and v['networks'] == ['runs']
+          and v['tmpfs'] == ['/tmp:size=64m,mode=755'] and v['networks'] == ['runs']
           and v['cap_drop'] == ['ALL'] and v['cap_add'] == ['SETUID', 'SETGID'] and v['read_only'] is True
-          and v['security_opt'] == ['no-new-privileges:true'] and v['volumes'] == ['/etc/testco/runs-token:/state/key:ro']
+          and v['security_opt'] == ['no-new-privileges:true']
+          and v['volumes'] == ['/etc/testco/runs-token:/state/key:ro', f'{n}-work:/work']
           and 'gpu' not in json.dumps(v).lower() for n, v in helpers.items()))
+check("run helpers: each one's workspace is a volume of its own on disk, not in its memory",
+      all(compose['volumes'][f'{n}-work'] == {} for n in helpers))
 publish([{'name': 'tests', 'image': 'node:24.22.1-slim', 'sockets': True, 'serverImage': 'service:worker'}])
 services = run()[0]['services']
 checks = services['run-helper-tests']
@@ -962,6 +966,7 @@ check("socket helper: closed network, locked, behind the registry proxy, with th
       and checks['build']['additional_contexts'] == {'run-base': 'service:worker'}
       and checks['environment']['HTTPS_PROXY'] == 'http://run-proxy:3128'
       and (checks['cpus'], checks['mem_limit']) == (4, '3g')
+      and checks['tmpfs'][-1] == '/cache:mode=1777,size=768m'
       and services['run-proxy']['networks'] == ['runs', 'default']
       and services['run-proxy']['environment']['MANAGER'] == 'proxy'
       and 'volumes' not in services['run-proxy'])

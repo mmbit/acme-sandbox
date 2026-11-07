@@ -1,41 +1,18 @@
 // The measured runs and panels a pull request still needs before it can merge.
-import { db, prepared } from './db.ts';
 import { sweepAction, officeOnly, RULING_SWEEP_MS } from './review.ts';
-import { expeditedPlans } from './expeditedplan.ts';
-import { org, roles, ceo } from './company.ts';
-import { OPEN_JOBS, workBranchOf } from './jobs.ts';
-import { withPicks } from './models.ts';
-import { fitIn } from './arithmetic.ts';
-import { measuredSizes } from './reviewtime.ts';
+import { workBranchOf } from './jobs.ts';
 import type { ReviewPlan, ReviewStage } from './rounds.ts';
-import { ownerOf } from './projects.ts';
+import {
+  records,
+  panelActors,
+  inReview,
+  type PullRequest,
+  type Run,
+  type Selected,
+  type Sorter,
+} from './reviewrecords.ts';
 
-const GUESS_MS = 15 * 60_000,
-  SLOW_SHARE = 0.8;
-type PullRequest = {
-  number: number;
-  branch: string;
-  author: string;
-  panel: string | null;
-  review_class: string | null;
-  round: number;
-  status: string;
-  files: string;
-  links: string;
-  sha: string | null;
-  since: number;
-  expedited: number;
-};
-type Run = {
-  id: number;
-  pr: number;
-  round: number;
-  agent: string;
-  engine: string;
-  kind: string;
-  stage: string | null;
-  status: string;
-};
+const GUESS_MS = 15 * 60_000;
 export type ProspectiveRun = Run & { branch: string; thread: string | null };
 type Work = {
   opensReview?: boolean;
@@ -70,9 +47,7 @@ function roundsBefore(
   now: number,
 ): ReviewPlan {
   const own = pr ? (record.runs.get(pr.number) ?? []) : [];
-  // Work on an open pull request's branch, not run on it yet, pushes the next round once this one's ruled (review.ts).
-  const continuing =
-    pr?.status === 'open' && isOpen(work) && pr.branch !== `job/${work.id}` && !own.some(run => run.id === work.id);
+  const continuing = pr !== undefined && continues(work, pr, own);
   const resolution = pr && !continuing ? resolutionOf(sweepAction(pr, true), now) : undefined;
   if (
     pr &&
@@ -82,15 +57,17 @@ function roundsBefore(
         !pr.round &&
         officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number)))
   )
-    return resolutionPlan(pr, resolution);
+    return stagelessPlan(pr, resolution);
   const panel = pr?.panel ?? (pr && own.length && !own.some(run => run.kind === 'review') ? 'check' : 'triage');
   const current = Math.max(1, pr?.round ?? 1);
-  const opens = continuing ? pr.round + 1 : undefined;
+  const opens = continuing ? opened(pr, own) : undefined;
   const fixing = own.some(run => run.round === current && run.kind === 'work' && isOpen(run));
   const undrawn = pr && !fixing ? record.undrawn.get(pr.number) : undefined;
   if (undrawn && !undrawn.sorter) return undrawnFix(pr!, undrawn.owner);
   const least = Math.max(current + Number(fixing || !!undrawn), opens ?? 0);
-  const count = Math.max(least, record.counts.get(pr?.review_class ?? panel) ?? 1);
+  // A board-held pull request plays only the rounds under way: the next waits on the board.
+  const held = pr?.status === 'board';
+  const count = held ? least : Math.max(least, record.counts.get(pr?.review_class ?? panel) ?? 1);
   const selection = pr ? record.selections.get(pr.number) : undefined;
   const reviewers = panelMembers(
     own.filter(run => run.round === current && run.id > (pr?.since ?? 0)),
@@ -112,8 +89,26 @@ function roundsBefore(
   });
 }
 
-function resolutionPlan(pr: PullRequest, resolution: ReturnType<typeof resolutionOf>): ReviewPlan {
+// Later work on an open or stuck pull request's branch: still to run, and neither the job its branch is named for nor
+// one of its runs (an earlier push, a fix task). Its push starts the pull request's next review (review.ts).
+const continues = (work: Work, pr: PullRequest, own: Run[]) =>
+  ['open', 'stuck'].includes(pr.status) &&
+  isOpen(work) &&
+  pr.branch !== `job/${work.id}` &&
+  !own.some(run => run.id === work.id);
+
+// The round later work's push opens. An open pull request's push waits for the current round's ruling, then opens the
+// next. A stuck one's push reopens it (review.ts openRound): after a ruled round it opens the next, else it redoes the
+// current one, which plays as it is.
+const opened = (pr: PullRequest, own: Run[]) =>
+  pr.status === 'open' || rules(own.filter(run => run.round === pr.round && (run.kind === 'work' || run.id > pr.since)))
+    ? pr.round + 1
+    : undefined;
+
+// A pull request with no stages left to play: what resolves it, if anything does, or why it waits.
+function stagelessPlan(pr: PullRequest, resolution: ReturnType<typeof resolutionOf> | { waiting: string }): ReviewPlan {
   return {
+    pr: pr.number,
     panel: pr.panel ?? 'records',
     count: 0,
     stages: [],
@@ -128,28 +123,10 @@ function resolutionPlan(pr: PullRequest, resolution: ReturnType<typeof resolutio
 // orders the sort and the thread has a finish; heard nowhere else (an owner's session, the CEO's summary), no merge
 // until someone draws one.
 function undrawnFix(pr: PullRequest, owner: string): ReviewPlan {
-  return {
-    ...{ panel: pr.panel ?? 'records', count: 0, stages: [], terminal: null, unresolved: true },
+  return stagelessPlan(pr, {
     waiting: `its review asked for changes and no fix task is drawn (findings:${pr.number}, ${owner}'s to decide)`,
-  };
+  });
 }
-
-// Each pull request whose round's "changes" ruling waits in its owner's inbox, that owner, and the owner's open
-// planning job that holds it (proposals.ts tell), if one does
-const undrawnOwners = () =>
-  new Map(
-    (
-      prepared(
-        `select r.pr, r.project, j.id, j.agent, j.engine from review_inbox r join proposals q on q.id = r.proposal
-        join prs p on p.number = r.pr left join planning_jobs s on s.job = q.heard_by
-        left join jobs j on j.id = s.job and j.status in ${OPEN_JOBS}
-        where q.status = 'open' and r.decision = 'changes' and p.round = r.round and p.status in ('open', 'stuck')`,
-      ).all() as ({ pr: number; project: string | null } & (Sorter | { id: null; agent: null; engine: null }))[]
-    ).map(({ pr, project, ...sorter }) => [
-      pr,
-      { owner: ownerOf({ project }), sorter: sorter.id === null ? undefined : sorter },
-    ]),
-  );
 
 function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
   if (!action?.merges) return undefined;
@@ -158,99 +135,8 @@ function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
   return undefined;
 }
 
-// Every pull request's state from prs_plan, never a row's verdict (db.ts), and the files and links of those in review,
-// the only ones whose files are read (sweepAction, officeOnly, expeditedPlans): the rest read as none. Of those, too,
-// whether it merged expedited.
-function pullRequests() {
-  const prs = prepared(
-    `select number, branch, author, panel, review_class, round, status, sha, since from prs indexed by prs_plan
-    order by number`,
-  ).all() as PullRequest[];
-  const texts = prepared('select files, links, expedited from prs where number = ?');
-  for (const pr of prs)
-    Object.assign(pr, inReview(pr) ? texts.get(pr.number) : { files: '[]', links: '[]', expedited: 0 });
-  return prs;
-}
-
-function records(now: number, prospective?: ProspectiveRun) {
-  const prs = pullRequests();
-  // (jobs_review_runs covers the jobs columns, prs_plan the pull requests': db.ts.)
-  const runs = prepared(
-    `select j.id, p.number pr, max(1, coalesce(f.round, j.round, p.round)) round,
-    j.agent, j.engine, j.kind, j.stage, j.status from (
-      select j.id from prs p indexed by prs_plan cross join jobs j on j.pr = p.number
-      where p.status in ('open', 'board', 'stuck')
-      union select f.job from prs p indexed by prs_plan join review_fix_tasks f on f.pr = p.number
-      where p.status in ('open', 'board', 'stuck')
-    ) candidate cross join jobs j indexed by jobs_review_runs on j.id = candidate.id
-    left join review_fix_tasks f on f.job = j.id join prs p indexed by prs_plan on p.number = coalesce(f.pr, j.pr)
-    where p.status in ('open', 'board', 'stuck') order by coalesce(j.seq, j.id), j.id`,
-  ).all() as Run[];
-  if (prospective) runs.push(prospective);
-  const panels = Map.groupBy(
-    prs.filter(pr => pr.status === 'merged'),
-    pr => pr.review_class ?? 'check',
-  );
-  return {
-    branches: new Map(prs.map(pr => [pr.branch, pr])),
-    expedited: expeditedPlans(),
-    selections: recordedSelections(),
-    runs: Map.groupBy(runs, run => run.pr),
-    undrawn: undrawnOwners(),
-    counts: new Map(
-      [...panels].map(([panel, prs]) => [
-        panel,
-        Math.ceil(
-          fitIn(
-            prs.map(pr => pr.round),
-            SLOW_SHARE,
-          ) ?? 1,
-        ),
-      ]),
-    ),
-    measured: measuredSizes(now),
-  };
-}
-
-function recordedSelections() {
-  const selections = db
-    .prepare(
-      `select t.pr, t.selection from review_triage t join prs p indexed by prs_plan
-    on p.number = t.pr and p.round = t.round and p.sha = t.sha where t.job > p.since
-    and t.job = (select max(job) from review_triage where pr = t.pr and round = t.round and sha = t.sha)`,
-    )
-    .all() as { pr: number; selection: string }[];
-  return new Map(selections.map(row => [row.pr, JSON.parse(row.selection) as Selected]));
-}
-
-function panelActors(record: ReturnType<typeof records>) {
-  const assigned = roles();
-  const selected = new Set([
-    ...assigned.consolidators,
-    ceo(),
-    ...assigned.reviewers,
-    ...[...record.runs.values()].flatMap(runs => runs.filter(run => run.kind !== 'work').map(run => run.agent)),
-  ]);
-  const agents = org().departments.flatMap((department: { agents?: { id: string; engine: string }[] }) =>
-    (department.agents ?? []).filter(agent => selected.has(agent.id)),
-  );
-  const picked = withPicks({ departments: [{ agents }] });
-  const engines = new Map<string, string>(
-    picked.departments[0].agents.map((agent: { id: string; engine: string }) => [agent.id, agent.engine] as const),
-  );
-  const reviewers = assigned.reviewers;
-  return {
-    reviewers,
-    consolidator: assigned.consolidator,
-    engines,
-    claude: reviewers.filter(agent => engines.get(agent) !== 'codex'),
-    codex: reviewers.filter(agent => engines.get(agent) === 'codex'),
-  };
-}
-const inReview = (pr: { status: string }) => ['open', 'board', 'stuck'].includes(pr.status);
 const isOpen = (run: Pick<Run, 'status'>) => ['queued', 'running', 'blocked'].includes(run.status);
 
-type Selected = { consolidator: string; reviewers: { agent: string }[] };
 function panelMembers(own: Run[], selected: Selected | undefined) {
   if (selected) return selected.reviewers.map(reader => reader.agent);
   const reviews = own.filter(run => run.kind === 'review' && run.status !== 'cancelled');
@@ -274,9 +160,8 @@ type Context = {
   work: Work;
   // the owner's planning job holding the round's undrawn findings (undrawnFix): the stage before its fix
   sorter?: Sorter;
-  opens?: number; // the round the work's own push opens (a board or stuck PR holds it): that push is its fix
+  opens?: number; // the round later work's push opens (continuing): it stands in for the fix of the round before
 };
-type Sorter = { id: number; agent: string; engine: string };
 function buildPlan(context: Context): ReviewPlan {
   const stages: ReviewStage[] = [];
   let preceding: string[] = [];
@@ -291,8 +176,7 @@ function buildPlan(context: Context): ReviewPlan {
     const own = (context.own.get(round) ?? []).filter(run => run.kind === 'work' || run.id > since);
     const fixing = own.some(run => run.kind === 'work' && isOpen(run));
     const checking = own.find(run => run.kind === 'consolidate' && run.stage !== 'ruling' && isOpen(run));
-    const ruled =
-      fixing || own.some(run => run.kind === 'consolidate' && run.stage !== 'triage' && run.status === 'done');
+    const ruled = rules(own);
     if (!ruled) preceding = addReads(context, stages, round, own, preceding, checking);
     if (!ruled) {
       const known = own.findLast(run => run.kind === 'consolidate' && run.stage !== 'triage' && isOpen(run));
@@ -321,6 +205,12 @@ function buildPlan(context: Context): ReviewPlan {
     unresolved: !!context.pr && inReview(context.pr),
   };
 }
+
+// A round's runs since it last started rule it with a done ruling or a fix under way
+const rules = (own: Run[]) =>
+  own.some(run =>
+    run.kind === 'work' ? isOpen(run) : run.status === 'done' && run.stage !== 'triage' && run.kind === 'consolidate',
+  );
 
 // A ruled round's consolidation queued since its ruling (the retry of a ruling whose verdict couldn't be read) is what
 // resolves it: a stage of its own, so the work waiting on the merge gives it its window, not a stall with none.

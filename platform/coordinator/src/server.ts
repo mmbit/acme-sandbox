@@ -21,6 +21,7 @@ import { attachment, findFile, inside, rangeOf, HQ_DIR, THEME_DIR, hqDir } from 
 import { subscribe, publish, endAll } from './events.ts';
 import { db, companyOnce, scrubOnStart, scrubbed, scrubbing, optimize, inOneStep } from './db.ts'; // (db: the artifact's tip.)
 import * as jobs from './jobs.ts';
+import { profile as boardProfile } from './board.ts';
 import * as engineOnly from './engineonly.ts';
 import * as room from './room.ts';
 import * as roomrecords from './roomrecords.ts';
@@ -40,6 +41,7 @@ import * as meetingseats from './meetingseats.ts';
 import * as lowmemory from './lowmemory.ts';
 import * as diskwarnings from './diskwarnings.ts';
 import * as threadorder from './threadorder.ts';
+import * as turnwords from './turnwords.ts';
 import { oneTaskThread } from './made.ts';
 import * as threadrelease from './threadrelease.ts';
 import * as jobcodes from './jobcodes.ts';
@@ -49,6 +51,7 @@ import * as decisions from './decisions.ts';
 import * as visualapproval from './visualapproval.ts';
 import * as followthrough from './followthrough.ts';
 import * as takeover from './takeover.ts';
+import * as savedWork from './savedwork.ts';
 import * as models from './models.ts';
 import { diskCheck, jobReserve } from './disk.ts';
 import { awayCheck } from './away.ts';
@@ -76,6 +79,7 @@ import * as workspaceentries from './workspaceentries.ts';
 import * as oversight from './oversight.ts';
 import * as profiles from './profiles.ts';
 import * as windows from './windows.ts';
+import * as slipnotice from './slipnotice.ts';
 import * as urgency from './urgency.ts';
 import * as askwindow from './askwindow.ts';
 import * as wakes from './wakes.ts';
@@ -162,6 +166,7 @@ import { oneLine } from './agreements.ts';
 import * as memory from './memory.ts';
 import * as merged from './merged.ts';
 import { readCostJobsAhead } from './costjobs.ts';
+import { readCostBookAhead } from './featurecost.ts';
 import * as estimates from './estimates.ts';
 import * as when from './when.ts';
 import * as forecast from './forecast.ts';
@@ -783,6 +788,8 @@ const unseenProblem = (b: any, me: Me) => {
     "and the desk phone shows a card's pictures from main: commit them in this job and hold the card until it's live " +
     '(hq ask ... --when deployed:<this job>), or file it once they are merged' : null;
 };
+// What a card's text can't say on the desk phone: hq ask's, and a slip notice's (hq window --tell)
+const textProblem = (b: any, me: Me) => cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? unseenProblem(b, me);
 // hq photos: for the agent who asked, and a job it queued after the card (jobs.ts cardAccess). A card marked as a
 // customer's: whoever reads its text (jobs.ts readsCard), refused with why for anyone else.
 const seePhotos = (id: number, me: Me, read: () => unknown) => {
@@ -824,7 +831,7 @@ function jobOrigin(b: any, me: Me) {
   const landingSource = failedJobId === undefined ? undefined
     : !Number.isSafeInteger(failedJobId) ? '--lands names a job by its number'
     : b.item != null ? '--lands carries the failed job\'s item, so it takes no --item'
-    : takeover.landing(failedJobId, String(b.agent), me.agent);
+    : savedWork.landing(failedJobId, String(b.agent), me.agent);
   if (typeof landingSource === 'string') return new Refused(409, landingSource);
   if (b.item != null) {
     const h = ledger.handOut(Number(b.item), c => me.call ? c === me.callId : ledger.mine(me.id, c) || keepsAsks(me, c));
@@ -843,7 +850,7 @@ function jobOrigin(b: any, me: Me) {
   const landingItem = landingSource ? ledger.carried(failedJobId!) : undefined;
   // An own brief takes the place of the failed job's, which carried its goal
   const landingGoal = brief && landingItem ? ledger.goalLine(landingItem) : '';
-  const landingBrief = `${landingSource ? takeover.savedWorkLine(failedJobId!, landingSource.branch) : ''}${landingGoal ? `\n\n${landingGoal}` : ''}`;
+  const landingBrief = `${landingSource ? savedWork.savedWorkLine(failedJobId!, landingSource.branch) : ''}${landingGoal ? `\n\n${landingGoal}` : ''}`;
   const ownBrief = brief || landingSource?.prompt;
   // hq job --after request:<id>: it waits for the card's answer (jobs.ts addCardWait)
   const card = b.afterRequest == null ? undefined : Number(b.afterRequest);
@@ -941,8 +948,9 @@ function jobNotes(b: any, me: Me) {
   return typeof taken === 'string' ? new Refused(409, taken) : taken;
 }
 // The thread a queued job is in. One it joined (named or inherited) comes with its name and goal (its "done when"),
-// which hq job repeats back so its queuer reads what the work is filed under (board, call 172). One drawn for it, by
-// --deliverable new: (drawn) or after the release (its own one-task thread), its queuer just wrote: it's named alone.
+// which hq job repeats back so its queuer reads what the work is filed under.
+// One drawn for it, by --deliverable new: (drawn) or after the release (its own one-task thread), its queuer just
+// wrote: it's named alone.
 function shownThread(job: number, drawn: { newThread: unknown; ownThread: string | null }) {
   const thread = jobs.threadOf(job);
   if (!thread) return {};
@@ -984,7 +992,7 @@ function namedThread(b: any, me: Me) {
   if (named.length !== 1 || [job, pr].some(v => v !== undefined && (!Number.isSafeInteger(v) || v <= 0)))
     return new Refused(400, 'name one deliverable (<project>/<slug>), or one job or pull request (pr:<n>) on it');
   const thread = windows.threadOf({ thread: str(b.thread), job, pr });
-  return typeof thread === 'string' ? new Refused(409, thread) : { ...thread, agent };
+  return typeof thread === 'string' ? new Refused(409, thread) : { thread, agent };
 }
 // A call's job carries its whole brief as its prompt, in the JSON body: hq_tools.py hands it to hq on stdin, never as a
 // file (hq reads files as the voice line's uid, which can open the seat's token: guard.py). A short title (what HQ
@@ -1130,14 +1138,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed) : source ? servesOther(job.id) : {};
     // (a task of its agent's there stopped with nothing in its place: this one takes it, or the answer names those left;
     const placed = failedJobId === undefined && !fix ? takeover.placeQueued(job.id, me.agent) : {};
-    const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain, ...placed };  // (chain)
+    const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, turn: turnwords.turnWords()(job.id), ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain, ...placed };  // (chain; turn)
     return b.item != null || noted ? { ...job, ...due, ...ledger.handedOut(carried!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
   // hq thread list, and hq project say: a project's threads and its owner's sentence (projects.ts), as the speaker (a
   // team member under its own name, never with its lead's rights).
   'GET /api/agent/threads': b => projects.listThreads({ project: str(b.project), all: b.all === '1' }),
   // hq plan: a project's plan, and its owner's or the CEO's changes to it; hq project new | owner: the CEO's (plan.ts).
-  'GET /api/agent/plan': b => plan.planOf(String(b.project ?? ''), forecast.current()) ?? 404,
+  'GET /api/agent/plan': b => turnwords.inPlan(plan.planOf(String(b.project ?? ''), forecast.current())) ?? 404,   // (turnwords)
   'POST /api/agent/plan/thread': (b, me) => {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
@@ -1217,8 +1225,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/pauses': (b, me) => {
     const agent = speaker(b.as, me);
     const until = Array.isArray(b.until) ? b.until : [];
+    const untilWhole = Array.isArray(b.untilWhole) ? b.untilWhole : [];
     // (what wakes its owner, or by hand; byJob, the run that makes it)
-    const ask = { thread: str(b.thread), project: str(b.project), why: b.why, until, untilTime: str(b.untilTime), byHand: b.byHand === true, byJob: me.id };
+    const ask = { thread: str(b.thread), project: str(b.project), why: b.why, until, untilWhole, untilTime: str(b.untilTime), byHand: b.byHand === true, byJob: me.id };
     return agent ? refusal(pauses.pause(ask, agent)) : 403;
   },
   'POST /api/agent/pauses/resume': (b, me) => {
@@ -1295,15 +1304,23 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const aim = b.aim == null ? undefined : windows.parse(String(b.aim), now, true);
     if (typeof aim === 'string') return new Refused(400, `--aim: ${aim}`);
     if (at === null && aim !== undefined) return new Refused(400, 'none takes the window off, with its aim: give no --aim');
-    const thread = namedThread(b, me);
-    if (thread instanceof Refused) return thread;
+    const named = namedThread(b, me);
+    if (named instanceof Refused) return named;
+    const { thread, agent } = named;
     const window = at === null ? null : windows.windowOf(thread, at, aim);
     if (typeof window === 'string') return new Refused(400, window);
     const tried = b.try === true;
+    // --tell: a slip of the board's own time, filed on its desk phone in the same step as the move
+    const tellRefused = slipnotice.problem(b, thread, window, text => textProblem({ body: text }, me));
+    if (tellRefused) return new Refused(400, tellRefused);
+    const tells = b.tell !== undefined && !tried;
     // A time given with --board-set is one the board set itself, the only kind whose miss it hears of. Any other time is
     // ours (windows.ts BOARD); ledger.replaceWindow
-    const { made, ...said } = moves.change(
-      () => ledger.replaceWindow(thread, window, b.board_set === true ? windows.BOARD : thread.agent),
+    const move = () => ({
+      ...ledger.replaceWindow(thread, window, b.board_set === true ? windows.BOARD : agent),
+      ...(tells && window && { tell: slipnotice.file(thread, window, String(b.tell), { agent, job: me.id }) }),
+    });
+    const { made, ...said } = moves.change(move,
       queue => windows.withWindow(queue, thread.id, window), later => ({ misses: windows.misses(later) }), tried);
     return { ...made, tried, ...said };
   },
@@ -1440,7 +1457,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (typeof book === 'string') return new Refused(400, book);
     if (plainCredential(b)) return new Refused(400, 'a credential request names the keys it asks for (their names after the brief file, comma-separated): the board types them into key fields, never an answer box');
     if (!agentRequest(b, me.agent)) return 400;
-    const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? unseenProblem(b, me);
+    const problem = textProblem(b, me) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions);
     if (problem) return new Refused(400, problem);
     const files = cardFiles.read(b.files); // files to download
     if (typeof files === 'string') return new Refused(400, files);
@@ -2372,6 +2389,8 @@ const owedSweep = () => { try { owed.sweep(); } catch (err) { console.error('Cou
 const shareSweep = () => { try { feedback.endDue(); } catch (err) { console.error('Could not end the shares due:', err); } };
 const laterSweep = () => {
   try { later.sweep(); } catch (err) { console.error('Could not look at the cards for later:', err); }
+  // (the pushes the board's quiet hours held, once it's up.)
+  push.releaseHeld().catch(err => console.error("Could not send the pushes held for the board's quiet hours:", err));
   try { tips.sweep(); } catch (err) { console.error('Could not look for the tips time brings:', err); }
   try { artifactTip(); } catch (err) { console.error('Could not read the artifacts for their tip:', err); }
 };
@@ -2415,6 +2434,9 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => socket.destroy());   // (a reviewer gone mid-way)
   try { feedback.dictate(req, socket, head); } catch (err) { console.error(err); socket.destroy(); }
 });
+// The board's profile, read once before HQ takes its port: a broken company/board.yaml fails startup, naming its key
+// (board.ts).
+if (import.meta.main) boardProfile();
 if (import.meta.main) server.listen(PORT, () => {  // tests import app without starting the server
   jobs.liftPlainKeyCards();
   feedback.markOutsideJobs();
@@ -2431,7 +2453,9 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   startSchedule();
   memory.start(); // the search index (hq search): at start, then every 2 minutes, in the background
   merged.start(); // each merged pull request's lines, from the checkout's merges, for the sizer
-  readCostJobsAhead().catch(err => console.error("Could not read the cost book's jobs ahead:", err));
+  readCostJobsAhead()
+    .then(() => readCostBookAhead())
+    .catch(err => console.error("Could not read the cost book's jobs ahead:", err));
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
   bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone

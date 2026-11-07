@@ -16,6 +16,7 @@ import * as pictures from './pictures.ts';
 import * as tips from './tips.ts';
 import { DEFAULT_ESTIMATE_SCALE, ONE_TIME, TOKEN_ESTIMATE_GUIDANCE } from '../../worker/hq/estimating.ts';
 import { isIntercom, quickRunEnded } from './quickruns.ts';
+import * as board from './board.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
 export function carriesKeys(call: number) {
@@ -58,6 +59,7 @@ from wherever the conversation is now.`;
 // CEO's (call.ts says the same).
 // A long reply hears so in its next turn (LONG_REPLY).
 // A window puts work first, a pause only waits on a condition.
+// Urgent work is recorded on its whole milestone.
 // One time, the plan's, no margin of our own, doubt with its reason (ONE_TIME).
 // Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when missed,
 // once.
@@ -236,7 +238,7 @@ function start(title: string, replaces?: number) {
   move(OFFERED, WAITING);
   const again = had || !!db.prepare(`select 1 from chat where who in ${HEARD} and sent = ${WAITING} and id < (select coalesce(max(id), 0) from chat where who = ?)`).get(ceo());
   // (word: its task code's, jobcodes.ts.)
-  const id = createJob({ agent: ceo(), kind: 'chat', word: STANDING.chat, title, prompt: brief() + recap() }).id;
+  const id = createJob({ agent: ceo(), kind: 'chat', word: STANDING.chat, title, prompt: brief() + boardPart() + recap() }).id;
   if (replaces) {
     // (the new session follows the call up afresh: an earlier reply isn't its.)
     db.prepare(`update calls set job = ?, reply = null where job = ? and id in (select call from chat where who = 'call' and sent = ${WAITING})`).run(id, replaces);
@@ -244,6 +246,9 @@ function start(title: string, replaces?: number) {
   }
   deliver(id, again); // (again)
 }
+
+// The board's profile (board.ts), which the session reads before anything it sends the board.
+const boardPart = () => { const p = board.briefing(); return p ? `\n\n${p.trimEnd()}` : ''; };
 
 // A fresh session doesn't remember the conversation: its brief has the intercom's latest lines that were heard already
 // (the ones still to come are its first turn).

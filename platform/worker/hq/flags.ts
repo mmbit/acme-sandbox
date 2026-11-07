@@ -66,7 +66,7 @@ export function takeWhen(given: string[]) {
   const { values, args } = takeRepeated(
     given,
     '--when',
-    'No job was queued: --when needs an event (deploy, deploy:2, recreated:worker, deployed:<job>, 2h, 14:30)',
+    'No job was queued: --when needs an event (deploy, deploy:2, recreated:worker, deployed:<project>, deployed:<job>, 2h, 14:30)',
   );
   return { when: values, args };
 }

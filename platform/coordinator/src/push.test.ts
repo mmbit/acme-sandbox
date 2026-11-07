@@ -24,15 +24,27 @@ const RFC = {
 
 // A receiving browser, written against WebCrypto rather than the node:crypto calls push.ts uses.
 async function decrypt(body: Buffer, uaPublic: Buffer, uaPrivate: Buffer, auth: Buffer) {
-  const salt = body.subarray(0, 16), rs = body.readUInt32BE(16), idlen = body[20], as = body.subarray(21, 21 + idlen);
+  const salt = body.subarray(0, 16),
+    rs = body.readUInt32BE(16),
+    idlen = body[20],
+    as = body.subarray(21, 21 + idlen);
   assert.equal(rs, 4096);
-  const jwk = { kty: 'EC', crv: 'P-256', d: uaPrivate.toString('base64url'),
-    x: uaPublic.subarray(1, 33).toString('base64url'), y: uaPublic.subarray(33).toString('base64url') };
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    d: uaPrivate.toString('base64url'),
+    x: uaPublic.subarray(1, 33).toString('base64url'),
+    y: uaPublic.subarray(33).toString('base64url'),
+  };
   const priv = await subtle.importKey('jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
   const pub = await subtle.importKey('raw', as, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
   const secret = await subtle.deriveBits({ name: 'ECDH', public: pub }, priv, 256);
   const hkdf = async (ikm: ArrayBuffer | Uint8Array, s: Uint8Array, info: Uint8Array, bits: number) =>
-    subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: s, info }, await subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']), bits);
+    subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt: s, info },
+      await subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']),
+      bits,
+    );
   const enc = (s: string) => new TextEncoder().encode(s);
   const ikm = await hkdf(secret, auth, Buffer.concat([enc('WebPush: info\0'), uaPublic, as]), 256);
   const cek = await hkdf(ikm, salt, enc('Content-Encoding: aes128gcm\0'), 128);
@@ -47,24 +59,43 @@ async function decrypt(body: Buffer, uaPublic: Buffer, uaPrivate: Buffer, auth: 
 async function device(path: string, status = 201) {
   const got: { headers: any; msg: any }[] = [];
   const srv = createServer(async (req, res) => {
-    const chunks: Buffer[] = []; for await (const c of req) chunks.push(c);
-    got.push({ headers: req.headers, msg: JSON.parse(await decrypt(Buffer.concat(chunks), b64(RFC.uaPublic), b64(RFC.uaPrivate), b64(RFC.auth))) });
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c);
+    got.push({
+      headers: req.headers,
+      msg: JSON.parse(await decrypt(Buffer.concat(chunks), b64(RFC.uaPublic), b64(RFC.uaPrivate), b64(RFC.auth))),
+    });
     res.writeHead(status).end();
   });
   await new Promise<void>(r => srv.listen(0, r));
   test.after(() => srv.close());
-  const origin = `http://localhost:${(srv.address() as any).port}`, endpoint = `${origin}/${path}`;
-  assert.equal((await board('/api/push/subscribe', { endpoint, keys: { p256dh: RFC.uaPublic, auth: RFC.auth } })).status, 200);
-  const close = async () => { await board('/api/push/unsubscribe', { endpoint }); srv.close(); };
+  const origin = `http://localhost:${(srv.address() as any).port}`,
+    endpoint = `${origin}/${path}`;
+  assert.equal(
+    (await board('/api/push/subscribe', { endpoint, keys: { p256dh: RFC.uaPublic, auth: RFC.auth } })).status,
+    200,
+  );
+  const close = async () => {
+    await board('/api/push/unsubscribe', { endpoint });
+    srv.close();
+  };
   return { got, origin, endpoint, close, bodies: () => got.map(g => g.msg.body).sort() };
 }
 const settle = () => new Promise(r => setTimeout(r, 300));
 const devices = async () => (await board('/api/push/key')).body.devices as number;
 
 test("what reaches a device is aes128gcm a browser's WebCrypto reads, with an ES256 VAPID JWT for its push service, signed by the key HQ hands out", async () => {
-  assert.equal(await decrypt(b64(RFC.body), b64(RFC.uaPublic), b64(RFC.uaPrivate), b64(RFC.auth)), RFC.plaintext, '(the stand-in browser reads the RFC example)');
+  assert.equal(
+    await decrypt(b64(RFC.body), b64(RFC.uaPublic), b64(RFC.uaPrivate), b64(RFC.auth)),
+    RFC.plaintext,
+    '(the stand-in browser reads the RFC example)',
+  );
   const phone = await device('a');
-  assert.deepEqual((await board('/api/push/test', { endpoint: phone.endpoint })).body, { sent: 1, pruned: 0, failed: 0 });
+  assert.deepEqual((await board('/api/push/test', { endpoint: phone.endpoint })).body, {
+    sent: 1,
+    pruned: 0,
+    failed: 0,
+  });
   const [{ headers, msg }] = phone.got;
   assert.equal(headers['content-encoding'], 'aes128gcm');
   assert.equal(msg.tag, 'hq-test');
@@ -77,22 +108,39 @@ test("what reaches a device is aes128gcm a browser's WebCrypto reads, with an ES
   assert.ok(c.exp > Date.now() / 1000 && c.exp <= Date.now() / 1000 + 3600);
   assert.match(c.sub, /^(mailto:|https:)/);
   const key = await subtle.importKey('raw', b64(k), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-  assert.ok(await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64(sig), new TextEncoder().encode(`${head}.${claims}`)));
+  assert.ok(
+    await subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      key,
+      b64(sig),
+      new TextEncoder().encode(`${head}.${claims}`),
+    ),
+  );
   await phone.close();
 });
 
 test('subscriptions are validated, rung, and pruned when gone; only urgent cards and sign-ins ring', async () => {
   const keys = { p256dh: RFC.uaPublic, auth: RFC.auth };
   assert.equal((await board('/api/push/subscribe', { endpoint: 'ftp://x', keys })).status, 400);
-  assert.equal((await board('/api/push/subscribe', { endpoint: 'http://localhost:1/a', keys: { p256dh: 'short', auth: RFC.auth } })).status, 400);
-  const phone = await device('live'), gone = await device('gone', 410);
+  assert.equal(
+    (
+      await board('/api/push/subscribe', {
+        endpoint: 'http://localhost:1/a',
+        keys: { p256dh: 'short', auth: RFC.auth },
+      })
+    ).status,
+    400,
+  );
+  const phone = await device('live'),
+    gone = await device('gone', 410);
   assert.equal(await devices(), 2);
   assert.deepEqual((await board('/api/push/test', {})).body, { sent: 1, pruned: 1, failed: 0 });
   assert.equal(await devices(), 1);
 
   phone.got.length = 0;
   const kit = await h.start({ agent: 'kit' });
-  const ask = (kind: string, title: string, urgency: string) => h.agent('request', kit.token, { kind, title, body: 'Which?', urgency });
+  const ask = (kind: string, title: string, urgency: string) =>
+    h.agent('request', kit.token, { kind, title, body: 'Which?', urgency });
   await ask('decision', 'Pick a mug colour', 'today');
   await ask('action', 'Top up the ads', 'now');
   h.jobs.createRequest({ kind: 'login', seat: 'codex-1', title: 'Sign in', body: 'Open https://example.com' });
@@ -117,20 +165,43 @@ const HOUR = 3600_000;
 
 test("a card from work on a thread with a deadline rings, whatever urgency its agent gave it; other work's waits", async () => {
   const phone = await device('cards');
-  const due = await h.start({ agent: 'bolt', title: 'The invite fix', queuedBy: 'juno', thread: h.dueThread({ deadline: Date.now() + 2 * HOUR }) });
+  const due = await h.start({
+    agent: 'bolt',
+    title: 'The invite fix',
+    queuedBy: 'juno',
+    thread: h.dueThread({ deadline: Date.now() + 2 * HOUR }),
+  });
   const plain = await h.start({ agent: 'bolt', title: 'Tidy the readme' });
   // a fix on the deadline work's pull request: on its thread, so the same deadline (the pull request's: a task there
   // would wait for the one running)
   h.storedPr(9101, due.id, 'open', ['invite.ts']);
-  const fix = await h.start({ agent: 'bolt', title: 'Fixing review notes', branch: `job/${due.id}`, pr: 9101, stage: 'fix' });
+  const fix = await h.start({
+    agent: 'bolt',
+    title: 'Fixing review notes',
+    branch: `job/${due.id}`,
+    pr: 9101,
+    stage: 'fix',
+  });
   // (as soon as it can: a deadline of now.)
-  const rushed = await h.start({ agent: 'bolt', title: 'The login fix', thread: h.dueThread({ deadline: Date.now() }) });
-  const card = async (job: typeof due, title: string, urgency?: string) => (await h.agent('request', job.token, { kind: 'decision', title, body: 'x', urgency })).body.id;
-  const asked = [await card(due, 'Which wording?', 'today'), await card(fix, 'Keep the old link?'), await card(plain, 'Which font?', 'today'),
-    await card(rushed, 'Which login page?', 'today')];
+  const rushed = await h.start({
+    agent: 'bolt',
+    title: 'The login fix',
+    thread: h.dueThread({ deadline: Date.now() }),
+  });
+  const card = async (job: typeof due, title: string, urgency?: string) =>
+    (await h.agent('request', job.token, { kind: 'decision', title, body: 'x', urgency })).body.id;
+  const asked = [
+    await card(due, 'Which wording?', 'today'),
+    await card(fix, 'Keep the old link?'),
+    await card(plain, 'Which font?', 'today'),
+    await card(rushed, 'Which login page?', 'today'),
+  ];
   await settle();
   const cards = (await board('/api/requests')).body as { id: number; urgency: string }[];
-  assert.deepEqual(asked.map(id => cards.find(c => c.id === id)!.urgency), ['now', 'now', 'today', 'now']);
+  assert.deepEqual(
+    asked.map(id => cards.find(c => c.id === id)!.urgency),
+    ['now', 'now', 'today', 'now'],
+  );
   assert.deepEqual(phone.bodies(), ['Keep the old link?', 'Which login page?', 'Which wording?']);
   for (const j of [due, plain, fix, rushed]) await h.finish(j);
   await phone.close();
@@ -159,9 +230,11 @@ test('seat warnings start off, take company defaults, and the CEO or Process rep
 });
 
 test('usage crossings push once per seat to every device, survive missing readings and restart, and rearm below the level or after reset', async () => {
-  const phone = await device('seat-phone'), tablet = await device('seat-tablet');
+  const phone = await device('seat-phone'),
+    tablet = await device('seat-tablet');
   const boss = await h.start({ agent: 'juno' });
-  const t0 = Date.now(), reset = t0 + 24 * HOUR;
+  const t0 = Date.now(),
+    reset = t0 + 24 * HOUR;
   const report = (seat: string, week?: number, util?: number, resets = reset) =>
     h.worker('seat', { seat, engine: 'claude', state: 'ready', week, util, weekResets: resets, resets });
   await report('claude-warning', 0.99, 0.99);
@@ -169,7 +242,7 @@ test('usage crossings push once per seat to every device, survive missing readin
   assert.equal(phone.got.length, 0, 'off is silent');
   await h.agent('seat-warnings', boss.token, { warning: { week: { percent: 58 }, five_hour: { percent: 80 } } });
   await report('claude-warning', 0.57, 0.79);
-  await report('claude-warning', 0.58, 0.80);
+  await report('claude-warning', 0.58, 0.8);
   await settle();
   assert.equal(phone.got.length, 1, 'both crossings share one push');
   assert.equal(tablet.got.length, 1);
@@ -192,7 +265,7 @@ test('usage crossings push once per seat to every device, survive missing readin
   assert.equal(phone.got.length, 2);
   assert.notEqual(phone.got[0].headers.topic, phone.got[1].headers.topic);
   await report('claude-warning', 0.57, 0.79);
-  await report('claude-warning', 0.60, 0.82);
+  await report('claude-warning', 0.6, 0.82);
   await report('claude-warning', 0.61, 0.83, reset + 7 * 24 * HOUR);
   await settle();
   assert.equal(phone.got.length, 4);
@@ -217,7 +290,15 @@ test('lead warnings use measured headroom per active agent-hour and only forecas
   mock.timers.enable({ apis: ['Date'], now: t0 });
   try {
     const report = (seat: string, week: number, util: number, reset = t0 + 12 * HOUR) =>
-      h.worker('seat', { seat, engine: 'claude', state: 'ready', week, util, weekResets: reset, resets: t0 + 5 * HOUR });
+      h.worker('seat', {
+        seat,
+        engine: 'claude',
+        state: 'ready',
+        week,
+        util,
+        weekResets: reset,
+        resets: t0 + 5 * HOUR,
+      });
     await h.agent('seat-warnings', boss.token, { warning: { week: { hours: 2 }, five_hour: { hours: 0.5 } } });
     await report('claude-forecast', 0.2, 0.1);
     const first = await h.start({ agent: 'bolt' }, { seat: 'claude-forecast' });
@@ -248,7 +329,11 @@ test('lead warnings use measured headroom per active agent-hour and only forecas
     await h.finish(resumedSecond);
     const continued = await h.start({ agent: 'bolt' }, { seat: 'claude-forecast' });
     await report('claude-forecast', 0.6, 0.5);
-    assert.equal((await h.agent('seat-warnings', boss.token, { warning: { week: { hours: 0 }, five_hour: { hours: 0.5 } } })).status, 200);
+    assert.equal(
+      (await h.agent('seat-warnings', boss.token, { warning: { week: { hours: 0 }, five_hour: { hours: 0.5 } } }))
+        .status,
+      200,
+    );
     await report('claude-forecast', 0.6, 0.5);
     await settle();
     assert.equal(phone.got.length, 2, 'zero warns on any measured run-out before reset, even more than two hours away');
@@ -277,9 +362,14 @@ test('a percentage-only warning still includes the measured exhaustion forecast'
   mock.timers.enable({ apis: ['Date'], now: t0 });
   try {
     assert.equal((await h.agent('seat-warnings', boss.token, { warning: { week: { percent: 60 } } })).status, 200);
-    const report = (week: number) => h.worker('seat', {
-      seat: 'claude-percent', engine: 'claude', state: 'ready', week, weekResets: t0 + 12 * HOUR,
-    });
+    const report = (week: number) =>
+      h.worker('seat', {
+        seat: 'claude-percent',
+        engine: 'claude',
+        state: 'ready',
+        week,
+        weekResets: t0 + 12 * HOUR,
+      });
     await report(0.5);
     const working = await h.start({ agent: 'bolt' }, { seat: 'claude-percent' });
     mock.timers.setTime(t0 + HOUR);
@@ -298,4 +388,138 @@ test('a percentage-only warning still includes the measured exhaustion forecast'
     await h.finish(boss);
     await phone.close();
   }
+});
+
+// ---- the board's quiet hours (its profile, company/board.yaml: board.ts).
+const MINUTE = 60_000;
+const clockOf = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+
+test("in the board's quiet hours nothing rings it but what it asked for, just after they start: the rest rings once it's up", async () => {
+  // quiet since ten minutes ago, up in an hour, every day, on UTC: something it asked for still rings for 30 minutes
+  const t0 = Date.now(),
+    up = t0 + HOUR;
+  const night = `{ up: '${clockOf(up)}', quiet: '${clockOf(t0 - 10 * MINUTE)}' }`;
+  writeFileSync(
+    `${h.repo}/company/board.yaml`,
+    `zone: UTC\nrhythm:\n  weekdays: ${night}\n  weekends: ${night}\n  asked: 30\n`,
+  );
+  const phone = await device('quiet');
+  const plain = await h.start({ agent: 'kit', title: 'Tidy the readme' });
+  const asked = await h.start({
+    agent: 'bolt',
+    title: 'The invite fix',
+    thread: h.dueThread({ deadline: t0 + 2 * HOUR, by: 'board' }),
+  });
+  const card = async (job: typeof plain, title: string) =>
+    (await h.agent('request', job.token, { kind: 'decision', title, body: 'x', urgency: 'now' })).body;
+  const unasked = await card(plain, 'Top up the ads');
+  const answered = await card(plain, 'Which font?');
+  const wanted = await card(asked, 'Which wording?');
+  const { sendToBoard, releaseHeld } = await import('./push.ts');
+  const post = await sendToBoard({ title: 'New in the newsletter', body: 'A post', tag: 'gazette' });
+  await settle();
+  assert.deepEqual(phone.bodies(), ['Which wording?'], 'only what the board asked for rings now');
+  // what it asked for still rings in those minutes when its card shows later, once its work is live
+  const { unhold } = await import('./later.ts');
+  const live = (
+    await h.agent('request', asked.token, {
+      kind: 'notice',
+      title: 'The invite fix is live',
+      body: 'x',
+      urgency: 'now',
+      when: `deployed:${asked.id}`,
+    })
+  ).body;
+  const works = h.db.prepare('select work from request_holds where request = ?').all(live.id) as { work: string }[];
+  assert.ok(works.length, 'held until its work is live');
+  unhold(
+    live.id,
+    works.map(w => w.work),
+  );
+  await settle();
+  assert.deepEqual(phone.bodies(), ['The invite fix is live', 'Which wording?']);
+  assert.ok(Math.abs(unasked.quiet_until - up) < MINUTE, "the card's author hears when the board is up");
+  assert.equal(wanted.quiet_until, undefined, 'what it asked for is outside the quiet hours for it');
+  assert.ok(post.held && Math.abs(post.held - up) < MINUTE);
+  const shown = (await board('/api/requests')).body as { id: number }[];
+  assert.ok(
+    shown.some(c => c.id === unasked.id),
+    'the card is on the desk phone all the same',
+  );
+  // a call's agent reads the profile, and where the board's day stands, before it says anything
+  const call = (await h.voice('call-context', { agent: 'kit', lang: 'en' })).body;
+  assert.match(call.prompt, /## The board\n[^]*Now it's .* on its clock, in its quiet hours until /);
+  await h.voice('call-end', { agent: 'kit', token: call.token, lines: [] });
+
+  h.jobs.answerRequest(answered.id, 'The serif one');
+  assert.deepEqual(await releaseHeld(up - MINUTE), [], 'nothing goes before the board is up');
+  assert.deepEqual((await releaseHeld(up + MINUTE)).sort(), ['desk-phone', 'gazette']);
+  assert.deepEqual(
+    phone.bodies(),
+    ['A post', 'The invite fix is live', 'Top up the ads', 'Which wording?'],
+    'an answered card rings nothing in the morning',
+  );
+  assert.deepEqual(await releaseHeld(up + 2 * MINUTE), [], 'once');
+  rmSync(`${h.repo}/company/board.yaml`);
+  for (const j of [plain, asked]) await h.finish(j);
+  await phone.close();
+});
+
+test('a profile key given but misread throws, naming it, and a push then fails without ringing or rejecting', async () => {
+  const { profile } = await import('./board.ts');
+  const { sendToBoard } = await import('./push.ts');
+  const file = `${h.repo}/company/board.yaml`;
+  const write = (yaml: string) => writeFileSync(file, yaml);
+  try {
+    for (const [yaml, message] of [
+      [
+        "rhythm:\n  weekdays: { quiet: '23.00' }\n",
+        /company\/board\.yaml: rhythm\.weekdays\.quiet "23\.00" isn't a time/,
+      ],
+      ['rhythm:\n  weekends: { up: 11pm }\n', /company\/board\.yaml: rhythm\.weekends\.up "11pm" isn't a time/],
+      ["rhythm:\n  weekdays: { work: '9:30' }\n", /rhythm\.weekdays\.work "9:30"/],
+      ['rhythm:\n  asked: twenty\n', /company\/board\.yaml: rhythm\.asked "twenty" isn't a number/],
+      ['rhythm:\n  asked: -5\n', /rhythm\.asked -5/],
+      ['zone: Europe/Amsterdm\n', /company\/board\.yaml: zone "Europe\/Amsterdm" isn't a time zone/],
+      ['zone: [UTC\n', /./], // (YAML that doesn't parse)
+      ["rhythm:\n  weekdays: '23:00'\n", /rhythm\.weekdays "23:00" isn't a mapping/],
+      ["rhythm:\n  weekday: { quiet: '23:00' }\n", /rhythm has no key weekday/],
+      ["rhythm:\n  weekdays: { quite: '23:00' }\n", /rhythm\.weekdays has no key quite/],
+      ['preferences: Only what needs its judgment\n', /preferences "Only what needs its judgment" isn't a list/],
+    ] as const) {
+      write(yaml);
+      assert.throws(() => profile(), message, yaml);
+    }
+    const phone = await device('misread');
+    write("rhythm:\n  weekdays: { quiet: '23.00' }\n");
+    const errors = mock.method(console, 'error', () => {});
+    assert.deepEqual(await sendToBoard({ title: 'Seat warning', body: 'x', tag: 'seat' }), {
+      sent: 0,
+      pruned: 0,
+      failed: 1,
+    });
+    assert.match(String(errors.mock.calls[0].arguments.join(' ')), /rhythm\.weekdays\.quiet "23\.00"/);
+    errors.mock.restore();
+    await settle();
+    assert.deepEqual(phone.bodies(), [], 'nothing rings');
+    await phone.close();
+
+    // keys left out take the documented defaults; a missing or empty file is no profile
+    write("zone: UTC\nrhythm:\n  weekdays: { quiet: '23:00' }\n");
+    const { zone, weekdays, weekends, askedMinutes } = profile()!;
+    assert.deepEqual(
+      { zone, weekdays, weekends, askedMinutes },
+      {
+        zone: 'UTC',
+        weekdays: { up: 8 * 60, quiet: 23 * 60, work: null },
+        weekends: { up: 8 * 60, quiet: 23 * 60, work: null },
+        askedMinutes: 0,
+      },
+    );
+    write('# nothing yet\n');
+    assert.equal(profile(), null);
+  } finally {
+    rmSync(file, { force: true });
+  }
+  assert.equal(profile(), null);
 });

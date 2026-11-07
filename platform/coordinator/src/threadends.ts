@@ -8,6 +8,7 @@ import { tasksOf, type Task } from './threadorder.ts';
 import { findThread, type Thread } from './projects.ts';
 import { oneTask } from './made.ts';
 import * as threadjudge from './threadjudge.ts';
+import * as savedWork from './savedwork.ts';
 
 // A pull request merged (review.ts pullRequestMerged): the thread starts its next task on a new branch. Each thread
 // whose work it held stays open with nothing in it open or still to merge, and its owner judges it (threadjudge.ts
@@ -90,8 +91,10 @@ export function endedEmpty(id: string) {
 // thread with nothing in it open or still to merge ready to judge, as a merge does (settled): a live check that changed nothing, a follow-up that ran on past its thread's merge,
 // a failure nothing replaces or a task its owner called off is its last word, and only its owner closes the thread or
 // draws its next task. Never a judge's own thread (settled), nor while the thread's branch holds pushed work: that goes
-// to review first, and its merge wakes the owner.
+// to review first, and its merge wakes the owner. Nor while a failed task's work is off its branch (savedwork.ts
+// heldOffBranch).
 export function runEnded(id: string) {
+  if (savedWork.heldOffBranch(id)) return;
   if (oneTask(id)) return endedEmpty(id);
   const thread = findThread(id);
   if (thread?.status === 'open' && !thread.branch && !threadjudge.judges(id)) threadjudge.wake(id);

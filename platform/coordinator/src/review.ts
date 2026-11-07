@@ -718,7 +718,8 @@ function dispatchTriage(job: { id: number; pr: number; round: number; sha: strin
   }
   db.prepare("update prs set panel = 'triaged' where number = ?").run(job.pr);
   for (const seat of selected.reviewers) queueReader(job, pr, selected, seat);
-  queueConsolidatorRead(job, pr, selected, selected.consolidator);
+  const addedReader = queueConsolidatorRead(job, pr, selected, selected.consolidator);
+  if (addedReader) reviewtriage.addReader(job, selected, addedReader);
   publish({ type: 'log', agent: selected.consolidator,
     text: `PR #${job.pr}, round ${job.round}: ${selected.reason}. Reviewers: ${selected.reviewers.map(seat => `${seat.agent}: ${seat.reason}`).join(', ') || 'the consolidator alone'}` });
   if (!selected.reviewers.length) {
@@ -741,13 +742,12 @@ function queueReader(job: { pr: number; round: number; sha: string | null }, pr:
 
 // A required read covered by triage's suggestion becomes independent when another agent takes the ruling.
 function queueConsolidatorRead(job: { pr: number; round: number; sha: string | null }, pr: Pr, selected: reviewtriage.Selection | undefined, agent: string) {
-  if (!selected?.consolidatorRead || selected.consolidatorRead.agent === agent) return false;
+  if (!selected?.consolidatorRead || selected.consolidatorRead.agent === agent) return;
   const seat = selected.consolidatorRead;
   const reviews = roundReviews(job.pr, job.round, job.sha, pr.since);
-  if (reviews.some(review => review.agent === seat.agent)) return false;
+  if (reviews.some(review => review.agent === seat.agent)) return;
   queueReader(job, pr, selected, seat);
-  reviewtriage.addReader(job, selected, seat);
-  return true;
+  return seat;
 }
 
 function scopeFor(pr: Pr) {
@@ -953,36 +953,7 @@ export async function reviewFinished(job: { id: number; kind: string; status: st
   // round was run again on the same commit.
   if (job.sha !== pr.sha || job.round !== pr.round || job.id <= pr.since) return;
   if (triageFinished(job, pr)) return;
-  if (job.kind === 'review') {
-    const missing = missingReview(lookerOf(job.pr, job.round, job.sha));
-    if (retryMissingReview(job, missing)) return;
-    const { panel: jobs, label } = panelOf(roundReviews(job.pr, job.round, job.sha, pr.since), pr.panel);
-    if (!jobs.length || jobs.some(j => !['done', 'failed'].includes(j.status))) return;
-    // A pull request is never merged on "no findings" from a reviewer who never actually reviewed: the whole panel
-    // chosen for this round has to report (review finding N2). A failed reviewer is a platform problem,
-    // not the author's or the board's: the pull request waits, visibly, in the status report.
-    const failed = jobs.filter(missing).map(j => j.agent);   // (unreported; missingReview)
-    if (failed.length) {
-      const reason = jobs.filter(missing).map(j => `${j.agent}: ${unreported(j) ? "couldn't review it" : 'named no preview it opened'}`).join(', ');
-      return stuck(job.pr, `${reason}, twice; \`hq review ${job.pr}\` runs it again`);
-    }
-    // two reviewers finishing together both see the panel complete: consolidate once
-    if (db.prepare("select 1 from jobs where kind = 'consolidate' and pr = ? and round = ? and sha = ? and coalesce(stage, '') != 'triage' and id > ?").get(job.pr, job.round, job.sha, pr.since)) return;
-    const selected = reviewtriage.selected(job.pr, job.round, job.sha);
-    const agent = panel.consolidator(job.pr, 'ruling');
-    if (queueConsolidatorRead(job, pr, selected, agent)) return;
-    // the findings the round weighs: the trust rule's dismissals stay out, and the ones on code the change doesn't touch
-    // are set apart
-    const isPreExisting = findings.preExisting(findings.changeOf(job.pr, job.sha));
-    const reports = jobs.map(j => weighed(j.agent, j.output, isPreExisting)).join('\n\n');
-    const writes = touchupFiles(pr), throwaway = selected?.throwaway;
-    roundJob({ agent, pr: job.pr, round: job.round, sha: job.sha ?? undefined,
-      stage: 'ruling', step: `Weighing the reviews${label ? ` (${label})` : ''}`, writes,
-      prompt: consolidatorPrompt(job.pr, job.branch, pr.author, briefingFor(job.branch, job.round, throwaway), JSON.parse(pr.links), reports, boardWords(job.branch, 'ruling'),
-        scopeFor(pr),
-        JSON.parse(pr.files), writes, pr.fixes_from, throwaway) });   // (the panel's label and note; the risk call)
-    return;
-  }
+  if (job.kind === 'review') return readersFinished(job, pr);
   // consolidate: act on the consolidator's verdict, but only from a run that finished (a failed run's output may be a file
   // planted on the branch)
   if (job.status !== 'done') {
@@ -994,6 +965,40 @@ export async function reviewFinished(job: { id: number; kind: string; status: st
   deciding.add(job.pr);
   try { await decide(job, pr); } finally { deciding.delete(job.pr); }
   replayWaiting(job.pr);
+}
+
+function readersFinished(job: Parameters<typeof reviewFinished>[0], pr: Pr) {
+  const missing = missingReview(lookerOf(job.pr, job.round, job.sha));
+  if (retryMissingReview(job, missing)) return;
+  const { panel: jobs, label } = panelOf(roundReviews(job.pr, job.round, job.sha, pr.since), pr.panel);
+  if (!jobs.length || jobs.some(j => !['done', 'failed'].includes(j.status))) return;
+  // A pull request is never merged on "no findings" from a reviewer who never actually reviewed: the whole panel
+  // chosen for this round has to report (review finding N2). A failed reviewer is a platform problem,
+  // not the author's or the board's: the pull request waits, visibly, in the status report.
+  const failed = jobs.filter(missing).map(j => j.agent);   // (unreported; missingReview)
+  if (failed.length) {
+    const reason = jobs.filter(missing).map(j => `${j.agent}: ${unreported(j) ? "couldn't review it" : 'named no preview it opened'}`).join(', ');
+    return stuck(job.pr, `${reason}, twice; \`hq review ${job.pr}\` runs it again`);
+  }
+  // two reviewers finishing together both see the panel complete: consolidate once
+  if (db.prepare("select 1 from jobs where kind = 'consolidate' and pr = ? and round = ? and sha = ? and coalesce(stage, '') != 'triage' and id > ?").get(job.pr, job.round, job.sha, pr.since)) return;
+  const selected = reviewtriage.selected(job.pr, job.round, job.sha);
+  const agent = panel.consolidator(job.pr, 'ruling');
+  const addedReader = queueConsolidatorRead(job, pr, selected, agent);
+  if (addedReader) {
+    reviewtriage.addReader(job, selected!, addedReader);
+    return;
+  }
+  // the findings the round weighs: the trust rule's dismissals stay out, and the ones on code the change doesn't touch
+  // are set apart
+  const isPreExisting = findings.preExisting(findings.changeOf(job.pr, job.sha));
+  const reports = jobs.map(j => weighed(j.agent, j.output, isPreExisting)).join('\n\n');
+  const writes = touchupFiles(pr), throwaway = selected?.throwaway;
+  roundJob({ agent, pr: job.pr, round: job.round, sha: job.sha ?? undefined,
+    stage: 'ruling', step: `Weighing the reviews${label ? ` (${label})` : ''}`, writes,
+    prompt: consolidatorPrompt(job.pr, job.branch, pr.author, briefingFor(job.branch, job.round, throwaway), JSON.parse(pr.links), reports, boardWords(job.branch, 'ruling'),
+      scopeFor(pr),
+      JSON.parse(pr.files), writes, pr.fixes_from, throwaway) });   // (the panel's label and note; the risk call)
 }
 
 // Whether a round's panel is out on its commit: a review or a ruling of it started (a run that failed did, its retry
@@ -1063,7 +1068,7 @@ function triageFinished(job: { id: number; pr: number; round: number; sha: strin
 // (visual.ts)
 function roundJob(job: Omit<Parameters<typeof createJob>[0], 'title' | 'agent'> & { pr: number; round: number; step: string; agent?: string }) {
   const { branch, checks_note, files, since } = db.prepare('select branch, checks_note, files, since from prs where number = ?').get(job.pr) as Pr;
-  const previews = previewsStep(job, JSON.parse(files));
+  const previews = previewsStep(job, JSON.parse(files), since);
   // (screens.rulingStep)
   const made = createJob({ agent: job.agent ?? panel.consolidator(job.pr, job.stage), kind: 'consolidate', branch, downtime: downtime(branch),
     ...named(job.step, branch, job.pr), ...job, prompt: job.prompt + visualapproval.reviewStep(job.round, job.stage) + screens.rulingStep(job) + previews + checks_note + boardDecisions(job.pr) });
@@ -1074,12 +1079,11 @@ function roundJob(job: Omit<Parameters<typeof createJob>[0], 'title' | 'agent'> 
   return made;
 }
 
-function previewsStep(job: { pr: number; round: number; sha?: string; kind?: string; stage?: string; agent?: string; judges?: string[] }, files: string[]) {
+function previewsStep(job: { pr: number; round: number; sha?: string; kind?: string; stage?: string; agent?: string; judges?: string[] }, files: string[], since: number) {
   const chosen = job.stage === 'triage' ? undefined : reviewtriage.selected(job.pr, job.round, job.sha ?? null);
   if (!chosen?.looker) return '';
   if (job.kind === 'review') return job.agent === chosen.looker ? visual.reviewStep(visual.visualFor(job.judges ?? [])) : '';
   if (job.stage !== 'ruling') return '';
-  const { since } = db.prepare('select since from prs where number = ?').get(job.pr) as Pr;
   const looked = roundReviews(job.pr, job.round, job.sha ?? null, since).some(reader => reader.agent === chosen.looker);
   return looked ? visual.weighStep(visual.visualFor(files), chosen.looker) : visual.rulingStep(visual.visualFor(files));
 }
@@ -1447,10 +1451,9 @@ async function mergeAlone(pr: Pr, title: string, refused: (m: Merged) => void, v
   finally { deciding.delete(pr.number); }
 }
 
-// Expedite (the board, calls 118 and 164): a structural HQ fix, or work the board needs now, that the CEO flagged
-// (jobs.expedite) merges as soon as a push passes its
-// gates and tests, with no panel, triage or queue before it; then the round reviews what merged (review), and what
-// blocks becomes its author's next job (reviewedAfter).
+// Expedite: a structural HQ fix, or work the board needs now, that the CEO
+// flagged (jobs.expedite) merges as soon as a push passes its gates and tests, with no panel, triage or queue before
+// it; then the round reviews what merged (review), and what blocks becomes its author's next job (reviewedAfter).
 export const expedites = (branch: string) =>
   !!db.prepare("select 1 from jobs where kind = 'work' and expedite = 1 and coalesce(branch, 'job/' || id) = ?").get(branch);
 // Whether the gates and the tests both passed on that commit (pushes.checked), which every expedited merge needs: the
@@ -1759,15 +1762,18 @@ async function revive(pr: Pr) {
     `its review then.`);
 }
 
-// A ruled "changes" round whose fix ended short of the push that starts the next round: a task the owner drew, or the
-// author's fix job on work with no deliverable. It was stopped (by hand, or for running past its share of the worker),
-// cancelled, or failed with no run again on it from fixFailed. A stopped run pushes what it had to the branch, but only
-// a run that ends well starts a round. Nothing else comes back to it. actOnRulings leaves a drawn ruling to the owner's
+// A ruled round whose author job ended short of its push. On a "changes" round, that is the fix whose push starts the
+// next round: a task the owner drew, or the author's fix job on work with no deliverable. It was stopped (by hand, or
+// for running past its share of the worker), cancelled, or failed with no run again on it from fixFailed. A stopped run
+// pushes what it had to the branch, but only a run that ends well starts a round. Nothing else comes back to it. actOnRulings leaves a drawn ruling to the owner's
 // inbox and only notes a direct one, and `hq review` takes only a stuck pull request. The fix runs again from the branch
 // as it stands, for the agent the task was drawn for or the pull request's current author, and its push starts the next
 // round. It waits until nothing has been on the pull request for HANDOFF_MS. That is the lost hand-off's wait on purpose:
 // a while for the owner to cancel the task and draw it another way. A second end short of the push on the same fix
 // leaves the pull request stuck, for `hq review`.
+// A ruled "merge" whose bringing up to date (bringUpToDate) ended short of its push runs again the same way, on any
+// branch: that job is always the author's, never drawn. The rerun is named by the stopped job's own step, which again()
+// keeps: after a merge ruling that may be a gates repair as well.
 function reviveFixes(quiet: string) {
   const drawn = db.prepare(`select p.number, t.id from prs p
     join review_inbox r on r.pr = p.number and r.round = p.round and r.decision = 'changes'
@@ -1784,7 +1790,9 @@ function reviveFixes(quiet: string) {
     and ${NO_JOB_SINCE}`).all(quiet) as { number: number; id: number }[]).filter(({ number, id }) => {
     const pr = db.prepare('select * from prs where number = ?').get(number) as Pr;
     const judged = ruling(number, pr.round, pr.sha);
-    return !toOwner(pr.branch) && judged?.decision === 'changes' && id > judged.id;
+    if (!judged) return false;
+    const rerunsHere = judged.decision === 'merge' || (judged.decision === 'changes' && !toOwner(pr.branch));
+    return id > judged.id && rerunsHere;
   });
   for (const t of [...drawn, ...direct]) {
     const pr = db.prepare('select * from prs where number = ?').get(t.number) as Pr;
@@ -1792,15 +1800,17 @@ function reviveFixes(quiet: string) {
     if (pr.status !== 'open' || replacementOf(t.id) || openJobOn(pr.branch)) continue;
     const job = run(t.id) as Run & { status: string };
     const agent = reviewinbox.context(t.id) ? job.agent : pr.author;
+    // (its own step names it: Bringing up to date, Fixing the gates; a changes round's fix has none)
+    const what = job.step ?? 'the fix for its findings';
     if (endedShort(pr, job) > 1) {
-      stuck(pr.number, `${agent}'s fix on round ${pr.round} ended without a push twice, and the last one ended ${job.status}. \`hq review ${pr.number}\` gives it to them again`);
+      stuck(pr.number, `${agent}'s job (${what}) on round ${pr.round} ended without a push twice, and the last one ended ${job.status}. \`hq review ${pr.number}\` gives it to them again`);
       continue;
     }
     const id = again(job, 0, agent);
-    db.prepare('update jobs set note = ? where id = ?').run(`Job #${t.id}, the fix for these findings, ended ${job.status} before ` +
-      `its push started the next round. Nothing else was on the pull request, so this job runs it again. What it committed ` +
-      `is on ${pr.branch}: start from there, finish every named finding, and push.${job.note ? `\n\nIt started with this message:\n\n${job.note}` : ''}`, id);
-    publish({ type: 'log', agent, text: `PR #${pr.number}: fix #${t.id} on round ${pr.round} ended ${job.status} without a push, and nobody was on it. It runs again as job #${id}` });
+    db.prepare('update jobs set note = ? where id = ?').run(`Job #${t.id} (${what}) ended ${job.status} before its push. Nothing else was on the pull ` +
+      `request, so this job runs it again. What it committed is on ${pr.branch}: start from there, finish what your prompt asks, and push.` +
+      `${job.note ? `\n\nIt started with this message:\n\n${job.note}` : ''}`, id);
+    publish({ type: 'log', agent, text: `PR #${pr.number}: job #${t.id} (${what}) on round ${pr.round} ended ${job.status} without a push, and nobody was on it. It runs again as job #${id}` });
   }
 }
 
@@ -1894,13 +1904,13 @@ function dropQueuedRuns(pr: number) {
 // (reviewedAfter).
 const IDLE_MS = 60 * 60_000;
 const idleCheckKey = (pr: number) => `review.idle.${pr}`;
-// (built when asked: jobs.ts imports this file, so its predicates aren't there yet at load)
-const UNHELD_JOB = () =>
-  `(j.status in ('running', 'blocked') or j.status = 'queued' and (p.expedited = 1 or ${heldWith('j')} is null))`;
+// Built when asked: jobs.ts imports this file, so heldWith isn't there yet at load.
+const noUnheldJobOnSince = () =>
+  noJobOnSince(`(j.status in ('running', 'blocked') or j.status = 'queued' and (p.expedited = 1 or ${heldWith('j')} is null))`);
 export async function settleIdle() {
   const now = Date.now();
   const noJobSince = new Date(now - IDLE_MS).toISOString();
-  const idle = db.prepare(redraws.query(`select * from prs p where p.status = 'open' and ${noJobOnSince(UNHELD_JOB())}`)).all(noJobSince) as Pr[];
+  const idle = db.prepare(redraws.query(`select * from prs p where p.status = 'open' and ${noUnheldJobOnSince()}`)).all(noJobSince) as Pr[];
   for (const pr of idle) {
     const key = idleCheckKey(pr.number);
     if (deciding.has(pr.number) || now - Number(setting(key) ?? 0) < IDLE_MS) continue;
@@ -1924,7 +1934,7 @@ async function reconcile(pr: Pr, why: string, noJobSince?: string): Promise<Reco
   const unchanged = db.prepare(`select 1 from prs where number = ? and status = ? and round = ? and since = ?`)
     .get(pr.number, pr.status, pr.round, pr.since);
   if (!unchanged) return;
-  if (noJobSince && !db.prepare(redraws.query(`select 1 from prs p where p.number = ? and ${noJobOnSince(UNHELD_JOB())}`)).get(pr.number, noJobSince)) return;
+  if (noJobSince && !db.prepare(redraws.query(`select 1 from prs p where p.number = ? and ${noUnheldJobOnSince()}`)).get(pr.number, noJobSince)) return;
   if (await settled(pr.number, github?.state, why)) return;
   return github?.state === 'open' ? 'open' : 'unanswered';
 }

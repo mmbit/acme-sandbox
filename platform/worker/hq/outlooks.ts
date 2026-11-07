@@ -25,6 +25,7 @@ type Outlook = {
   board: boolean;
   held: number | null;
   safe: number | null;
+  safe_up?: number | null;
   left_ms: number;
   waits: ThreadWait[];
   chain: Link[];
@@ -43,6 +44,7 @@ type Job = {
   start: number | null;
   merged: number | null;
   waits: Wait[];
+  turn?: string | null;
 };
 // (ready: its work is in with nothing open, for its owner to judge: the coordinator's threadjudge.ts)
 type Ready = { since: number | null; judge: number | null };
@@ -133,7 +135,7 @@ function outlookWords(o: Outlook | null, thread: string, said = threadWait) {
   const waits = o.waits.filter(w => w.on !== 'horizon' && w.on !== 'stalled');
   const on = waits.length ? `; waits on ${waits.map(w => said(w, thread)).join(', ')}` : '';
   const window = windowWords(o);
-  const safe = safeWords(o.eta, o.safe);
+  const safe = safeWords(o.eta, o.safe, o.safe_up); // (safe_up)
   return `${eta}, ${duration(o.left_ms / 60_000)} of agent time left${on}${safe}${window ? `; ${window}` : ''}`;
 }
 
@@ -191,6 +193,7 @@ export async function thread(id: string) {
     print(
       `  ${jobWords(j.id, j.code)} ${text(j.agent)} (${statusWord(j.status)}${j.pr ? `, PR #${j.pr}` : ''}): ${text(j.title)}${j.urgent ? ' [urgent]' : ''}`,
       `    ${size}${duration(j.left_ms / 60_000)} left; ${start}${merged}${waits.length ? `. Waits on ${waits.join('; ')}` : ''}`,
+      ...(j.turn ? [`    ${text(j.turn)}`] : []),
     );
   }
 }

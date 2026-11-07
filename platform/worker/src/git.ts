@@ -14,8 +14,8 @@ import { JOB_BRANCH, PROFILE_BRANCH, SHA, redact } from './safety.ts';
 import { MARKS, countedLines, markedPaths, numstatRow, type FileLines } from './countedlines.ts';
 import { checkedChange, checkScope, testedAreas } from './mainline.ts';
 
-// Repository ref listings grow with the mirror and read names rather than agent-supplied content.
-// Content reads use the adapters' worker memory budget.
+// Git's output here is held to the worker's memory budget (gitoutput.ts), the budget for content agents supply;
+// only refList, whose ref listings grow with the mirror and hold names, reads it whole.
 import { execFileSync, spawnSync, execFileAsync, OUTPUT_BYTES, GitOutputLimitError } from './gitoutput.ts';
 
 export type Agent = { uid?: number; gid?: number; env: Record<string, string> };
@@ -233,11 +233,15 @@ export function gitFlow(o: {
   const inMirror = (args: string[]) => ['--git-dir', mirror, '-c', 'core.hooksPath=/dev/null', ...args];
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   const root = (...args: string[]) =>
-    execFileSync('git', inMirror(args), {
+    execFileSync('git', inMirror(args), { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  // The mirror's refs, read whole: their number grows with its branches and kept tips, and they hold names, not the
+  // content an agent pushes that the budget is for.
+  const refList = (...args: string[]) =>
+    execFileSync('git', inMirror(['for-each-ref', ...args]), {
       encoding: 'utf8',
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      ...(args[0] === 'for-each-ref' ? { maxBuffer: Infinity } : {}),
+      maxBuffer: Infinity,
     }).trim();
 
   function ensureMirror() {
@@ -352,7 +356,7 @@ export function gitFlow(o: {
   }
 
   function branchTips() {
-    const lines = root('for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads/').split('\n').filter(Boolean);
+    const lines = refList('--format=%(objectname) %(refname)', 'refs/heads/').split('\n').filter(Boolean);
     return lines.map(line => {
       const [sha, ref] = line.split(' ');
       return { sha, ref };
@@ -390,7 +394,7 @@ export function gitFlow(o: {
   function releaseExpiredKeptTips() {
     const cloneBirthsMs = o.clones().map(dir => stat(dir)?.birthtimeMs ?? Infinity);
     const oldestCloneBirthMs = Math.floor(Math.min(...cloneBirthsMs));
-    const keptRefs = root('for-each-ref', '--format=%(refname)', 'refs/kept/').split('\n').filter(Boolean);
+    const keptRefs = refList('--format=%(refname)', 'refs/kept/').split('\n').filter(Boolean);
     const releasedRefs = keptRefs.filter(ref => Number(ref.split('/')[2]) < oldestCloneBirthMs);
     updateRefs(releasedRefs.map(ref => `delete ${ref}`));
   }
@@ -875,7 +879,6 @@ export function gitFlow(o: {
         docs: { path: string; text: string }[] = [];
       let total = 0,
         whole = 0;
-      const read = readBlob;
       const take = (path: string, src: string) => {
         if (path.startsWith('knowledge/') && src.length <= 65_536 && (whole += src.length) <= 131_072)
           docs.push({ path, text: src });
@@ -885,7 +888,7 @@ export function gitFlow(o: {
         if (!SHELVES.test(path) || !/^100(644|755)$/.test(to) || !SHA.test(blob ?? '')) continue;
         let src: string;
         try {
-          src = read(blob);
+          src = readBlob(blob);
         } catch (error) {
           if (error instanceof GitOutputLimitError) throw error;
           continue;
@@ -920,7 +923,7 @@ export function gitFlow(o: {
           const path = hit.slice(sha.length + 1);
           if (!SHELVES.test(path) || docs.some(d => d.path === path)) continue;
           try {
-            take(path, read(`${sha}:${path}`));
+            take(path, readBlob(`${sha}:${path}`));
           } catch (error) {
             if (error instanceof GitOutputLimitError) throw error;
             /* not a file */
@@ -933,7 +936,7 @@ export function gitFlow(o: {
           files = root('ls-tree', '-r', '-z', '--name-only', sha, '--', 'knowledge').split('\0').filter(Boolean);
       } catch (error) {
         if (error instanceof GitOutputLimitError) throw error;
-        /* no knowledge tree */
+        /* unlisted: the documents go unchecked */
       }
       const small = files.reduce((n, f) => n + f.length + 3, 0) <= 200_000;
       return { frontmatter: out, knowledge: small && files.length ? { docs, files } : { docs: [], files: [] } };

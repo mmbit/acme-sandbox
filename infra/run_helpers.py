@@ -47,8 +47,13 @@ def helper(name, kind):
         build['args']['IMAGE'] = 'run-base'
         build['additional_contexts'] = {'run-base': kind['serverImage']}
     environment = {'HQ_URL': 'http://coordinator:8080', 'RUN_KIND': name}
+    memory_gb = 3   # /cache's files count in it
+    tmpfs = ['/tmp:size=64m,mode=755']
     if kind.get('sockets'):
         environment.update({'HELPER_LOCKED': '1', 'HTTPS_PROXY': 'http://run-proxy:3128', 'HTTP_PROXY': 'http://run-proxy:3128'})
+        # Its packages' downloads and the base its runs stand on outlive each run here: a quarter of its memory, as
+        # manager.mjs gives a lent machine's.
+        tmpfs.append(f'/cache:mode=1777,size={memory_gb * 1024 // 4}m')
     return {
         'build': build,
         'logging': {'driver': 'journald'},   # kept 14 days at most, like compose.yaml's
@@ -58,15 +63,23 @@ def helper(name, kind):
         'cap_add': ['SETUID', 'SETGID'],   # (each run as uid 1000)
         'security_opt': ['no-new-privileges:true'],
         'read_only': True,
-        'tmpfs': ['/tmp:size=64m,mode=755', '/work:exec,mode=1777,size=1g'],
+        'tmpfs': tmpfs,
         'cpus': 4,
-        'mem_limit': '3g',   # /work's files count in it
-        'memswap_limit': '3g',
+        'mem_limit': f'{memory_gb}g',
+        'memswap_limit': f'{memory_gb}g',
         'pids_limit': 4096,
         'environment': environment,
-        'volumes': [f"/etc/{INFRA['SERVER_NAME']}/runs-token:/state/key:ro"],   # its key (sync.sh), root's alone
+        # its key (sync.sh), root's alone, and the runs' workspace on disk: a push's checkout, tools and packages take
+        # over 2 GB, which in memory would leave its runs too little of the 3 GB
+        'volumes': [f"/etc/{INFRA['SERVER_NAME']}/runs-token:/state/key:ro", f'run-helper-{name}-work:/work'],
         'networks': ['runs'],
     }
+
+
+def volumes(helpers):
+    """The named volumes the helpers mount (compose's top-level volumes): each one's workspace, as helper() names it"""
+    return {mount.split(':')[0]: {} for service in helpers.values() for mount in service.get('volumes', [])
+            if not mount.startswith('/')}
 
 
 def kinds(hq_data):

@@ -1,8 +1,8 @@
 // What threatens the plan, for the CEO's summary (summary.ts): the windows missed and the threads giving, from the
-// minute's forecast, then what makes work slip before it does (a job past its size, what's stuck, tests failing or slow,
-// runs that timed out, the worker's room, a seat near its stop), then the owners' plans (a thread held by a need that
-// misses, or only through a need on work that waits on the board, an inbox or a meeting ask left waiting, a project
-// growing faster than it finishes). Most serious first, each line naming its cause.
+// minute's forecast, then what makes work slip before it does (a job past its size, what's stuck, a run idle an hour,
+// tests failing or slow, runs that timed out, the worker's room, a seat near its stop), then the owners' plans (a thread
+// held by a need that misses, or only through a need on work that waits on the board, an inbox or a meeting ask left
+// waiting, a project growing faster than it finishes). Most serious first, each line naming its cause.
 // (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { ceo } from './company.ts';
@@ -18,6 +18,7 @@ import { age, duration, waitWords } from '../../worker/hq/waits.ts';
 import { heldThrough, throughWords } from './boardheld.ts';
 import { movedWords, prMoved, threadMoved } from './moved.ts';
 import { externalId } from './reviewinbox.ts';
+import { idleLines } from './idleruns.ts';
 
 const MINUTE_MS = 60_000,
   HOUR_MS = 60 * MINUTE_MS,
@@ -43,7 +44,7 @@ export function lines(f: Forecast) {
   return [
     ...missed(open, f),
     ...giving(open, f.now),
-    ...[...stalled(), ...[getRoom().line ?? []].flat(), ...roomLow(f.now), ...seatsNear(f)],
+    ...[...stalled(), ...idleLines(f.now), ...[getRoom().line ?? []].flat(), ...roomLow(f.now), ...seatsNear(f)],
     ...[...tests(f.now), ...timedOut(f.now), ...pastSize(f), ...resized(f.now)],
     ...[...stuckPrs(f.now), ...seatless(f), ...failed(f.now)],
     ...[
@@ -95,8 +96,9 @@ function missed(open: OpenThread[], f: Forecast) {
       const board = t.deadline_by === BOARD;
       const setBy = board ? 'the board' : t.deadline_by === ceo() ? 'you' : t.deadline_by;
       const deadline = `its deadline ${clock(o.deadline!, now)}${setBy ? `, set by ${setBy}` : ''}`;
+      // (hq window --tell)
       const told = board
-        ? "It's the board's own time: when nothing brings the finish back, tell it once, with the time live four in five (hq deliverable), and set that as the window (hq window): it's our time then. If the board heard of this miss on a call or the intercom already, only set the new window."
+        ? 'It\'s the board\'s own time: when nothing brings the finish back, set the time live four in five (hq deliverable) as its window with hq window --tell "why, what you did": HQ tells the board once, and the time is ours then. If the board heard of this miss on a call or the intercom already, set the new window without --tell.'
         : "It's our own time, not the board's: plan with it; the board hears nothing of it, no card and no correction.";
       const where =
         o.finish === null

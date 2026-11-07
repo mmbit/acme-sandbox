@@ -47,10 +47,14 @@ const PAGE_CHECK = /(^|[/-])check\.mjs$/;
 
 export type Run = { area: string; kind: keyof typeof SUITES; cwd: string; files: string[] };
 
+// An area with no tests of its own whose code another area's tests drive: a change to it runs those files too. The run
+// helper is started whole by the coordinator's helper cases (its download, unpack and cleanup among them).
+const DRIVEN_BY: Record<string, string[]> = { 'platform/helper': ['platform/coordinator/src/runs.test.ts'] };
+
 // What a change in the repo at `root` touches against `baseRef` (committed or not): its base commit, its areas, the
-// runs of their suites, and the line on their page checks, which the tests leave to the reviewers. `all`: every area, as
-// the nightly run on main takes them (shared/routines/tests.md). `commit`: the change as that commit has it, and nothing
-// of the files as they are (a push's tests, tests.ts --commit).
+// runs of their suites (with the files that drive them, DRIVEN_BY), and the line on their page checks, which the tests
+// leave to the reviewers. `all`: every area, as the nightly run on main takes them (shared/routines/tests.md).
+// `commit`: the change as that commit has it, and nothing of the files as they are (a push's tests, tests.ts --commit).
 export function changeAt(root: string, baseRef: string, all = false, commit?: string) {
   const base = git(root, 'merge-base', commit ?? 'HEAD', baseRef).trim();
   const listed = (...paths: string[]) =>
@@ -66,7 +70,7 @@ export function changeAt(root: string, baseRef: string, all = false, commit?: st
           ...gitFiles(root, 'ls-files', '--others', '--exclude-standard'),
         ];
   const areas = [...new Set(changed.map(areaOf))].filter(a => a !== '.').sort();
-  const files = areas.flatMap(area => listed(area));
+  const files = [...new Set(areas.flatMap(area => listed(area, ...(DRIVEN_BY[area] ?? []))))];
   const checks = files.filter(f => PAGE_CHECK.test(f));
   const pages = checks.length
     ? `\nPage checks in these areas, not run here (a reviewer's, where the change needs one): ${checks.join(', ')}`

@@ -11,18 +11,19 @@ import * as redraws from './redraws.ts';
 import { findProject, findThread } from './projects.ts';
 import { projects } from './company.ts';
 import { oneLine } from './agreements.ts';
-import { parse as parseTime } from './windows.ts';
 import {
   described,
   decisionOf,
   targetOf,
   untilsOf,
+  untilWholeOf,
   workOnThreads,
   type Pause,
   type Row,
   type Until,
 } from './pausewords.ts';
-import { untilRefusal } from './pausewake.ts';
+import { conditionsOf } from './pausewake.ts';
+import { openDeliverables, wholeWork } from './whole.ts';
 
 export type { Pause, Until } from './pausewords.ts';
 
@@ -35,20 +36,22 @@ const isDesk = (named: string) =>
   (!!projects().groups.unsorted?.code && named.toUpperCase() === projects().groups.unsorted?.code);
 
 // hq thread pause | hq project pause: the CEO or the project's owner pauses it, why in a line, and what wakes them to
-// judge it: --until jobs, once they're all merged or ended, and --until-time, a time (both: once both are met), or
-// --by-hand, nothing (the hourly check reads it). A pause for a decision (decisions.ts) is the CEO's, and waits for that.
+// judge it: --until jobs, once they're all merged or ended, --until milestones and deliverables (`untilWhole`), once they're all live at once (whole.ts), and --until-time, a time (all: once all are
+// met), or --by-hand, nothing (the hourly check reads it). A pause for a decision (decisions.ts) is the CEO's, and waits
+// for that.
 // Paused already, the same again by whoever may resume it keeps it on with this why and these conditions instead, and
 // they wake its owner afresh: how a woken owner keeps holding for what's still missing, or waits for the board's decision
 // (hq decision --blocks). The answer is the pause, or why not. A pause holds work that must wait on a condition (the
 // board's answer or decision, a hold it asked for), never to put other work first: a window does that (windows.ts), and
-// the scheduler makes room (board, call 169). Its running work yields at its next step but the run that made it (`byJob`:
-// jobs.ts pauseSuspends).
+// the scheduler makes room. Its running work yields at its next step but the
+// run that made it (`byJob`: jobs.ts pauseSuspends).
 export function pause(
   ask: {
     thread?: string;
     project?: string;
     why: unknown;
     until?: unknown[];
+    untilWhole?: unknown[];
     untilTime?: unknown;
     byHand?: boolean;
     decision?: number;
@@ -65,25 +68,21 @@ export function pause(
     return `only ${project.owner} (${project.name}'s owner) or the CEO pauses ${target}`;
   const why = oneLine(String(ask.why ?? ''));
   if (!why || why.length > WHY_MAX) return `say why in one line of up to ${WHY_MAX} characters: the board reads it`;
-  const until = [...new Set((ask.until ?? []).map(Number))];
-  const unnamed = conditionRefusal({ ...ask, until }, target);
+  const unnamed = conditionRefusal({ ...ask, until: [...(ask.until ?? []), ...(ask.untilWhole ?? [])] }, target);
   if (unnamed) return unnamed;
   const already = openOn(project.id, thread);
   if (already) {
     const refused = rearmRefusal(already, agent);
     if (refused) return `${target} is paused already (by ${already.by}, ${already.at.slice(0, 16)} UTC): ${refused}`;
   }
-  for (const id of until) {
-    const refused = untilRefusal(id, project.id, thread);
-    if (refused) return refused;
-  }
-  const time = ask.untilTime == null ? null : parseTime(String(ask.untilTime), now, false, '--until-time');
-  if (typeof time === 'string') return time;
-  const untilTime = time === null ? null : new Date(time).toISOString();
+  const conditions = conditionsOf(ask, project.id, thread, now);
+  if (typeof conditions === 'string') return conditions;
+  const { until, wholes, untilTime } = conditions;
   const id = written(
     already?.id,
     { project: project.id, thread, why, by: agent, at: now, decision: ask.decision, untilTime, byJob: ask.byJob },
     until,
+    wholes,
   );
   const said = already
     ? `Kept ${jobs.pauseName(target)} paused, on new conditions`
@@ -94,16 +93,9 @@ export function pause(
 // The open deliverables of a project that a pause on one of them leaves to go on, as its answer says: every other one no
 // pause of its own holds
 const goingOn = (project: string, thread: string) =>
-  (
-    db
-      .prepare(
-        `select count(*) n from threads t where t.project = ? and t.id != ? and t.status = 'open'
-        and not exists (select 1 from pauses p where p.thread = t.id and ${jobs.pauseHolds('p')})`,
-      )
-      .get(project, thread) as { n: number }
-  ).n;
-// A new pause, or an open one (`kept`) on new conditions and made anew by this run, with the jobs that wake its owner: its
-// id.
+  openDeliverables(project).filter(t => t.id !== thread && !t.kept).length;
+// A new pause, or an open one (`kept`) on new conditions and made anew by this run, with the jobs and the wholes that
+// wake its owner: its id.
 function written(
   kept: number | undefined,
   p: {
@@ -117,6 +109,7 @@ function written(
     byJob?: number;
   },
   until: number[],
+  wholes: string[],
 ) {
   return inOneStep(() => {
     if (kept !== undefined) {
@@ -128,6 +121,7 @@ function written(
         kept,
       );
       db.prepare('delete from pause_until where pause = ?').run(kept);
+      db.prepare('delete from pause_until_whole where pause = ?').run(kept);
     }
     const insert =
       'insert into pauses (project, thread, why, by, at, decision, until_time, by_job) values (?, ?, ?, ?, ?, ?, ?, ?)';
@@ -148,19 +142,20 @@ function written(
           ).lastInsertRowid,
       );
     for (const job of until) db.prepare('insert into pause_until (pause, job) values (?, ?)').run(id, job);
+    for (const whole of wholes) db.prepare('insert into pause_until_whole (pause, whole) values (?, ?)').run(id, whole);
     return id;
   });
 }
 // Why a pause names no way to wake its owner: none of --until, --until-time and --by-hand, or --by-hand with another
 // (its --until-time forms)
 function conditionRefusal(
-  ask: { until: number[]; untilTime?: unknown; byHand?: boolean; decision?: number },
+  ask: { until: unknown[]; untilTime?: unknown; byHand?: boolean; decision?: number },
   target: string,
 ) {
   const named = ask.until.length > 0 || ask.untilTime != null;
   if (named && ask.byHand) return '--by-hand is for a pause nothing wakes you about: give it or --until/--until-time';
   if (!named && !ask.byHand && ask.decision == null)
-    return `say what wakes you to judge ${target}: --until <job> (once it's merged or ended), --until-time <time> (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC), or --by-hand (nothing does: the hourly check reads it)`;
+    return `say what wakes you to judge ${target}: --until <project> or <project>/<slug> (once that whole milestone or deliverable is live, work filed in it later too), --until <job> (once it's merged or ended), --until-time <time> (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC), or --by-hand (nothing does: the hourly check reads it)`;
   return null;
 }
 // Why `agent` can't put an open pause on new conditions: as resume, and never one waiting for the board's decision
@@ -221,10 +216,12 @@ const openRows = () =>
 export const anyOpen = () =>
   !!db.prepare(redraws.query(`select 1 from pauses p where ${jobs.pauseHolds('p')} limit 1`)).get();
 
-// The unfinished release jobs of active pauses seed priority in the shared plan.
+// The unfinished release jobs of active pauses seed priority in the shared plan: their --until jobs, and the work in the
+// milestones and deliverables they wait for.
 export function untilJobs() {
-  const until = `select distinct ${redraws.current('u.job')} job from pauses p join pause_until u on u.pause = p.id
-    join jobs prior on prior.id = u.job where ${jobs.pauseHolds('p')} and not ${jobs.merged('prior')}`;
+  const until = `select ${redraws.current('u.job')} job from pauses p join pause_until u on u.pause = p.id
+    join jobs prior on prior.id = u.job where ${jobs.pauseHolds('p')} and not ${jobs.merged('prior')}
+    union select prior.id from pauses p join jobs prior on prior.id in (${wholeJobs('p')}) where ${jobs.pauseHolds('p')}`;
   // (kept prepared: each claim's plan reads it.)
   return (prepared(redraws.query(until)).all() as { job: number }[]).map(row => row.job);
 }
@@ -273,7 +270,17 @@ export function shedRefusal(
 export function heldBy(job: number) {
   const target = jobs.pausedOn(job);
   const p = target ? open().find(o => o.target === target) : undefined;
-  return p ? { paused: { target: p.target, why: p.why, untilTime: p.untilTime, until: p.until.map(u => u.id) } } : {};
+  return p
+    ? {
+        paused: {
+          target: p.target,
+          why: p.why,
+          untilTime: p.untilTime,
+          until: p.until.map(u => u.id),
+          untilWhole: p.untilWhole,
+        },
+      }
+    : {};
 }
 
 // The open pauses on a thread, each with its time, the jobs it still waits for and the open card of the board's decision
@@ -281,14 +288,20 @@ export function heldBy(job: number) {
 export function holding(thread: string | null) {
   return holdings()(thread);
 }
+// The work in the milestones and deliverables pause `p` (its row's alias) waits for, not merged yet, as a select of its
+// ids. A deliverable's pause keeps it out of its milestone (whole.ts), so a pause never waits for its own work.
+const wholeJobs = (p: string) => `select prior.id from pause_until_whole w
+    join jobs prior on prior.id in (${wholeWork('w.whole')}) where w.pause = ${p}.id and not ${jobs.merged('prior')}`;
+
 // Every thread's holding() from one read of the open pauses: the play asks it of each open job's thread, and a read
 // builds the redraws' relations whole (redraws.ts query).
 export function holdings() {
   // (kept prepared: on every play of the queue. A pause's own jobs first: on stale statistics the planner read every job
   // and asked each whether it had merged, 0.36 s a play at 23,300 jobs.)
   const rows = prepared(
-    redraws.query(`select p.project, p.thread, coalesce(p.thread, p.project) target, (select json_group_array(${redraws.current('u.job')}) from pause_until u cross join jobs prior
-        on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')}) until, p.until_time,
+    redraws.query(`select p.project, p.thread, coalesce(p.thread, p.project) target, (select json_group_array(job) from (select ${redraws.current('u.job')} job from pause_until u cross join jobs prior
+        on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')}
+        union ${wholeJobs('p')})) until, p.until_time,
         (select d.request from decisions d where d.id = p.decision and d.answered is null and d.released is null) card
       from pauses p where ${jobs.pauseHolds('p')} order by p.id`),
   ).all() as {
@@ -349,6 +362,7 @@ const shownOf = (p: Row, until: Until[]) => ({
   at: p.at,
   untilTime: p.until_time,
   until,
+  untilWhole: untilWholeOf(p.id),
   woken: p.woken !== null,
   decision: decisionOf(p),
 });

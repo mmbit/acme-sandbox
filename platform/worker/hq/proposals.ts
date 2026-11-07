@@ -7,6 +7,7 @@ import { deliverableFlag, takeThread, takeValues } from './flags.ts';
 import { cardNamed } from './jobs.ts';
 import { inbox as messageInbox } from './messages.ts';
 import { minute, print, stop, text } from './output.ts';
+import type { Placed } from '../../coordinator/src/proposals.ts';
 
 const INBOX_ID = /^(?:[0-9]+|findings:[0-9]+)$/;
 const FINDINGS = 'findings:';
@@ -85,7 +86,8 @@ export const inbox = {
    hq inbox accept <id> --code WORD --size <JSON> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...]
                                                      its project's owner (or the CEO) queues it as a job with its
                                                      proposer's brief, in a deliverable of their plan: the one named, else the
-                                                     one proposed, else the proposer's job's when it's in that project.
+                                                     one proposed, else one of its own in its project (named after it, done
+                                                     when it's merged), never the proposer's job's.
                                                      --code: its task's word, as hq job's; --for: who takes it (a review
                                                      follow-up bundle's), else the one it was proposed for; --title: the
                                                      task's, else the proposal's. HQ's own from a template (a held job, a
@@ -175,13 +177,22 @@ async function accept(given: string[]) {
     thread?: string | null;
     sorted?: boolean;
     chain?: string;
+    placed?: Placed;
   } | null;
   if (!api.isSuccess(answer.status) || !queued?.job) stop(`Not accepted: ${api.errorIn(answer.body, 'no answer')}`);
   print(
-    `${queued.sorted ? 'Sorted' : 'Queued'} as job #${queued.job}${queued.code ? ` ${text(queued.code)}` : ''}${queued.thread ? `, in ${text(queued.thread)}` : ''}.`,
+    `${queued.sorted ? 'Sorted' : 'Queued'} as job #${queued.job}${queued.code ? ` ${text(queued.code)}` : ''}${queued.thread ? `, ${placedIn(queued.placed, text(queued.thread))}` : ''}.`,
     ...(queued.chain ? [text(queued.chain)] : []),
   );
 }
+
+// Where an accepted proposal went, as accept's answer says it
+const placedIn = (placed: Placed | undefined, thread: string) =>
+  placed === 'own'
+    ? `in a deliverable of its own, ${thread}, done when it's merged`
+    : placed === 'proposed'
+      ? `in ${thread}, the deliverable it was proposed into`
+      : `in ${thread}`;
 
 async function drop([id, why, ...rest]: string[]) {
   if (!INBOX_ID.test(id ?? '') || !why?.trim() || rest.length) stop('usage: hq inbox drop <id> "why"');

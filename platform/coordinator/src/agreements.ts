@@ -5,6 +5,7 @@ import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
 import * as memory from './memory.ts';
 import { ceo } from './company.ts';
+import { wholeOpen } from './whole.ts';
 import { age } from '../../worker/hq/waits.ts';
 
 const QUOTE_MAX = 600;
@@ -39,9 +40,10 @@ const UNFINISHED = `exists (select 1 from (${CARRIERS}) c cross join jobs u inde
   or u.status in ('failed', 'stopped') and not ${jobs.hasReplacement('u.id')}))`;
 
 // A pause carrying item i that still stands for the board: it holds, or it was resumed by hand before the jobs it waits
-// for merged (pauses.ts).
+// for merged or while a milestone or deliverable it waits for has a deliverable open (pauses.ts, whole.ts).
 const PAUSE_STANDS = `exists (select 1 from pauses p where p.item = i.id and (${jobs.pauseHolds('p')}
-  or exists (select 1 from pause_until u join jobs prior on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')})))`;
+  or exists (select 1 from pause_until u join jobs prior on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')})
+  or exists (select 1 from pause_until_whole w where w.pause = p.id and ${wholeOpen('w.whole')})))`;
 
 // Open tasks, promises and decisions, whenever they were said; ready ones (their work ended, the board's yes still to
 // come: ledger.ts done); handled ones while a job carrying them is unfinished or

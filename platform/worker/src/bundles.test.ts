@@ -42,7 +42,11 @@ for (const command of ['job', 'tests'])
     const uploading = new Promise<void>(resolve => {
       uploaded = resolve;
     });
-    const server = createServer((request, _response) => {
+    const server = createServer((request, response) => {
+      // (HQ names no base commit, so the whole repo goes; the upload is left unanswered.)
+      if (request.url?.startsWith('/api/agent/runs/base?')) return response.end(JSON.stringify({ commit: null }));
+      if (request.url === '/api/agent/runs/helper')
+        return void response.end(JSON.stringify({ kinds: [{ name: 'tests', present: true }] }));
       request.resume();
       request.on('end', uploaded);
     });

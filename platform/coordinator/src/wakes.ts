@@ -1,8 +1,9 @@
 // Work that starts on an event HQ hears of (hq job --when), so no job holds a seat polling for it: the next deploy or
-// the next few, a deploy that recreated a given container, a job's or pull request's work merged and deployed, or a
-// time. A wake holds its queued job (jobs.ts READY) until it's met, and the job's note says what happened. Deploys are
-// counted from when the job was queued (those that began after it). The server writes a record of each deploy into
-// this data folder (infra/deploys.py, called by sync.sh), read here before every claim.
+// the next few, a deploy that recreated a given container, a job's or pull request's work merged and deployed, a whole
+// milestone or deliverable live (whole.ts), or a time. A wake holds its queued
+// job (jobs.ts READY) until it's met, and the job's note says what happened. Deploys are counted from when the job was
+// queued (those that began after it). The server writes a record of each deploy into this data folder
+// (infra/deploys.py, called by sync.sh), read here before every claim.
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { DATA_DIR } from './config.ts';
 import { db, prepared } from './db.ts';
@@ -10,6 +11,8 @@ import { publish } from './events.ts';
 import * as windows from './windows.ts';
 import * as incidents from './incidents.ts';
 import * as reverts from './reverts.ts';
+import * as jobs from './jobs.ts';
+import { isPiece, noWhole, onWhole, WHOLE_NAME, wholeId, wholeLive, wholeName, wholeWords } from './whole.ts';
 
 // followed: a call followed up (or given up on), the coordinator's own (ledger.ts followUp), never --when's. ended: the
 // call a job was queued on has ended (server.ts), never --when's either.
@@ -24,6 +27,7 @@ type Deploy = {
   ok: number;
   recreated: string;
   reloaded: string;
+  kept: string;
 };
 
 const MAX_DEPLOYS = 50;
@@ -31,14 +35,16 @@ const SERVICE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
 // (a time's forms as windows.ts parse reads them)
 export const FORMS =
   'deploy, deploy:<n> (the next n deploys), recreated:<service> (a deploy that recreates that container), ' +
-  "deployed:<job> or deployed:pr:<n> (that work merged and deployed), or a time ahead (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)";
+  'deployed:<job> or deployed:pr:<n> (that work merged and deployed), deployed:<project> or deployed:<project>/<slug> ' +
+  "(the whole milestone or deliverable live, work filed in it later too), or a time ahead (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)";
 
 // --when's text as a wake, or why it can't be read
 export function parse(text: string, now = Date.now()): Wake | string {
   const given = text.trim();
   const deploys = /^deploy(?::(\d{1,3}))?$/i.exec(given),
     recreated = /^recreated:(.+)$/i.exec(given),
-    deployed = /^deployed:(pr:)?(\d{1,9})$/i.exec(given);
+    deployed = /^deployed:(pr:)?(\d{1,9})$/i.exec(given),
+    whole = /^deployed:(.+)$/i.exec(given)?.[1];
   if (deploys) {
     const n = Number(deploys[1] ?? 1);
     return n >= 1 && n <= MAX_DEPLOYS
@@ -50,6 +56,7 @@ export function parse(text: string, now = Date.now()): Wake | string {
       ? { kind: 'recreated', arg: recreated[1] }
       : `--when recreated: names a container's service, like worker`;
   if (deployed) return { kind: 'deployed', arg: `${deployed[1] ? 'pr:' : ''}${Number(deployed[2])}` };
+  if (whole && WHOLE_NAME.test(whole)) return { kind: 'deployed', arg: whole };
   const at = windows.parse(given, now, true);
   if (typeof at === 'string') return `can't read --when "${given.slice(0, 40)}": give ${FORMS}`;
   return at > now ? { kind: 'at', arg: String(at) } : `--when "${given.slice(0, 40)}": that time has passed already`;
@@ -57,15 +64,22 @@ export function parse(text: string, now = Date.now()): Wake | string {
 
 // What hq job or a card (later.ts holdsFor) sent as --when (one, or a list) as wakes, or why it can't wait for them
 export function readWhen(given: unknown, now = Date.now()): Wake[] | string {
-  const texts = Array.isArray(given) ? given : given == null ? [] : [given];
   const wakes: Wake[] = [];
-  for (const text of texts) {
-    const wake = parse(String(text), now);
+  for (const text of whenTexts(given)) {
+    const wake = parse(text, now);
     if (typeof wake === 'string') return wake;
+    if (onWhole(wake)) {
+      const id = wholeId(wake.arg);
+      if (id === null) return noWhole(wake.arg);
+      wake.arg = id;
+    }
     wakes.push(wake);
   }
   return refusal(wakes) ?? wakes;
 }
+
+// A --when as its texts: one or a list
+export const whenTexts = (given: unknown) => (Array.isArray(given) ? given : given == null ? [] : [given]).map(String);
 
 // Why a job can't wait for these, or undefined: a deployed: names work HQ knows, and a recreated: a service the last
 // deploy's record lists (any, before the first record).
@@ -76,7 +90,7 @@ function refusal(wakes: Wake[]) {
   for (const w of wakes) {
     if (w.kind === 'recreated' && services.length && !services.includes(w.arg))
       return `the server has no ${w.arg} container (${services.join(', ')})`;
-    if (w.kind === 'deployed' && !knowsWork(w.arg))
+    if (w.kind === 'deployed' && isPiece(w.arg) && !knowsWork(w.arg))
       return `there's no ${w.arg.startsWith('pr:') ? `pull request #${w.arg.slice(3)}` : `work job #${w.arg}`}`;
   }
 }
@@ -106,9 +120,11 @@ export function check(now = Date.now()) {
     )
     .all() as WakeRow[];
   const woken = new Set<number>();
-  for (const w of waiting) {
-    const met = metBy(w, now);
-    if (met === null) continue;
+  const read = waiting.map(w => ({ w, met: metBy(w, now) }));
+  // (a whole is live only for now, as work filed in it later opens it again: it's met only with its job's last wake)
+  const waitsOn = (job: number) => read.some(r => r.w.job === job && r.met === null);
+  for (const { w, met } of read) {
+    if (met === null || (onWhole(w) && waitsOn(w.job))) continue;
     db.prepare('update wakes set met = ? where job = ? and kind = ? and arg = ?').run(met, w.job, w.kind, w.arg);
     woken.add(w.job);
   }
@@ -138,7 +154,9 @@ export const waitsUntil = (job: string) =>
 
 // The wakes a queued job still waits for
 const unmet = (job: number) =>
-  prepared('select kind, arg, since from wakes where job = ? and met is null order by rowid').all(job) as WakeRow[];
+  prepared('select job, kind, arg, since from wakes where job = ? and met is null order by rowid').all(
+    job,
+  ) as WakeRow[];
 
 // The server's deploy records not read yet (one file each, written whole by a rename). A file read once isn't read again,
 // and one taken into the deploys table goes, said in the log: the table is what the wakes count.
@@ -186,7 +204,7 @@ function takeIn(file: string, record: Record<string, unknown>) {
     throw new Error('not a deploy record');
   const taken = db
     .prepare(
-      `insert or ignore into deploys (file, sha, fetched, finished, ok, recreated, reloaded, services, broke, reverted) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert or ignore into deploys (file, sha, fetched, finished, ok, recreated, reloaded, services, broke, reverted, kept) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       file,
@@ -199,6 +217,7 @@ function takeIn(file: string, record: Record<string, unknown>) {
       names(record.services),
       broke,
       reverted,
+      JSON.stringify(record.kept ?? {}),
     );
   if (taken.changes && broke) incidents.deployBroke({ sha: record.sha, broke, reverted });
 }
@@ -212,7 +231,8 @@ const list = (json: string) => (JSON.parse(json) as string[]).join(', ');
 const describeDeploy = (deploy: Deploy) =>
   `deploy ${deploy.sha.slice(0, 9)} finished at ${clock(deploy.finished)}` +
   (deploy.recreated !== '[]' ? ` (recreated: ${list(deploy.recreated)})` : ' (recreated nothing)') +
-  (deploy.reloaded !== '[]' ? ` (reloaded: ${list(deploy.reloaded)})` : '');
+  (deploy.reloaded !== '[]' ? ` (reloaded: ${list(deploy.reloaded)})` : '') +
+  (deploy.kept !== '{}' ? ` (kept on its current image: ${Object.keys(JSON.parse(deploy.kept)).join(', ')})` : '');
 // (begun after `since`: one that fetched main before it doesn't have all the work done by then; both clocks are the server's)
 const successfulDeploysSince = (since: number) =>
   db
@@ -221,6 +241,7 @@ const successfulDeploysSince = (since: number) =>
 const describeWake = (w: WakeRow) => {
   if (w.kind === 'at') return `at ${clock(Number(w.arg))}`;
   if (w.kind === 'recreated') return `after a deploy that recreates ${w.arg}`;
+  if (onWhole(w)) return `once ${wholeWords(w.arg, threadOfJob(w.job))} is live`;
   if (w.kind === 'deployed') return `once ${workOf(w.arg)}'s work is merged and deployed`;
   if (w.kind === 'followed') return `once call #${w.arg}'s follow-up has finished`;
   if (w.kind === 'ended') return `once call #${w.arg} ends`;
@@ -230,6 +251,8 @@ const describeWake = (w: WakeRow) => {
   return n === 1 ? 'after the next deploy' : `after ${n} deploys (${deploysSoFar} so far)`;
 };
 export const workOf = (arg: string) => (arg.startsWith('pr:') ? `pull request #${arg.slice(3)}` : `#${arg}`);
+const threadOfJob = (job: number) =>
+  (db.prepare('select thread from jobs where id = ?').get(job) as { thread: string | null }).thread;
 
 // The first deploy that has work merged at `merged` (an ISO time): one that fetched main after the merge (main only
 // moves on).
@@ -239,7 +262,10 @@ function deployedAfter(merged: string) {
     .get(new Date(merged).toISOString()) as Deploy | undefined;
 }
 
-// The pull request a deployed: wake waits for, or why it never will deploy
+// The pull request a deployed: wake waits for, or why it never will deploy. A job that failed or stopped with no pull
+// request of its own deploys through the job that replaced it (jobs.ts standsIn: a landing of its saved work, its redo),
+// and waits while a landing can still take on its pushed work (jobs.ts stillLands, as an --after waits). Only with
+// neither does nothing of it land.
 type PullRequestRow = { number: number; status: string; merged_at: string | null };
 function prOf(arg: string): PullRequestRow | { never: string } | undefined {
   if (arg.startsWith('pr:')) {
@@ -247,18 +273,23 @@ function prOf(arg: string): PullRequestRow | { never: string } | undefined {
       PullRequestRow | undefined;
     return pr?.status === 'closed' ? { never: `pull request #${pr.number} was closed without merging` } : pr;
   }
-  const job = db.prepare('select id, status, branch from jobs where id = ?').get(Number(arg)) as
-    { id: number; status: string; branch: string | null } | undefined;
+  const job = db
+    .prepare(`select id, status, branch, ${jobs.stillLands('a')} still_lands from jobs a where id = ?`)
+    .get(Number(arg)) as { id: number; status: string; branch: string | null; still_lands: number } | undefined;
   if (!job) return { never: `there's no job #${arg}` };
-  const branch = job.branch ?? `job/${job.id}`;
+  const branch = jobs.workBranchOf(job);
   const pr = db
     .prepare('select number, status, merged_at from prs where branch = ? order by number desc limit 1')
     .get(branch) as PullRequestRow | undefined;
   if (pr?.status === 'closed') return { never: `#${job.id}'s pull request #${pr.number} was closed without merging` };
+  const unfinished = job.status === 'failed' || job.status === 'stopped';
+  const replacement = !pr && unfinished ? jobs.replacementOf(job.id) : null;
+  if (replacement) return prOf(String(replacement));
   if (
     !pr &&
     ['done', 'failed', 'stopped', 'cancelled'].includes(job.status) &&
-    !(job.status === 'done' && toCome(branch))
+    !(job.status === 'done' && toCome(branch)) &&
+    !job.still_lands
   )
     return { never: `#${job.id} ended (${job.status}) without a pull request` };
   return pr;
@@ -292,6 +323,7 @@ function metBy(w: WakeRow, now: number): string | null {
       { status: string; ts: string } | undefined;
     return !call || call.status !== 'live' || Date.parse(call.ts) > w.since ? `call #${w.arg} ended` : null;
   }
+  if (onWhole(w)) return wholeLive(w.arg, threadOfJob(w.job)) ? `${wholeName(w.arg)} is live` : null;
   const met = meeting(w);
   if (!met) return null;
   if ('never' in met) return `${workOf(w.arg)}'s work will never deploy: ${met.never}`;
@@ -308,7 +340,7 @@ function metBy(w: WakeRow, now: number): string | null {
 // it never will deploy), or null while it waits or for a wake no deploy meets. metBy says it and metAt dates it, so both
 // answer the same.
 function meeting(w: WakeRow): { deploy: Deploy; pr?: PullRequestRow } | { never: string } | null {
-  if (w.kind === 'deployed') return deployed(w.arg);
+  if (w.kind === 'deployed') return onWhole(w) ? null : deployed(w.arg);
   if (w.kind !== 'deploy' && w.kind !== 'recreated') return null;
   const since = successfulDeploysSince(w.since);
   const deploy =
@@ -319,8 +351,9 @@ function meeting(w: WakeRow): { deploy: Deploy; pr?: PullRequestRow } | { never:
 }
 
 // When a stored wake was met (ms): its time, or the end of the deploy that met it (meeting), or null while it waits or
-// when no record dates it: a call's follow-up or end, met at the claim's sweep near the job's start. A sorted wake can
-// hold its job more than once: its spans are sortedSpans'. For hq estimate --calibration's threads (threadwaits.ts).
+// when no record dates it: a call's follow-up or end, or a whole live, met at the claim's sweep near the job's start. A
+// sorted wake can hold its job more than once: its spans are sortedSpans'. For hq estimate --calibration's threads
+// (threadwaits.ts).
 export function metAt(w: WakeRow): number | null {
   if (w.kind === 'at') return Number(w.arg);
   const met = meeting(w);

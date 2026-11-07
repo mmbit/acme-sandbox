@@ -133,6 +133,7 @@ type Outlook = {
   waits: Wait[];
   cards?: { request: number; at: number }[];
   safe: number | null;
+  safe_up?: number | null;
 };
 type Found = {
   job?: Job;
@@ -223,7 +224,7 @@ function outlookLine(o: Outlook, words: string, origin?: string) {
   const basis = o.unpricedSeats?.length
     ? ` Seat fill rates are not measured yet for ${o.unpricedSeats.join(', ')}.`
     : '';
-  return `${who}: ${left}${start}${merged}${safeWords(o.merged, o.safe)}.${waits}${cards}${basis}`;
+  return `${who}: ${left}${start}${merged}${safeWords(o.merged, o.safe, o.safe_up)}.${waits}${cards}${basis}`;
 }
 
 export const waitWords = (w: Wait) => wordsOf(w, at);
@@ -286,12 +287,18 @@ export const at = (ms: number) =>
 
 // The one time to tell the board after an ETA (outlookLine's, outlooks.ts's), never an "at the latest" beside it: live four
 // times in five (forecast.ts safe); none while the slow play doesn't finish it.
-export function safeWords(eta: number | null, safe: number | null) {
+export function safeWords(eta: number | null, safe: number | null, up?: number | null) {
   if (eta === null) return '';
-  return safe === null
-    ? "; no time to tell the board: nothing finishes it four times in five within the forecast's horizon"
-    : `; the one time to tell the board: live ${at(safe)}, four times in five, never the ETA beside it`;
+  if (safe === null)
+    return "; no time to tell the board: nothing finishes it four times in five within the forecast's horizon";
+  return `; the one time to tell the board: ${toldTime(safe, up)}, never the ETA beside it`;
 }
+// The time to tell the board as hq when and hq deliverable say it. One in its quiet hours is told as the time it's up
+// (up: the coordinator's board.ts upAfter).
+export const toldTime = (safe: number, up?: number | null) =>
+  up
+    ? `by the time it's up, ${at(up)} (live four times in five while it sleeps)`
+    : `live ${at(safe)}, four times in five`;
 
 // ---- accuracy
 

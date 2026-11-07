@@ -5,6 +5,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { harness, until } from './harness.ts';
 import { scenarioCleanup, retryNow } from './reviewfixture.ts';
+import { withChart } from './fixture.ts';
 import * as reviewrefusals from './reviewrefusals.ts';
 
 const h = await harness('reviewtriage', {
@@ -768,15 +769,11 @@ test('the ruling sweep recovers a completed triage whose dispatch was lost', asy
 });
 
 async function preferCodex(run: () => Promise<void>, configure = (chart: string) => chart) {
-  const file = `${h.repo}/company/org.yaml`,
-    before = readFileSync(file, 'utf8');
-  const configured = configure(before);
-  writeFileSync(file, configured.replace('review:\n', 'review:\n  consolidatorEngine: codex\n'));
-  try {
-    await run();
-  } finally {
-    writeFileSync(file, before);
-  }
+  return withChart(
+    h.repo,
+    chart => configure(chart).replace('review:\n', 'review:\n  consolidatorEngine: codex\n'),
+    run,
+  );
 }
 
 test('HQ triages and rules on available Codex despite a Claude suggestion, and falls back when Codex is held', async () => {
@@ -850,11 +847,11 @@ for (const timing of ['before triage finishes', 'before ruling'] as const) {
   });
 }
 
-test('a displaced required readability reader reports before the Codex ruling', async () => {
-  await preferCodex(
-    async () => {
-      await routingRoom();
-      for (const timing of ['before triage finishes', 'before ruling']) {
+for (const timing of ['before triage finishes', 'before ruling'] as const) {
+  test(`a displaced readability reader still reports when capacity changes ${timing}`, async () => {
+    await preferCodex(
+      async () => {
+        await routingRoom();
         const pr = timing === 'before ruling' ? 2003 : 2002;
         await seatsFor({ 'codex-1': 'paused' }, async () => {
           await push(pr);
@@ -878,66 +875,79 @@ test('a displaced required readability reader reports before the Codex ruling', 
         assert.ok(readability.prompt.includes('## Your lens: readability'));
         await until(() => pending(pr).some(job => job.stage === 'ruling'), 'readability reported');
         assert.equal(pending(pr).find(job => job.stage === 'ruling')!.agent, 'nib');
-        cancelOpenWork();
-      }
-    },
-    chart => chart.replace('  process: bolt\n', '  process: bolt\n  readability: quill\n'),
-  );
+      },
+      chart => chart.replace('  process: bolt\n', '  process: bolt\n  readability: quill\n'),
+    );
+  });
+}
+
+test('a displaced solo finder keeps the look before the new ruler weighs it', async () => {
+  await withSoloLook(async () => {
+    const pr = 2004;
+    await routingRoom();
+    const prior = await blocked(pr, false, 'quill');
+    const scope = ['products/demo/page.js', `qa/previews/review-${pr}.md`];
+    await push(pr, sha(), { files: scope, pushedSince: { sha: prior.head, files: scope } });
+    await finishSoloTriage(pr, selection([]));
+    await until(() => readers(pr).includes('quill'), 'the finder keeps the solo look');
+    assert.ok(!pending(pr).some(job => job.stage === 'ruling'));
+    const finder = await h.claim('claude', { seat: 'claude-1' });
+    assert.equal(finder?.agent, 'quill');
+    assert.ok(finder!.prompt.includes('node preview.mjs'));
+    const unread = JSON.stringify({ findings: [] });
+    assert.ok((await h.agent('review-output', finder!.token, { output: unread })).body.error);
+    await h.finish(finder!, {
+      output: JSON.stringify({
+        findings: [],
+        previews: [{ sheet: 'qa/page.png', saw: 'The button is visible' }],
+      }),
+    });
+    await until(() => pending(pr).some(job => job.stage === 'ruling'), 'the Codex ruling with the look covered');
+    const ruling = pending(pr).find(job => job.stage === 'ruling')!;
+    assert.equal(ruling.agent, 'nib');
+    const { prompt } = db.prepare('select prompt from jobs where id = ?').get(ruling.id) as { prompt: string };
+    assert.ok(prompt.includes('quill was this round'));
+  });
 });
 
-test('a displaced solo finder keeps the look, and a solo look without a required finder goes to the new ruler', async () => {
-  await preferCodex(
-    async () => {
-      await routingRoom();
-      for (const required of [true, false]) {
-        const pr = required ? 2004 : 2005;
-        const prior = required ? await blocked(pr, false, 'quill') : undefined;
-        const scope = ['products/demo/page.js', `qa/previews/review-${pr}.md`];
-        await push(pr, sha(), { files: scope, ...(prior && { pushedSince: { sha: prior.head, files: scope } }) });
-        const queued = pending(pr).find(job => job.stage === 'triage')!;
-        const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
-        assert.equal(run?.id, queued.id);
-        const report = required
-          ? selection([])
-          : {
-              ...selection([{ ...reader('quill'), files: scope }]),
-              consolidator: undefined,
-              throwaway: true,
-            };
-        const output = JSON.stringify({ ...report, looker: 'quill' });
-        assert.equal((await h.agent('review-output', run!.token, { output })).body.error, null);
-        await h.finish(run!, { output });
-        if (required) {
-          await until(() => readers(pr).includes('quill'), 'the finder keeps the solo look');
-          assert.ok(!pending(pr).some(job => job.stage === 'ruling'));
-          const finder = await h.claim('claude', { seat: 'claude-1' });
-          assert.equal(finder?.agent, 'quill');
-          assert.ok(finder!.prompt.includes('node preview.mjs'));
-          const unread = JSON.stringify({ findings: [] });
-          assert.ok((await h.agent('review-output', finder!.token, { output: unread })).body.error);
-          await h.finish(finder!, {
-            output: JSON.stringify({
-              findings: [],
-              previews: [{ sheet: 'qa/page.png', saw: 'The button is visible' }],
-            }),
-          });
-        }
-        await until(() => pending(pr).some(job => job.stage === 'ruling'), 'the Codex ruling with the look covered');
-        const ruling = pending(pr).find(job => job.stage === 'ruling')!;
-        assert.equal(ruling.agent, 'nib');
-        const { prompt } = db.prepare('select prompt from jobs where id = ?').get(ruling.id) as { prompt: string };
-        assert.ok(prompt.includes(required ? 'quill was this round' : 'Open them yourself before you rule'));
-        cancelOpenWork();
-      }
-    },
-    chart =>
-      chart.replace(
-        '  visual:\n',
-        '  visual:\n' +
-          '    - { paths: ["products/demo/**"], run: "node preview.mjs", look: "clear", record: "qa/previews" }\n',
-      ),
-  );
+test('a solo look without a required finder goes to the new ruler', async () => {
+  await withSoloLook(async () => {
+    const pr = 2005;
+    await routingRoom();
+    const scope = ['products/demo/page.js', `qa/previews/review-${pr}.md`];
+    await push(pr, sha(), { files: scope });
+    await finishSoloTriage(pr, {
+      ...selection([{ ...reader('quill'), files: scope }]),
+      consolidator: undefined,
+      throwaway: true,
+    });
+    await until(() => pending(pr).some(job => job.stage === 'ruling'), 'the Codex ruling with the solo look');
+    assert.deepEqual(readers(pr), []);
+    const ruling = pending(pr).find(job => job.stage === 'ruling')!;
+    assert.equal(ruling.agent, 'nib');
+    const { prompt } = db.prepare('select prompt from jobs where id = ?').get(ruling.id) as { prompt: string };
+    assert.ok(prompt.includes('Open them yourself before you rule'));
+  });
 });
+
+async function withSoloLook(run: () => Promise<void>) {
+  await preferCodex(run, chart =>
+    chart.replace(
+      '  visual:\n',
+      '  visual:\n' +
+        '    - { paths: ["products/demo/**"], run: "node preview.mjs", look: "clear", record: "qa/previews" }\n',
+    ),
+  );
+}
+
+async function finishSoloTriage(pr: number, report: object) {
+  const queued = pending(pr).find(job => job.stage === 'triage')!;
+  const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
+  assert.equal(run?.id, queued.id);
+  const output = JSON.stringify({ ...report, looker: 'quill' });
+  assert.equal((await h.agent('review-output', run!.token, { output })).body.error, null);
+  await h.finish(run!, { output });
+}
 
 test('the preferred consolidator engine preserves engine-only visual triage and rulings', async () => {
   await preferCodex(async () => {
@@ -1432,7 +1442,7 @@ test('a round follows projected queue waits, with deadline work paced and urgent
   cancelOpenWork();
   await seatsFor({ 'claude-1': 'paced' }, async () => {
     for (const pr of [173, 174]) await push(pr);
-    assert.deepEqual([173, 174].map(triager), ['nib', 'nib'], 'the paced seat takes no undated round');
+    assert.deepEqual([173, 174].map(triager), ['nib', 'quill'], 'the paced seat keeps a place for an undated round');
     await seatsFor({ 'codex-1': 'paused' }, async () => {
       await pushDue(175, 2);
       assert.equal(

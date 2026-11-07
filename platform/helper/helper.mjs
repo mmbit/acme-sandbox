@@ -4,8 +4,10 @@
 // taking only that kind's runs. Each says, as it asks or beats, its machine's speed and load, and the run's newest output.
 // README.md says how they're started and what they can reach.
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, totalmem } from 'node:os';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 const HQ_URL = process.env.HQ_URL ?? '';
 const KEY_FILE = process.env.KEY_FILE ?? '/state/key';
@@ -15,9 +17,14 @@ const RUN_KIND = process.env.RUN_KIND || undefined;
 // sets both): only then may a kind's runs keep their sockets, as they reach no further than this helper does
 const SLOT = Number(process.env.HELPER_SLOT) || undefined;
 const LOCKED = process.env.HELPER_LOCKED === '1';
-// A run with sockets reaches the package registries through the manager's proxy, and keeps their downloads here
-const CACHE_DIR = '/cache';
+// A run with sockets reaches the package registries through the manager's proxy, and keeps their downloads here. The
+// helper keeps its runs' base here too (keptBase), made as it starts, before any run could put something in its place.
+const CACHE_DIR = process.env.CACHE_DIR ?? '/cache';
+const KEPT = `${CACHE_DIR}/base.git`;
+const KEEPS_BASE = existsSync(CACHE_DIR) && onPath('git');
 const WORK_DIR = process.env.WORK_DIR ?? '/work';
+// A run's bundle beside its workspace, the helper's own, from its download until it's unpacked
+const BUNDLE_SUFFIX = '.bundle.tar.gz';
 const NONET_FILE = process.env.NONET_FILE ?? '/tmp/nonet.pl';
 // The user every run's processes belong to: never the helper's own in the container, so a run can't signal, trace or
 // read the helper (its key included). A test outside a container gives its own uid.
@@ -46,6 +53,8 @@ const KILL_STEP_MS = 100;
 const KILL_WAIT_MS = 5_000;
 
 class HqUnavailableError extends Error {}
+// Why a run's base couldn't be had (keptBase): the run ends saying so, its command never run
+class BaseLackingError extends Error {}
 
 // Runs a command as the runs' user with no network: a seccomp filter refuses every socket but a Unix one, connecting
 // and io_uring before the command starts. The filter goes on while the process is still the helper's user, and only
@@ -119,6 +128,7 @@ console.log(
   `Helper started: ${machine.cpus} cores, ${machine.memoryGb} GB, speed ${machine.bench} a core, asking ${HQ_URL}`,
 );
 await clearAway();
+if (KEEPS_BASE) await git('init', '-q', '--bare', KEPT);
 let refusedWith = '';
 for (;;) {
   const run = await takeRun().catch(error => console.error('HQ: no answer:', error.message));
@@ -167,7 +177,15 @@ function benchmark() {
 // doesn't know is read again, so a new key command takes without a restart.
 async function takeRun() {
   const answer = await callHq('POST', '/api/helper/take', {
-    json: { ...machine, kind: RUN_KIND, slot: SLOT, locked: LOCKED || undefined, ...(await readings()) },
+    // (keepsBase)
+    json: {
+      ...machine,
+      kind: RUN_KIND,
+      slot: SLOT,
+      locked: LOCKED || undefined,
+      keepsBase: KEEPS_BASE || undefined,
+      ...(await readings()),
+    },
   });
   if (answer.status === 401) key = readOr(KEY_FILE, key);
   const refusal =
@@ -188,40 +206,97 @@ async function takeRun() {
 // never reaches the next run.
 async function carryOut(run) {
   const workspace = `${WORK_DIR}/run-${run.id}`;
+  const bundle = `${workspace}${BUNDLE_SUFFIX}`;
   console.log(`Run ${run.id}: started, ${run.minutes} min at most`);
   const command = { child: null, stopped: false, fresh: collector(LINES_MAX_BYTES, true) };
   const lifetime = new AbortController();
   const beats = [];
   const beat = setInterval(() => beats.push(beatFor(run, command, lifetime.signal)), BEAT_MS);
   try {
-    const bundle = await transfer('GET', `/api/helper/runs/${run.id}/bundle`);
+    await transfer('GET', `/api/helper/runs/${run.id}/bundle`, { answerFile: bundle });
     if (command.stopped) return;
     const unpacked = await asTask(
-      ['sh', '-c', 'mkdir "$1" && mkdir "$1/tree" "$1/home" && tar -xzf - -C "$1/tree"', 'sh', workspace],
-      {
-        input: bundle.body,
-      },
+      ['sh', '-c', 'mkdir "$1" && mkdir "$1/tree" "$1/home" && tar -xzf "$2" -C "$1/tree"', 'sh', workspace, bundle],
+      {},
     );
+    rmSync(bundle, { force: true });
     if (unpacked.code !== 0) throw new Error(`the bundle didn't unpack: ${unpacked.errors.toString().slice(-500)}`);
+    if (command.stopped) return;
+    const lacking = run.base
+      ? await keptBase(run, workspace).then(
+          () => '',
+          error => {
+            if (error instanceof BaseLackingError) return error.message;
+            throw error;
+          },
+        )
+      : '';
+    if (lacking) return await report(run, Buffer.from(`The run's base isn't on the helper: ${lacking}\n`), 2);
     if (command.stopped) return;
     const ended = await runCommand(run, workspace, command);
     if (command.stopped) return;
     const files = run.bring.length ? await packFiles(run, workspace) : { output: Buffer.alloc(0), problem: '' };
     const output = Buffer.concat([ended.output, Buffer.from(files.problem)]);
-    await transfer('POST', `/api/helper/runs/${run.id}/output`, { body: output });
-    await transfer('POST', `/api/helper/runs/${run.id}/finish`, {
-      body: files.output,
-      headers: {
-        'x-run-exit': String(ended.exitCode),
-        'x-run-timed-out': ended.timedOut ? '1' : '0',
-      },
-    });
-    console.log(`Run ${run.id}: ended with ${ended.exitCode}`);
+    await report(run, output, ended.exitCode, files.output, ended.timedOut);
   } finally {
     clearInterval(beat);
     lifetime.abort();
     await Promise.all(beats);
   }
+}
+
+// A run's output, files and exit code to HQ, which ends it
+async function report(run, output, exitCode, files = Buffer.alloc(0), timedOut = false) {
+  await transfer('POST', `/api/helper/runs/${run.id}/output`, { body: output });
+  await transfer('POST', `/api/helper/runs/${run.id}/finish`, {
+    body: files,
+    headers: { 'x-run-exit': String(exitCode), 'x-run-timed-out': timedOut ? '1' : '0' },
+  });
+  console.log(`Run ${run.id}: ended with ${exitCode}`);
+}
+
+// A run whose bundle stands on a base (a commit of HQ's checkout, the bundle carrying only what came after it:
+// shared/gates/lent.ts) finds it in the repo the helper keeps in its cache, fetched from HQ when it lacks it (only
+// what's new since the commits it has). It's the helper's own, so a run reads it (tree/base.git, the objects its own
+// repo borrows) but can't change it for the next. Why it couldn't be had is a BaseLackingError; the transfer from HQ
+// fails as the bundle's does.
+async function keptBase(run, workspace) {
+  const has = () =>
+    git('-C', KEPT, 'cat-file', '-e', `${run.base}^{commit}`).then(
+      () => true,
+      () => false,
+    );
+  if (!(await has())) {
+    const have = (await git('-C', KEPT, 'for-each-ref', '--format=%(objectname)', 'refs/kept')).split('\n');
+    const bundle = await transfer('GET', `/api/helper/runs/${run.id}/base?have=${have.filter(Boolean).join(',')}`);
+    // (in the kept repo: the helper's root has no right to write in the run's workspace, the runs' user's)
+    const file = `${KEPT}/base.bundle`;
+    writeFileSync(file, bundle.body);
+    try {
+      // (the refs it has: one whose commit the helper named in have is left out, HEAD too)
+      const heads = (await git('-C', KEPT, 'bundle', 'list-heads', file)).trim().split('\n');
+      const refspecs = heads
+        .map(line => line.split(' ')[1])
+        .map(ref => `+${ref}:refs/kept/${ref.replace(/^refs\//, '')}`);
+      await git('-C', KEPT, 'fetch', '-q', file, ...refspecs);
+    } catch (error) {
+      throw new BaseLackingError(`HQ's bundle didn't fetch: ${error.message}`);
+    } finally {
+      rmSync(file, { force: true });
+    }
+    if (!(await has())) throw new BaseLackingError(`HQ's bundle lacks ${run.base}`);
+  }
+  const linked = await asTask(['ln', '-s', KEPT, 'base.git'], { cwd: `${workspace}/tree` });
+  if (linked.code !== 0) throw new BaseLackingError(`base.git wasn't linked: ${linked.errors.toString().slice(-300)}`);
+}
+
+// (a declaration: the helper's loop runs before the module's later consts are set)
+function git(...args) {
+  return new Promise((resolve, reject) =>
+    execFile('git', args, { encoding: 'utf8' }, (error, out, err) =>
+      error ? reject(new Error(err.trim().slice(-300) || error.message)) : resolve(out),
+    ),
+  );
 }
 
 // The beat: the machine's load and the run's output since the last beat, up to its last whole line
@@ -325,6 +400,9 @@ async function clearAway() {
   );
   if (cleared.code !== 0)
     throw new Error(`The runs' files could not be removed: ${cleared.errors.toString().slice(-500)}`);
+  // (a bundle the helper was downloading or unpacking as it stopped)
+  for (const name of readdirSync(WORK_DIR))
+    if (name.endsWith(BUNDLE_SUFFIX)) rmSync(`${WORK_DIR}/${name}`, { force: true });
   if (SHARED_USER) return;
   const objects = await asTask(['perl', '-e', CLEAR_SYSV], {});
   if (objects.code !== 0)
@@ -394,10 +472,7 @@ function taskProcessesLeft() {
 
 // A command as the runs' user, with no network (but sockets: see NONET), in its own process group. Its output comes
 // back whole, or as a tail.
-function asTask(
-  argv,
-  { input, cwd = WORK_DIR, home = WORK_DIR, keepTail = false, sockets = false, onStart, onOutput },
-) {
+function asTask(argv, { cwd = WORK_DIR, home = WORK_DIR, keepTail = false, sockets = false, onStart, onOutput }) {
   return new Promise((resolve, reject) => {
     const env = { PATH: process.env.PATH, HOME: home, TMPDIR: home, LANG: 'C.UTF-8' };
     if (sockets)
@@ -411,7 +486,7 @@ function asTask(
       cwd,
       detached: true,
       env,
-      stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     onStart?.(child);
     const output = collector(keepTail ? OUTPUT_MAX_BYTES : FILES_MAX_BYTES, keepTail);
@@ -423,7 +498,6 @@ function asTask(
     child.on('close', code =>
       resolve({ code: code ?? 128, output: output.bytes(), errors: errors.bytes(), tooLong: output.over }),
     );
-    if (input) child.stdin.end(input);
   });
 }
 
@@ -493,12 +567,12 @@ function gpuUse() {
 // A run's immutable bundle and idempotent uploads stay with the active attempt through a broken connection. Fetch's
 // TypeError includes a response body cut off mid-transfer. Caddy returns 503 while the coordinator is unavailable.
 // Beats continue through HQ_RETRY_MS (ten minutes by default). A take request or the run's command is never repeated.
-async function transfer(method, path, { body, headers = {} } = {}) {
+async function transfer(method, path, { body, headers = {}, answerFile } = {}) {
   const since = Date.now();
   const endpoint = path.split('/').pop();
   for (let wait = 1000; ; wait = Math.min(wait * 2, 30_000)) {
     try {
-      const answer = await callHq(method, path, { body, headers, timeoutMs: TRANSFER_MS });
+      const answer = await callHq(method, path, { body, headers, timeoutMs: TRANSFER_MS, answerFile });
       if (answer.status === 503) throw new HqUnavailableError(`${endpoint}: HTTP 503`);
       if (answer.status !== 200) throw new Error(`${endpoint}: HTTP ${answer.status}`);
       return answer;
@@ -511,7 +585,9 @@ async function transfer(method, path, { body, headers = {} } = {}) {
   }
 }
 
-async function callHq(method, path, { json, body, headers = {}, timeoutMs = CALL_MS, signal } = {}) {
+// With an answerFile, the answer is written there as it comes, never held whole: a push's bundle is a few hundred MB,
+// which the helper's memory would keep through the run, beside the run's own.
+async function callHq(method, path, { json, body, headers = {}, timeoutMs = CALL_MS, signal, answerFile } = {}) {
   const response = await fetch(`${HQ_URL}${path}`, {
     method,
     redirect: 'error',
@@ -519,6 +595,10 @@ async function callHq(method, path, { json, body, headers = {}, timeoutMs = CALL
     body: json ? JSON.stringify(json) : body,
     signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
   });
+  if (answerFile && response.status === 200) {
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(answerFile, { mode: 0o644 }));
+    return { status: response.status };
+  }
   return { status: response.status, body: Buffer.from(await response.arrayBuffer()) };
 }
 

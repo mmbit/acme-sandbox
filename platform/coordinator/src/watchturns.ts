@@ -66,13 +66,15 @@ const BRIEFS = new Map([
   [CALLOUT, briefing('they', 'their')],
 ]);
 
-// POST /api/voice/screen-turn { purpose, ref, after, seen, briefed, picture }: for a caller's turn, the moments since the agent's
-// last (after: the last moment it had), and a picture of the screen now when it changed since the one it has (seen: that
-// picture's version), the last tap since then ringed. While paused, the lines up to the pause and no picture. brief:
-// what the agent is told of a walk-through (BRIEFS), for a session that hasn't had it (briefed false). picture false:
-// none (the call has had all it can hold). A picture not there within TURN_PICTURE_MS (its mirror opening, stalled or
-// failed) leaves the lines to go without it, saying so, and comes with a later turn: the line waits 1.5 s for the
-// whole answer (platform/voice/server.py SCREEN_TURN_SECONDS) and drops the lines with it.
+// POST /api/voice/screen-turn { purpose, ref, after, seen, briefed, picture }: for a caller's turn, the moments since
+// the agent's last (after: the last moment it had), and a picture of the screen now when it changed since the one it
+// has (seen: that picture's version), the last tap since then ringed. While paused, the lines up to the pause and no
+// picture. brief: what the agent is told of a walk-through (BRIEFS), for a session that hasn't had it (briefed false).
+// picture false: none (the call has had all it can hold). A picture not there within TURN_PICTURE_MS (its mirror
+// opening, stalled or failed) leaves the lines to go without it, saying so, and comes with a later turn: the line waits
+// 1.5 s for the whole answer (platform/voice/server.py SCREEN_TURN_SECONDS) and drops the lines with it. A turn that
+// waited on a stalled mirror would leave the agent without the board's screen for minutes, and it would take the share
+// for dropped.
 export async function screenTurn(b: Record<string, unknown>) {
   const purpose = String(b.purpose ?? ''),
     brief = BRIEFS.get(purpose);

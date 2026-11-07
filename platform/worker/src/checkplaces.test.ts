@@ -28,7 +28,7 @@ test('all sessions waiting for checks return their places so a new session start
           async () => {
             users.add(await checks.take(job, () => false));
             if (users.size === WORK_SLOTS.length) entered.resolve();
-            await turn(() => finish.promise);
+            await turn.take(() => finish.promise);
             completed.push(job);
           },
           async error => {

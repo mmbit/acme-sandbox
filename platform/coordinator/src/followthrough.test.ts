@@ -313,7 +313,7 @@ test("seats at their limits give an unstarted check time to start once one is ba
   assert.match(alarm(), /hasn't started 15 min after it was queued/);
 });
 
-test('paced seats give an unstarted check time to start, as seats at their limits do; an urgent check is due at once', () => {
+test('an idle paced seat can start the follow-through check, so an unstarted check remains due', () => {
   const seats = () => {
     h.jobs.setSeat('claude-1', 'claude', 'sleeping', t0 + 2 * HOUR);
     h.jobs.setSeat('claude-2', 'claude', 'ready', 0, undefined, {
@@ -330,9 +330,8 @@ test('paced seats give an unstarted check time to start, as seats at their limit
   seats();
   followThroughSweep(t0);
   followThroughSweep(t0 + HOUR);
-  followThroughSweep(t0 + 2 * HOUR - MIN); // the last minute with claude-1 asleep and claude-2 paced
-  assert.equal(alarm(), null);
-  assert.deepEqual(told(), []);
+  followThroughSweep(t0 + START_MS);
+  assert.match(alarm(), /hasn't started 15 min after it was queued/);
   assert.equal(checks().length, 1);
   reset();
   agreed();

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { drainUntil } from '../../worker/src/downtime.ts';
-import { at, available, binding, burnRates, choices, consume, drained, seatEvent, seatsOf } from './playseats.ts';
+import { at, available, binding, burnRates, choices, consume, drained, rest, seatEvent, seatsOf } from './playseats.ts';
 import type { Snapshot } from './eta.ts';
 import { waitWords } from '../../worker/hq/waits.ts';
 
@@ -101,8 +101,7 @@ test("a seat takes work as claim does: its engine's on its CLI, else its agent's
   seats[0].week = 0.5;
   seats[0].weekResets = now + 5 * 24 * HOUR;
   const paced = pick({ id: 4, agent: 'bolt', fallsBack: true });
-  assert.ok('on' in paced && paced.on === 'seats' && paced.reason === 'pacing');
-  assert.ok(paced.until > now + HOUR, 'an ineligible fallback does not invent an immediate pacing return');
+  assert.ok('id' in paced && paced.id === 'claude-mix', 'a paced primary still takes ordinary work');
   seats[0].week = 0.1;
   // its own seat asleep: the fallback's while it's out, and without one it waits for the seat's return
   seats[0].state = 'sleeping';
@@ -117,7 +116,7 @@ test("a seat takes work as claim does: its engine's on its CLI, else its agent's
   });
 });
 
-test('a plan distinguishes pacing for this work from unavailable seats and names the binding return', () => {
+test('a paced seat has a working place and a full week still waits for reset', () => {
   const input = snapshot();
   input.pacing = true;
   input.seats[0].week = 0.5;
@@ -125,19 +124,15 @@ test('a plan distinguishes pacing for this work from unavailable seats and names
   const seats = seatsOf(input);
   const order = { id: 1, board: 0, latestStart: null };
   const row = { id: 1, agent: 'bolt', engine: 'claude', for_seat: null, downtime: 0 };
-  const pick = () => choices(at(seats, now), new Map(), {})(row, order).seat;
-  const paced = pick();
-  assert.ok('on' in paced && paced.on === 'seats');
-  assert.equal(paced.reason, 'pacing');
-  assert.ok(paced.until < seats[0].weekResets!);
-  const words = waitWords(paced, ms => new Date(ms).toISOString());
-  assert.match(words, /pacing for this non-urgent work from .* until /);
-  assert.match(words, /urgent work may use paced seats/);
+  const pick = (busy = new Map<string, number>()) => choices(at(seats, now), busy, {})(row, order).seat;
+  assert.ok('id' in pick());
+  const queued = pick(new Map([['claude-mix', 1]]));
+  assert.ok('on' in queued && queued.on === 'queue');
   seats[0].week = 1;
   const unavailable = pick();
   assert.ok('on' in unavailable && unavailable.on === 'seats');
   assert.equal(unavailable.reason, 'unavailable');
-  assert.equal(unavailable.until, seats[0].weekResets, 'the unrelated five-hour reset cannot end the weekly hold');
+  assert.equal(unavailable.until, seats[0].weekResets);
   assert.match(waitWords(unavailable, String), /a matching claude seat becoming available/);
 });
 
@@ -185,4 +180,40 @@ test('new work spends the nearly finished weeks before an under-pace peer', () =
     'claude-1',
     'remaining allowance per time decides, not reset order alone',
   );
+});
+
+test("a paced seat's play wakes when its allowance affords another run at a time, not only when a run ends", () => {
+  const paced = snapshot();
+  paced.pacing = true;
+  paced.seats = [
+    { ...paced.seats[0]!, fiveHour: null, fiveHourResets: null, week: 0.7, weekResets: now + 120 * HOUR, stop: 1 },
+  ];
+  paced.rates = { claude: { five: { 'claude-mix': 0 }, week: { 'claude-mix': 0.002 } } };
+  const [seat] = seatsOf(paced);
+  assert.equal(at([seat], now).paceRuns.get(seat), 1);
+  const rises = seatEvent(seat, [seat], now, 0);
+  assert.ok(Math.abs(rises - (now + 50 * HOUR)) < 2000, `wakes ${(rises - now) / HOUR} h on`);
+  assert.equal(at([seat], rises).paceRuns.get(seat), 2);
+
+  // A resting seat's play wakes when its growing allowance affords a run, before its rest ends.
+  const resting = snapshot();
+  resting.pacing = true;
+  resting.seats = [
+    {
+      ...resting.seats[0]!,
+      fiveHour: null,
+      fiveHourResets: null,
+      week: 0.882,
+      weekResets: now + 21 * HOUR,
+      stopConfigured: false,
+    },
+  ];
+  resting.rates = { claude: { five: { 'claude-mix': 0 }, week: { 'claude-mix': 0.002 } } };
+  const [tired] = seatsOf(resting);
+  rest(tired, 2 * HOUR, now, [tired]);
+  assert.ok(tired.paceRest! > now + 5.5 * HOUR, `rests ${(tired.paceRest! - now) / HOUR} h`);
+  assert.equal(at([tired], now).paceRuns.get(tired), 0);
+  const affords = seatEvent(tired, [tired], now, 0);
+  assert.ok(affords < tired.paceRest!, `wakes ${(affords - now) / HOUR} h on`);
+  assert.equal(at([tired], affords).paceRuns.get(tired), 1);
 });

@@ -18,6 +18,8 @@ import { oneTask } from './made.ts';
 import { servedWindow } from './askwindow.ts';
 import { heldThrough, throughWords } from './boardheld.ts';
 import { BOARD } from './windows.ts';
+import * as board from './board.ts';
+import { turnWords } from './turnwords.ts';
 
 // A thread's outlook: its two numbers, its planned finish against its window and the slack that leaves, where it stands
 // (forecast.ts standing), what it waits on, the chain that sets its finish, and why it has none (stall), with the time
@@ -32,6 +34,7 @@ export function outlookOf(id: string, f: Forecast) {
     ...{
       held: o.held,
       safe: o.safe,
+      safe_up: board.upAfter(o.safe), // (in the board's quiet hours: by the time it's up.)
       left_ms: o.left_ms,
       waits: o.waits,
       cards: o.cards,
@@ -151,14 +154,14 @@ export function planned(id: string, f: Forecast) {
 }
 
 // hq thread <id>: the thread, its outlook, and each of its open work jobs by its name (nameOf) with its size, what it has
-// left, when it starts and merges in the play, and what it waits on; and the needs edge it's held only through, when
-// it waits on the board that way (boardheld.ts).
+// left, when it starts and merges in the play, what it waits on and its turn in words (turnWords); and the needs edge it's held only through, when it waits on the board that way (boardheld.ts).
 export function detail(id: string, f: Forecast) {
   const t = findThread(id);
   if (!t) return undefined;
   // (a moved thread found by its old id: its new one)
   const outlook = outlookOf(t.id, f);
-  const jobs = (outlook?.jobs ?? []).map(job => jobLine(job, f));
+  const turn = turnWords();
+  const jobs = (outlook?.jobs ?? []).map(job => ({ ...jobLine(job, f), turn: turn(job) }));
   const held = heldThrough(t.id, f);
   const through = held && throughWords(t.id, held, f.now);
   return {

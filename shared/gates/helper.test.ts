@@ -28,6 +28,131 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
   assert.deepEqual(passed('lent.json'), { passed: 1 });
 });
 
+test("a check whose exit is its result keeps the command's own code and files, 97 too, and one whose repo was never set up there has no result", async () => {
+  const probe = [
+    "import { onLent } from './lent.ts';",
+    "import { git } from './repo.ts';",
+    'const root = process.cwd();',
+    "const check = { what: 'Probe', script: 'probe', args: [], minutes: 1, bring: ['made.txt'], tools: [] };",
+    "const ran = await onLent(root, { ...check, exitIsResult: true, fallback: false, base: git(root, 'rev-parse', 'main').trim(), tree: git(root, 'rev-parse', 'HEAD^{tree}').trim() });",
+    "console.log(JSON.stringify(ran ? { exitCode: ran.exitCode, made: ran.brought.get('made.txt') } : null));",
+  ].join('\n');
+  const { run } = clone(
+    { 'shared/gates/probe.ts': probe, 'shared/gates/tests-on-helper.sh': 'echo made > ../made.txt\nexit 97\n' },
+    { 'kits/adds/notes.md': 'touched\n' },
+  );
+  const outcome = (ran: { out: string }) => JSON.parse(ran.out.trim().split('\n').at(-1)!);
+  const ran = run(await playedHq(), 'probe.ts');
+  assert.equal(ran.status, 0, ran.out);
+  assert.deepEqual(outcome(ran), { exitCode: 97, made: 'made\n' });
+  const unset = run(await playedHq(undefined, { PLAYED_BUNDLE_BROKEN: '1' }), 'probe.ts');
+  assert.equal(unset.status, 0, unset.out);
+  assert.equal(outcome(unset), null, 'not run there, rather than a check that failed');
+});
+
+test('a check whose limit is its result, stopped there before it wrote what it brings back, keeps its limit', async () => {
+  const probe = [
+    "import { onLent } from './lent.ts';",
+    "import { git } from './repo.ts';",
+    'const root = process.cwd();',
+    "const check = { what: 'Probe', script: 'probe', args: [], minutes: 1, bring: ['report.json'], tools: [] };",
+    "const ran = await onLent(root, { ...check, limitIsResult: true, base: git(root, 'rev-parse', 'main').trim(), tree: git(root, 'rev-parse', 'HEAD^{tree}').trim() });",
+    'console.log(JSON.stringify(ran ? { exitCode: ran.exitCode, timedOut: ran.timedOut } : null));',
+  ].join('\n');
+  const { run } = clone(
+    { 'shared/gates/probe.ts': probe, 'shared/gates/tests-on-helper.sh': 'echo started\n' },
+    { 'kits/adds/notes.md': 'touched\n' },
+  );
+  const stopped = run(await playedHq(undefined, { PLAYED_TIMED_OUT: '1' }), 'probe.ts');
+  assert.equal(stopped.status, 0, stopped.out);
+  assert.deepEqual(JSON.parse(stopped.out.trim().split('\n').at(-1)!), { exitCode: 124, timedOut: true });
+});
+
+test("a run stands on HQ's commit when the repo has it, its bundle carrying only what came after, on nothing when not, and fails when HQ can't say", async () => {
+  const kits = {
+    'kits/adds/sum.ts': sum('a + b'),
+    'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+    'shared/gates/tests-on-helper.sh': ON_HELPER,
+  };
+  const { dir, run } = clone(kits, { 'kits/adds/notes.md': 'touched\n' });
+  const main = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+  const seen = join(mkdtempSync(join(tmpdir(), 'tests-seen-')), 'seen.jsonl');
+  const runs = () =>
+    readFileSync(seen, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+  const played = await playedHq(undefined, {
+    PLAYED_BASE: main,
+    PLAYED_BASE_GIT: join(dir, '.git'),
+    PLAYED_SEEN: seen,
+  });
+  const thin = run(played, 'tests.ts', ['--helper']);
+  assert.equal(thin.status, 0, thin.out);
+  assert.match(thin.out, /^- kits\/adds \(node --test, 1 file\): 1 passed/m);
+  assert.match(thin.out, /bundle [\d.]+ MB, made in/);
+  const [{ base, heads }] = runs();
+  assert.equal(base, main);
+  assert.equal(heads[0].split(' ')[0], `-${main}`, "the bundle needs HQ's commit, and carries none of it");
+  const unknown = run(await playedHq(undefined, { PLAYED_BASE: 'f'.repeat(40), PLAYED_SEEN: seen }), 'tests.ts', [
+    '--helper',
+  ]);
+  assert.equal(unknown.status, 0, unknown.out);
+  assert.match(unknown.out, /, the whole repo, made in/);
+  assert.deepEqual(runs()[1].base, null, 'a commit this repo has never fetched: the whole repo goes');
+  const none = run(await playedHq(undefined, { PLAYED_SEEN: seen }), 'tests.ts', ['--helper']);
+  assert.equal(none.status, 0, none.out);
+  assert.deepEqual(runs()[2].base, null, 'HQ names none: the whole repo goes');
+  const unweighed = {
+    PLAYED_BASE: main,
+    PLAYED_BASE_GIT: join(dir, '.git'),
+    PLAYED_BASE_KINDLESS: '1',
+    PLAYED_SEEN: seen,
+  };
+  const kindless = run(await playedHq(undefined, unweighed), 'tests.ts', ['--helper']);
+  assert.equal(kindless.status, 0, kindless.out);
+  assert.deepEqual(runs()[3].base, null, 'a commit named with no kind, the kind unweighed: the whole repo goes');
+  const failed = run(await playedHq(undefined, { PLAYED_BASE_STATUS: '500', PLAYED_SEEN: seen }), 'tests.ts', [
+    '--helper',
+  ]);
+  assert.equal(failed.status, 2, failed.out);
+  assert.equal(runs().length, 4, "HQ failing to name one sends no run, the whole repo's least of all");
+});
+
+test("a run whose repo couldn't be set up on the helper never ran its tests: not run there, never failed", async () => {
+  const { run } = clone(
+    {
+      'kits/adds/sum.ts': sum('a + b'),
+      'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+      'shared/gates/tests-on-helper.sh': ON_HELPER,
+    },
+    { 'kits/adds/notes.md': 'touched\n' },
+  );
+  // (git on this helper can't read its configuration, so no repo is set up from the bundle)
+  const env = await playedHq(undefined, { HELPER_ENV: JSON.stringify({ GIT_CONFIG_PARAMETERS: 'bogus' }) });
+  const unset = run(env, 'tests.ts', ['--helper']);
+  assert.equal(unset.status, 2, unset.out);
+  assert.match(unset.out, /its repo couldn't be set up on attic/);
+});
+
+test('tests --helper answers before bundling when HQ says no tests machine is there, without local tests', async () => {
+  const { dir, run } = absentHelperCase();
+  const outcomes = join(dir, 'outcomes.json');
+  const env = await playedHq(undefined, {
+    HELPER_KINDS: JSON.stringify([{ name: 'tests', present: false, unavailable: 'No tests machine is there' }]),
+  });
+  // A bogus archive tool proves the absent path never makes a bundle.
+  const tools = mkdtempSync(join(tmpdir(), 'absent-tools-'));
+  writeFileSync(join(tools, 'tar'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  const started = performance.now();
+  const ran = run({ ...env, PATH: `${tools}:${process.env.PATH}` }, 'tests.ts', ['--helper', '--outcomes', outcomes]);
+  assert.equal(ran.status, 2, ran.out);
+  assert.ok(performance.now() - started < 5000, ran.out);
+  assert.ok(ran.out.includes('Tests on the helper: no tests machine is there. The check is incomplete.'), ran.out);
+  assert.doesNotMatch(ran.out, /Tests passed:|They run here instead|test files the change touches/);
+  assert.equal(existsSync(outcomes), false);
+});
+
 test('a push whose tests helper is briefly absent, within the take window, waits on and runs there, never here', async () => {
   const { run } = absentHelperCase();
   const env = await playedHq(
@@ -81,6 +206,40 @@ for (const server of [false, true]) {
     assert.ok(ran.out.includes(`on ${machine}`), ran.out);
   });
 }
+
+test("a helper run whose setup fails before the tests says the setup's own words, not the missing report's", async () => {
+  const env = await playedHq();
+  const { run } = clone(
+    {
+      'shared/gates/tests-on-helper.sh': 'echo "fatal: write error: No space left on device"; exit 1\n',
+      'kits/full/sum.ts': sum('a + b'),
+      'kits/full/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+    },
+    { 'kits/full/notes.md': 'touched\n' },
+  );
+  const ran = run(env, 'tests.ts', ['--helper']);
+  assert.equal(ran.status, 2, ran.out);
+  assert.match(ran.out, /fatal: write error: No space left on device/);
+  assert.doesNotMatch(ran.out, /tar -xzmf|Tests passed:|They run here instead/);
+});
+
+test("a check whose exit is its result fails naming the files its run didn't bring back", async () => {
+  const brings = [
+    "import { onLent } from './lent.ts';",
+    "import { git } from './repo.ts';",
+    'const root = process.cwd();',
+    "const check = { what: 'Render', script: 'render', args: [], minutes: 1, bring: ['render-outcome.json'], tools: [] };",
+    "const tree = { base: git(root, 'rev-parse', 'main').trim(), tree: git(root, 'rev-parse', 'HEAD^{tree}').trim() };",
+    'await onLent(root, { ...check, ...tree, exitIsResult: true }).catch(error => console.log(String(error)));',
+  ].join('\n');
+  const { run } = clone(
+    { 'shared/gates/brings.ts': brings, 'shared/gates/tests-on-helper.sh': 'echo "ran $1"\n' },
+    { 'kits/any/notes.md': 'touched\n' },
+  );
+  const ran = run(await playedHq(), 'brings.ts');
+  assert.equal(ran.status, 0, ran.out);
+  assert.match(ran.out, /^Error: the run brought back no render-outcome\.json$/m);
+});
 
 function absentHelperCase() {
   return clone(
@@ -442,9 +601,13 @@ test("a check waiting on its helper doesn't hold the bundle it sent: the upload'
     "import { git } from './repo.ts';",
     "const kb = (field: string) => Number(readFileSync('/proc/self/status', 'utf8').match(new RegExp(field + ':\\\\s+(\\\\d+)'))![1]);",
     "const root = process.cwd(), before = kb('VmRSS');",
+    // (the peak until the run's first poll, once it's sent: what comes after, the files it brings back, is the run's)
+    'let sentPeak = 0;',
+    'const real = globalThis.fetch;',
+    "globalThis.fetch = (url, init) => { if (!sentPeak && /\\/runs\\/\\d+$/.test(String(url))) sentPeak = kb('VmHWM'); return real(url, init); };",
     "const check = { what: 'Peak', script: 'peak', args: [], minutes: 1, bring: [], tools: [] };",
     "const ran = await onLent(root, { ...check, base: git(root, 'rev-parse', 'main').trim(), tree: git(root, 'rev-parse', 'HEAD^{tree}').trim() });",
-    "console.log(JSON.stringify({ output: ran?.output, grewMb: (kb('VmHWM') - before) / 1024 }));",
+    'console.log(JSON.stringify({ output: ran?.output, grewMb: (sentPeak - before) / 1024 }));',
   ].join('\n');
   const { run } = clone(
     { 'shared/gates/peak.ts': peak, 'shared/gates/tests-on-helper.sh': 'echo "ran $1"\n' },

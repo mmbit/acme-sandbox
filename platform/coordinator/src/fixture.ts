@@ -129,6 +129,17 @@ export function splitPlatform(repo = process.env.REPO_DIR!) {
   return () => writeFileSync(file, before);
 }
 
+export async function withChart<T>(repo: string, configure: (chart: string) => string, run: () => T | Promise<T>) {
+  const file = `${repo}/company/org.yaml`;
+  const before = readFileSync(file, 'utf8');
+  writeFileSync(file, configure(before));
+  try {
+    return await run();
+  } finally {
+    writeFileSync(file, before);
+  }
+}
+
 // A file as a GitHub workflow commits it to the deploy branch, and as the coordinator then trusts it (committed.ts). The
 // test company becomes a git repo of the files tests commit this way. by: the commit's author and committer (the
 // workflows' bot unless a test says otherwise), at: its time in seconds.

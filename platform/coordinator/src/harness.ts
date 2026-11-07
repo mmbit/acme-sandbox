@@ -11,7 +11,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createServer, request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -19,6 +19,7 @@ import { fixtureRepo } from './fixture.ts';
 import { playGithub } from './playgithub.ts';
 import { recordedReviews, type JobFields } from './reviewfixture.ts';
 import { recordedPastJobs } from './pastjobs.fixture.ts';
+import { shippedWork } from './shipped.fixture.ts';
 import { recordedCalls } from './calls.fixture.ts';
 import { storedPlans } from './plan.fixture.ts';
 import { codedArgs, codedBody, word } from './testwords.ts';
@@ -58,9 +59,12 @@ export async function harness(
     GITHUB_TOKEN: 'test',
     REPO: 'company/test',
     KITS_DIR: `${repo}/kits`,
+    WORK_MIRROR_DIR: `${dataDir}/mirror.git`,
     ...env,
   }); // (the test company's kits: none unless a test makes some)
   before?.(repo);
+  // (the worker's mirror of pushed work, which a failed job's run end reads: savedwork.ts)
+  execFileSync('git', ['init', '--bare', '-q', process.env.WORK_MIRROR_DIR!]);
   const github = playGithub();
   const { db } = await import('./db.ts');
   const jobs = await import('./jobs.ts');
@@ -292,6 +296,8 @@ export async function harness(
   const { storedCall, carriedItem, openItem, liveCall } = await recordedCalls(db, voice);
   // A job as HQ lists it (its status, result, note...)
   const job = (id: number) => (jobs.listJobs() as any[]).find(j => j.id === id);
+  // Work merged and deployed, as GitHub and a deploy record it.
+  const { merged, deployed } = shippedWork(db, dataDir);
   // A persisted stuck review whose replacement can still report.
   const stuckReview = (pr: number) => db.prepare("update prs set status = 'stuck' where number = ?").run(pr);
   // A job, card or call marked before 31 Oct as holding a customer's details (nothing marks one now.)
@@ -368,6 +374,8 @@ export async function harness(
     stream,
     dueThread,
     mergedPr,
+    merged,
+    deployed,
     ended,
     storedPr,
     failedJobs,

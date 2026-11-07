@@ -29,6 +29,7 @@ import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, resp
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { DEFAULT_ESTIMATE_SCALE, ONE_TIME } from '../../worker/hq/estimating.ts';
 import { PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
+import * as board from './board.ts';
 
 // The streaming voice line (platform/voice) asks for the prompt, and hands the transcript over the same way.
 // A call can be about one of the agent's own desk phone requests: then the transcript is the board's answer to it.
@@ -610,7 +611,8 @@ function companyNow(agent: string) {
   const earlierToday = !boardToday.lines.length ? '' : `Earlier today, the board's lines by their first words${boardToday.more ? ` (the latest ${boardToday.lines.length}; ${boardToday.more} more before them)` : ''}:
 ${boardToday.lines.map(l => `- ${l}`).join('\n')}
 `;
-  return `## The company right now
+  // (the board's profile, and where its day stands now: board.ts.)
+  return `${board.briefing(Date.now())}## The company right now
 The team:
 ${team}
 

@@ -443,3 +443,26 @@ test('the kept book answers as a rebuilt one after every change it reads', async
   db.prepare('delete from jobs where id = ?').run(review);
   await same('a merge and a job gone');
 });
+
+// The server's start builds the book ahead, a slice of jobs a turn (readCostBookAhead): the first read after it answers
+// as a book built whole
+test('the book read ahead at a start answers as a book built whole', async () => {
+  const { featureCosts } = await import('./featurecost.ts');
+  const { db } = await import('./db.ts');
+  const root = thread('ahead');
+  const work = past({ thread: root }, 40);
+  h.storedPr(720, work, 'open');
+  past({ kind: 'review', pr: 720, round: 1 }, 8);
+  const fix = past({ fixFor: 720, stage: 'fix', round: 1 }, 6);
+  h.storedPr(721, fix, 'open');
+  past({ previewFor: [720] }, 3);
+  const whole = featureCosts();
+  const fresh = './featurecost.ts?ahead',
+    ahead = (await import(fresh)) as typeof import('./featurecost.ts');
+  await ahead.readCostBookAhead(2);
+  const first = ahead.featureCosts();
+  for (const { id } of db.prepare('select id from threads').all() as { id: string }[])
+    assert.deepEqual(first.report(id), whole.report(id), id);
+  for (const { id } of db.prepare('select id from projects').all() as { id: string }[])
+    assert.deepEqual(first.project(id), whole.project(id), id);
+});

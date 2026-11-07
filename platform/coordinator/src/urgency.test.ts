@@ -45,11 +45,11 @@ test("the whole milestone is urgency's plain form, and each answer says what the
     assert.notEqual(typeof projects.createThread({ project: 'shelf', slug, name, goal: 'It ships' }), 'string');
     return `shelf/${slug}`;
   };
-  const [books, tips] = [draw('books', 'Books'), draw('tips', 'Tips')];
+  const [books, tips] = [draw('books', 'Books'), draw('tips', 'Tips'), draw('maps', 'Maps')];
   const paused = await h.hq(ceo, 'deliverable', 'pause', tips, 'Held for the board', '--by-hand');
   assert.match(
     paused.out,
-    /1 other open deliverable of shelf, and any filed there later, go on: hq project pause shelf/,
+    /2 other open deliverables of shelf, and any filed there later, go on: hq project pause shelf/,
   );
   const piece = await h.hq(ceo, 'urgent', 'job', books);
   assert.equal(piece.code, 0, piece.out);
@@ -57,7 +57,11 @@ test("the whole milestone is urgency's plain form, and each answer says what the
   assert.match(piece.out, /hq urgent shelf marks the whole milestone/);
   const whole = await h.hq(ceo, 'urgent', 'shelf');
   assert.equal(whole.code, 0, whole.out);
-  assert.match(whole.out, /It covers its 2 open deliverables and all work filed under The shelf later/);
+  assert.match(
+    whole.out,
+    /It covers its 2 open deliverables and all work filed under The shelf later/,
+    'not the paused Tips',
+  );
   assert.match(whole.out, /Kept out by their own pause, which holds urgent work: Tips/);
   const later = h.queue({ agent: 'bolt', thread: draw('fitted', 'Fitted') });
   assert.equal(urgency.taskUrgent(later), true, 'work filed after the mark inherits it');

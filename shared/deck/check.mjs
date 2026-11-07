@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { playwright } from '../demo/core.mjs';
 import { stale } from './inlined.mjs';
+import { SCREENS_FILE, screensIn } from '../browser/screens.mjs';
 
 const argv = process.argv.slice(2), opt = (k) => (argv.includes(k) ? argv[argv.indexOf(k) + 1] : null);
 const page0 = resolve(argv.find((a, i) => !a.startsWith('--') && !['--shots', '--only', '--screens'].includes(argv[i - 1])) ?? '');
@@ -65,16 +66,11 @@ const spy = () => {
 };
 // The screens: a company names its board's in company/screens.json (or --screens <file>), each { name, width, height,
 // inset: [top, right, bottom, left] safe areas, simulated through the deck's --sat/--sar/--sab/--sal; touch }; without
-// one, a generic phone (in Safari, with its notch and home bar), tablet, laptop and QHD monitor. A screen under 500 px
-// either way is a phone.
-const own = opt('--screens') ?? join(dirname(fileURLToPath(import.meta.url)), '../../company/screens.json');
+// one, shared/browser/screens.mjs's generic phone (in Safari, with its notch and home bar), tablet, laptop and QHD
+// monitor. A screen under 500 px either way is a phone.
+const own = opt('--screens') ?? join(dirname(fileURLToPath(import.meta.url)), '../..', SCREENS_FILE);
 if (opt('--screens') && !existsSync(own)) { console.error(`no such screens file: ${own}`); process.exit(1); }
-const sizes = (existsSync(own) ? JSON.parse(readFileSync(own, 'utf8')).screens : [
-  { name: 'phone portrait', width: 390, height: 844, inset: [47, 0, 34, 0], touch: true },
-  { name: 'phone landscape', width: 844, height: 390, inset: [0, 47, 21, 47], touch: true },
-  { name: 'tablet portrait', width: 820, height: 1180, touch: true }, { name: 'tablet landscape', width: 1180, height: 820, touch: true },
-  { name: 'laptop', width: 1440, height: 800 }, { name: 'QHD monitor', width: 2560, height: 1300 },
-]).map((s) => [s.width, s.height, s.name, s.inset, !!s.touch]);
+const sizes = screensIn(own).map((s) => [s.width, s.height, s.name, s.inset, !!s.touch]);
 const { chromium, webkit } = playwright();
 const browser = argv.includes('--webkit') ? await webkit.launch() : await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
 { // H.264 High, as the decks' films are made (canPlayType says 'probably' only for a codec it decodes)

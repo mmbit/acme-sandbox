@@ -1,19 +1,17 @@
 // A failed job's work taken over by a job that replaces it (jobs.ts replacements). hq followthrough requeue: the CEO's
-// follow-through check hands a failed job's work on what the board agreed back to the agent whose call it is. hq job
-// --lands: a job lands saved work or retries a thread task that failed without saving work.
+// follow-through check hands a failed job's work on what the board agreed back to the agent whose call it is. hq stop
+// --for: a job queued already takes a stopped job's place, on the terms hq job --lands sets (savedwork.ts landing).
 // (its messages say deliverable, the board's word for a thread)
-import { execFileSync } from 'node:child_process';
 import { db, planChange } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as engineOnly from './engineonly.ts';
 import { agreements, oneLine } from './agreements.ts';
 import { checkUnderWay, LONG_LINE, SAID_MAX } from './followthrough.ts';
-import { ceo, roles } from './company.ts';
+import { ceo } from './company.ts';
 import { publish } from './events.ts';
 import { writePlan } from './redraws.ts';
 import { jobRefusal } from './threadorder.ts';
-
-const WORK_MIRROR_DIR = process.env.WORK_MIRROR_DIR!;
+import { itemsOf, landing, savedWorkLine, type Item } from './savedwork.ts';
 
 //
 type Failed = {
@@ -27,7 +25,6 @@ type Failed = {
   branch: string | null;
   pr: number | null;
 };
-type Item = { id: number; call: number; status: string; why: string | null };
 
 // The new job works for the call (jobs.call and the item it carried) and replaces the failed job (jobs.ts replacements):
 // it takes over the items that job and any it replaced were handed (and its thread, with the thread's deadline), and so
@@ -72,47 +69,6 @@ export function requeue(checkJob: number, failed: number, said: string) {
   });
   return { ok: true, id, agent };
 }
-
-// hq job --lands <job>: the failed or stopped job's commits stay on the mirror's refs/outgoing/<branch> (worker git.ts push), and the
-// job landing them replaces it, carrying its call and item. Its agent is the failed job's own, who worked for
-// that call already; only that agent, whoever queued the failed job, the CEO or the process role queues it. Work with a
-// pull request goes on there (review.ts decide), unless a thread task saved nothing of its own. The answer supplies
-// its original brief and the saved branch if any. A job being stopped (hq stop, still running or paused) is landed as
-// it ends: a job that stops itself queues its redo before its run is over, and a deliverable's task order holds the
-// landing until it has ended (threadorder.ts follows).
-export function landing(failed: number, agent: string, by: string) {
-  const job = db
-    .prepare(
-      `select agent, queued_by, coalesce(branch, 'job/' || id) branch, prompt, thread, pr, started, finished from jobs
-      where id = ? and kind = 'work' and (status in ('failed', 'stopped') or (stopping is not null and status in ${jobs.OPEN_JOBS}))`,
-    )
-    .get(failed) as LandingJob | undefined;
-  if (!job) {
-    const running = db.prepare("select 1 from jobs where id = ? and kind = 'work' and status = 'running'").get(failed);
-    return running
-      ? `job #${failed} is still running: stop it first (hq stop ${failed} "why"), and the job landing its work takes its place as it ends`
-      : `job #${failed} isn't failed or stopped work: --lands names a failed or stopped job whose saved work this one lands`;
-  }
-  const pr = db
-    .prepare(`select number, status in ${jobs.OPEN_PRS} as open from prs where branch = ? order by number desc limit 1`)
-    .get(job.branch) as { number: number; open: number } | undefined;
-  const empty = pr && job.pr === null && job.thread !== null && pr.open === 1 && emptyThreadTask(job, pr.number);
-  if (pr && !empty)
-    return `job #${failed}'s branch has pull request #${pr.number}: its saved work goes on there, not with --lands. Only a deliverable's task that saved nothing can be requeued in its place`;
-  const taken = jobs.replacementOf(failed);
-  if (taken) return `job #${taken} has taken over #${failed}'s work already`;
-  const ended = itemsOf(failed).find(i => i.status === 'dropped' || i.status === 'replaced');
-  if (ended)
-    return `job #${failed}'s item #${ended.id} was ${ended.status}: queue its remaining work separately with hq job`;
-  if (agent !== job.agent)
-    return `job #${failed} is ${job.agent}'s, and so is the job landing its work: it carries their call and item`;
-  if (![job.agent, job.queued_by, ceo(), roles().process].includes(by))
-    return `only ${job.agent}, whoever queued #${failed}, the CEO or the process role lands its work`;
-  return { branch: empty ? null : job.branch, prompt: job.prompt };
-}
-// The line a landing's brief gains when the work it lands was saved on a branch of its own
-export const savedWorkLine = (failed: number, branch: string | null) =>
-  branch ? `\n\nThis job takes over the saved work of #${failed}: \`git fetch origin refs/outgoing/${branch}\`.` : '';
 
 // hq stop <job> "why" [--for <job>]: stops a job still running or paused (jobs.ts stopJob). A deliverable's task stopped
 // that its agent has queued again takes its place as the stop is recorded, so the tasks drawn after it wait for the redo
@@ -247,60 +203,6 @@ function unplaced(thread: string | null, agent: string) {
     )
     .all(thread, agent) as { id: number; status: string; stopping: string | null }[];
 }
-
-type LandingJob = {
-  agent: string;
-  queued_by: string | null;
-  branch: string;
-  prompt: string;
-  thread: string | null;
-  pr: number | null;
-  started: string | null;
-  finished: string | null; // (null: still being stopped)
-};
-
-// A task that never started saved nothing. The pull request's last push before it started is where earlier tasks'
-// work ends (none: the task started on the branch before any push). First-parent commit times identify work saved
-// during this task, while later tasks and main's merged-in commits stay outside it. Git records commit times to the
-// second. A branch with an open pull request has both refs in the mirror (the worker's push), and git fails on one
-// that's missing, which stops the request.
-function emptyThreadTask(job: LandingJob, pr: number) {
-  if (!job.started) return true;
-  const head = db
-    .prepare('select sha from pushes where pr = ? and at <= ? order by at desc limit 1')
-    .get(pr, job.started) as { sha: string } | undefined;
-  const commits = execFileSync(
-    'git',
-    [
-      '-c',
-      `safe.directory=${WORK_MIRROR_DIR}`,
-      '--git-dir',
-      WORK_MIRROR_DIR,
-      'log',
-      '--first-parent',
-      '--format=%ct',
-      `refs/heads/${job.branch}`,
-      `refs/outgoing/${job.branch}`,
-      ...(head ? ['--not', head.sha] : []),
-    ],
-    { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  const started = Math.floor(Date.parse(job.started) / 1000),
-    finished = Math.floor((job.finished ? Date.parse(job.finished) : Date.now()) / 1000);
-  return !commits
-    .split('\n')
-    .filter(Boolean)
-    .some(at => Number(at) >= started && Number(at) <= finished);
-}
-
-// The items the failed job, or a failed job it replaced, carried or was handed.
-const itemsOf = (failed: number) =>
-  db
-    .prepare(
-      `select id, call, status, why from call_items where job in (${jobs.lineageTo('?1')})
-      or id in (select item from jobs where id in (${jobs.lineageTo('?1')})) order by id`,
-    )
-    .all(failed) as Item[];
 
 function takerOf(job: Failed, items: Item[]) {
   const carried = items.find(i => i.id === job.item) ?? items[0];

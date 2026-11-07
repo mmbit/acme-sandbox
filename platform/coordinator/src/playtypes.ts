@@ -133,6 +133,8 @@ export type SeatNow = {
   // may run on credits past its stop level and limits (worker/src/seatlist.ts spendCredits): the play keeps it available
   // there (playseats.ts). Not that it runs on them now: its windows say that.
   credits?: boolean;
+  // the end of a paced seat's rest after a run (the worker's pace.ts pacedRest): absent from older snapshots
+  paceRest?: number | null;
 };
 export type Size = { agent_ms: number };
 export type UsageSource = 'reported' | 'prior' | 'unknown' | 'reset';

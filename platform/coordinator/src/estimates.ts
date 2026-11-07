@@ -20,6 +20,7 @@ import { featureCosts } from './featurecost.ts';
 import { taskTimes } from './tasktime.ts';
 import { seatHeadroom } from './headroom.ts';
 import * as predictions from './predictions.ts';
+import * as board from './board.ts';
 import * as forecast from './forecast.ts';
 import type { Outlook } from './eta.ts';
 import { countedMs } from './adjusted.ts';
@@ -132,7 +133,9 @@ function openOutlook(id: number) {
 // the board, live four times in five (predictions.safeOf).
 const shownOutlook = (o: Outlook, deployLagMs: number, slow?: Outlook) => {
   const held = slow ? predictions.heldTo(o, slow) : null;
-  return { ...o, left_minutes: fractionalMinutes(o.left_ms), held, safe: predictions.safeOf(held, deployLagMs) };
+  const safe = predictions.safeOf(held, deployLagMs);
+  // (safe_up: in the board's quiet hours, the time it's up, which it's told instead.)
+  return { ...o, left_minutes: fractionalMinutes(o.left_ms), held, safe, safe_up: board.upAfter(safe) };
 };
 const shownSize = (s: ReturnType<typeof predictions.sizeHistory>[number]) => ({
   by: s.by,

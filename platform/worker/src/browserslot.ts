@@ -1,34 +1,49 @@
-// The machine's one browser slot can't be held for good. A render takes it with an exclusive flock on /run/lock
-// (shared/browser/supervise.ts) and keeps it within its own 30 min bound, the wait for the slot included, so a holder
-// the worker sees keep it for HOLD_MS is past any render: a leftover. The worker ends every process holding the lock,
-// and the renders waiting for it go on. Its log's warning says what it ended and why, and HQ's report counts it (infra/
-// report.sh's errors of the last 24 hours).
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { redact } from './safety.ts';
+// The machine's one browser slot, which no leftover keeps: the worker ends a holder past its bound.
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { commandLine, procStat, processes } from './detached.ts';
 
 export const SLOT = '/run/lock';
+// (a render keeps the slot within its own 30 min bound, the wait for it included: shared/browser/supervise.ts)
 export const HOLD_MS = 40 * 60_000;
 
-// One look at the slot, to be made every minute or so: the holder it found, and since when it has seen it hold
+type Holder = ReturnType<typeof holdersOf>[number];
+const keyOf = (holder: Holder) => `${holder.pid}/${holder.start}`; // (a pid is used again once its process has gone)
+
+// One look at the slot, to be made every minute or so. The lock is timed from when it was first seen held, and every
+// holder ends once that is holdMs ago. A holder can hand the lock on between two looks: it starts a child, which
+// inherits it, and goes. The child then keeps the start of the holders that went: a render's taker runs until its
+// render ends, so a lock whose taker has gone is no new render's.
 export function slotWatch(path: string, holdMs: number, log: (line: string) => void) {
-  let seen: { pid: number; since: number } | undefined;
+  let since = new Map<string, number>();
   return (now = Date.now()) => {
-    const lock = lockOf(path);
-    const pid = holderOf(lock);
-    if (pid === undefined) return void (seen = undefined);
-    if (seen?.pid !== pid) seen = { pid, since: now };
-    if (now - seen.since < holdMs) return;
-    const holders = holdersOf(lock);
-    const named = holders.map(holder => `${holder} (${commandOf(holder)}, uid ${uidOf(holder)})`).join(', ');
+    const target = realpathSync(path);
+    const holders = free(target) ? [] : holdersOf(target, lockOf(target));
+    const seen = holders.flatMap(holder => since.get(keyOf(holder)) ?? []);
+    const gone = [...since].filter(([key]) => !holders.some(holder => keyOf(holder) === key)).map(([, from]) => from);
+    const handedOn = holders.every(holder => !existsSync(`/proc/${holder.taker}`));
+    const from = seen.length ? Math.min(...seen) : handedOn ? Math.min(...gone, now) : now;
+    since = new Map(holders.map(holder => [keyOf(holder), from]));
+    if (!holders.length || now - from < holdMs) return;
+    const minutes = Math.round((now - from) / 60_000);
+    const listed = holders.map(holder => `${holder.pid} (${commandLine(holder.pid).slice(0, 200)}, uid ${holder.uid})`);
     log(
-      `warning: the browser slot was held for ${Math.round((now - seen.since) / 60_000)} min, past its ${holdMs / 60_000} min bound: ended ${named || `pid ${pid}, no longer running`}; the renders waiting for it go on`,
+      `warning: the browser slot was held for ${minutes} min, past its ${holdMs / 60_000} min bound: ended ${listed.join(', ')}`,
     );
     for (const holder of holders) end(holder);
-    seen = undefined;
+    since.clear();
   };
 }
 
-// The lock as /proc/locks names it: its device's major and minor numbers in hex, and its inode
+// Whether nothing holds the lock: one flock try, so a free slot costs no read of every process's descriptors
+function free(path: string) {
+  const tried = spawnSync('flock', ['--nonblock', '--conflict-exit-code', '75', path, 'true']);
+  if (tried.status === 0) return true;
+  if (tried.status === 75) return false;
+  throw new Error(`flock couldn't try the browser slot: ${tried.error ?? tried.stderr}`);
+}
+
+// The lock as fdinfo's "lock:" line names it: its device's major and minor numbers in hex, and its inode
 function lockOf(path: string) {
   const { dev, ino } = statSync(path, { bigint: true });
   const major = ((dev >> 8n) & 0xfffn) | ((dev >> 32n) & ~0xfffn);
@@ -37,50 +52,43 @@ function lockOf(path: string) {
   return `${hex(major)}:${hex(minor)}:${ino}`;
 }
 
-// The process that took the lock, if one holds it (waiters' lines have "->")
-function holderOf(lock: string) {
-  for (const line of readFileSync('/proc/locks', 'utf8').split('\n')) {
-    const fields = line.trim().split(/\s+/);
-    if (fields[1] === 'FLOCK' && fields[5] === lock) return Number(fields[4]);
-  }
+// Every process with a descriptor on the slot that holds its lock: the one that took it, and any that inherited it (a
+// waiter's descriptor has no "lock:" line). Each has the lock's taker as the line names it, which is a pid that no
+// process has once the taker has gone (0 in a pid namespace).
+function holdersOf(target: string, lock: string) {
+  const takerIn = (fdinfo: string) => {
+    const fields = fdinfo
+      .split('\n')
+      .find(line => line.startsWith('lock:') && line.includes(' FLOCK ') && line.includes(` ${lock} `))
+      ?.split(/\s+/);
+    return fields && Number(fields[fields.indexOf(lock) - 1]);
+  };
+  const takerOf = (pid: number) =>
+    ofProcess(() => readdirSync(`/proc/${pid}/fd`), [])
+      .filter(fd => ofProcess(() => readlinkSync(`/proc/${pid}/fd/${fd}`), '') === target)
+      .map(fd => takerIn(ofProcess(() => readFileSync(`/proc/${pid}/fdinfo/${fd}`, 'utf8'), '')))
+      .find(taker => taker !== undefined);
+  return processes().flatMap(found => {
+    const taker = takerOf(found.pid);
+    return taker === undefined ? [] : [{ ...found, taker }];
+  });
 }
 
-// Every process with a descriptor that holds the lock: the one that took it, and any that inherited it
-function holdersOf(lock: string) {
-  const holds = (line: string) => line.startsWith('lock:') && line.includes(' FLOCK ') && line.includes(` ${lock} `);
-  return pids().filter(pid =>
-    readdirOr(`/proc/${pid}/fdinfo`).some(fd => readOr(`/proc/${pid}/fdinfo/${fd}`).split('\n').some(holds)),
-  );
-}
-
-function end(pid: number) {
+// (only the process that was seen: one that has ended since may have left its pid to another)
+function end(holder: Holder) {
+  if (procStat(holder.pid)?.start !== holder.start) return;
   try {
-    process.kill(pid, 'SIGKILL');
+    process.kill(holder.pid, 'SIGKILL');
   } catch {
     // (it ended meanwhile)
   }
 }
 
-const pids = () =>
-  readdirOr('/proc')
-    .filter(name => /^\d+$/.test(name))
-    .map(Number);
-// (a command line can hold a token)
-const commandOf = (pid: number) => redact(readOr(`/proc/${pid}/cmdline`).split('\0').join(' ').trim()).slice(0, 200);
-const uidOf = (pid: number) => readOr(`/proc/${pid}/status`).match(/^Uid:\s+(\d+)/m)?.[1];
-
-// A /proc file or folder of a process that may have ended meanwhile, or that isn't ours to read: empty then
-function readOr(path: string) {
+// A read of one process's /proc files, which go as it ends: `none` then
+function ofProcess<T>(read: () => T, none: T) {
   try {
-    return readFileSync(path, 'utf8');
+    return read();
   } catch {
-    return '';
-  }
-}
-function readdirOr(path: string) {
-  try {
-    return readdirSync(path);
-  } catch {
-    return [];
+    return none;
   }
 }

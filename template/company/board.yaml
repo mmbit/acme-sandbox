@@ -1,0 +1,29 @@
+# The board's profile: the one person who runs this company of AI agents, and its day. HQ reads it before anything
+# reaches the board (platform/coordinator/src/board.ts): nothing rings its devices in its quiet hours (cards, newsletter
+# posts, seat warnings: they wait until it's up), except something it asked for in the first minutes of them; an agent
+# filing a card then is told when the board is up; a time to tell the board that lands while it sleeps reads "by the time
+# you're up"; and calls and the intercom have the whole profile in their briefing. Without this file there are no quiet
+# hours. The CEO fills it in from the board's onboarding call and keeps it up to date as the board says more.
+# Times are HH:MM on the board's own clock: zone, an IANA name (the company's, org.yaml's company.timeZone, when left out).
+zone:
+rhythm:
+  # Monday to Friday mornings, and the nights before them (Sunday's to Thursday's)
+  weekdays:
+    up: '08:00' # awake from here
+    work: '09:00' # at work (its own job, or this company)
+    quiet: '23:00' # nothing rings from here until up (a time before up, 00:30 say, is that morning)
+  # Saturday and Sunday mornings, and the nights before them (Friday's and Saturday's); left out, the weekdays' times
+  weekends:
+    up: '09:00'
+    quiet: '00:00'
+  # minutes into quiet in which something the board asked for, ready now, still reaches it
+  asked: 15
+# Who the board is, in its own words: a line or two
+who:
+# Its work beside this company, and when it works on the company
+work:
+# How much time it has for the company, and when
+time:
+# How it wants to hear from us, one line each
+preferences:
+  - Only what needs its judgment reaches it.

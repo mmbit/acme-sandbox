@@ -21,6 +21,8 @@ export type Listed = {
   use_credits?: boolean; // the board lets it spend its account's credits past its plan.
   week?: number; // the week's use HQ last heard, and when it resets (ms), till a run reads it again
   weekResets?: number;
+  weekRate?: number | null;
+  paceRest?: number; // the end of the rest it last reported (pace.ts pacedRest), till its next run
 };
 // A change the board made that the worker hasn't taken up yet
 export type SeatAction = { id: number; seat: string | null; what: string };

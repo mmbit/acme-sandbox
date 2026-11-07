@@ -1,16 +1,16 @@
 // node --test src/gitbudget.test.ts (small-heap child bounds the compressible-blob regression's memory use)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync as nodeExec } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { gitFlow, runAs } from './git.ts';
-import { execFileSync, spawnSync, execFileAsync, OUTPUT_BYTES, GitOutputLimitError } from './gitoutput.ts';
+import { runAs } from './git.ts';
+import { OUTPUT_BYTES, GitOutputLimitError } from './gitoutput.ts';
+import { seededMirror } from './mirror.fixture.ts';
 
 if (!process.argv.includes('--small-heap')) {
   test('agent blobs and patches stop at the worker output budget before publication', () => {
-    nodeExec(process.execPath, ['--max-old-space-size=64', import.meta.filename, '--small-heap'], {
+    execFileSync(process.execPath, ['--max-old-space-size=64', import.meta.filename, '--small-heap'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -19,41 +19,10 @@ if (!process.argv.includes('--small-heap')) {
   await oversizedContent();
 }
 
-test('git adapters honor caller output limits for string and Buffer output', async () => {
-  const args = ['-e', 'process.stdout.write("x".repeat(8192))'];
-  assert.throws(() => execFileSync(process.execPath, args, { maxBuffer: 1024 }), GitOutputLimitError);
-  assert.throws(() => execFileSync(process.execPath, args, { encoding: 'utf8', maxBuffer: 1024 }), GitOutputLimitError);
-  assert.throws(() => spawnSync(process.execPath, args, { maxBuffer: 1024 }), GitOutputLimitError);
-  assert.throws(() => spawnSync(process.execPath, args, { encoding: 'utf8', maxBuffer: 1024 }), GitOutputLimitError);
-  await assert.rejects(
-    () => execFileAsync(process.execPath, args, { encoding: 'utf8', maxBuffer: 1024 }),
-    GitOutputLimitError,
-  );
-  assert.equal(execFileSync(process.execPath, args).length, 8192);
-  assert.equal(spawnSync(process.execPath, args, { encoding: 'utf8' }).stdout.length, 8192);
-});
-
 async function oversizedContent() {
-  const folder = mkdtempSync(join(tmpdir(), 'git-budget-'));
-  const remote = join(folder, 'remote.git'),
-    mirror = join(folder, 'mirror.git'),
-    dir = join(folder, 'clone');
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.invalid',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.invalid',
-  };
-  const git = (...args: string[]) => nodeExec('git', args, { encoding: 'utf8', env }).trim();
+  const { folder, remote, env, git, main, flow } = seededMirror();
+  const dir = join(folder, 'clone');
   try {
-    git('init', '-q', '--bare', '-b', 'main', remote);
-    const tree = git('--git-dir', remote, 'mktree');
-    const main = git('--git-dir', remote, 'commit-tree', tree, '-m', 'seed');
-    git('--git-dir', remote, 'update-ref', 'refs/heads/main', main);
-    const flow = gitFlow({ mirror, remote, base: 'main', clones: () => [] });
-    flow.ensureMirror();
-    flow.fetchMirror();
     const agent = { env };
     const job = flow.forAgent(agent);
     job.clone(dir, 'job/1');

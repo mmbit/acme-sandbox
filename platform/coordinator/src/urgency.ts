@@ -2,7 +2,8 @@
 import { db, once, planChange, prepared, workBranch } from './db.ts';
 import { ceo } from './company.ts';
 import { publish } from './events.ts';
-import { OPEN_JOBS, pauseHolds } from './jobs.ts';
+import { OPEN_JOBS } from './jobs.ts';
+import { openDeliverables } from './whole.ts';
 
 export type UrgentLevel = 'milestone' | 'job' | 'task';
 // Each level's table, its effective urgency (its own flag or a parent's: the views below) and the query that finds a target
@@ -101,25 +102,21 @@ export function setUrgent(level: unknown, id: string, urgent: unknown, agent: st
     });
   const effective = urgentAt(view, target.id);
   publish({ type: 'log', agent, text: `${target.name}: urgent ${urgent ? 'on' : 'off'}` });
-  const reach = target.project ? reachOf(level as UrgentLevel, target) : null;
+  const reach = target.project ? reachOf(level as UrgentLevel, target, target.project) : null;
   return { level, id: target.id, name: target.name, urgent, effective, expedited: !!target.expedite, reach };
 }
 
 // What a flag reaches in its milestone, so its answer shows what the choice leaves out: a milestone's open deliverables
 // (any filed later inherit it too) and those a pause of their own keeps out (a pause holds urgent work); a deliverable's
-// or task's milestone, whether it's urgent itself, and the open deliverables (a task: and tasks) the flag misses.
-function reachOf(level: UrgentLevel, target: Target) {
-  const project = target.project!;
-  const milestone = prepared('select id, name, urgent from projects where id = ?').get(project) as
-    { id: string; name: string; urgent: number } | undefined;
-  const open =
-    prepared(`select t.id, t.name, exists (select 1 from pauses p where p.thread = t.id and ${pauseHolds('p')})
-    paused from threads t where t.project = ? and t.status = 'open' order by t.id`).all(project) as {
-      id: string;
-      name: string;
-      paused: number;
-    }[];
-  const missed = open.filter(t => t.id !== target.thread).length;
+// or task's milestone, whether it's urgent itself, and the open deliverables (a task: and tasks) the flag misses, but
+// those their own pause keeps out.
+function reachOf(level: UrgentLevel, target: Target, project: string) {
+  const milestone = prepared('select name, urgent from projects where id = ?').get(project) as {
+    name: string;
+    urgent: number;
+  };
+  const open = openDeliverables(project);
+  const covered = open.filter(t => !t.kept);
   const siblings =
     level === 'task'
       ? (
@@ -129,10 +126,10 @@ function reachOf(level: UrgentLevel, target: Target) {
         ).n
       : 0;
   return {
-    milestone: { id: project, name: milestone?.name ?? project, urgent: !!milestone?.urgent },
-    deliverables: open.length,
-    keptOut: open.filter(t => t.paused).map(t => t.name),
-    missed: level === 'milestone' ? 0 : missed,
+    milestone: { id: project, name: milestone.name, urgent: !!milestone.urgent },
+    deliverables: covered.length,
+    keptOut: open.filter(t => t.kept).map(t => t.name),
+    missed: level === 'milestone' ? 0 : covered.filter(t => t.id !== target.thread).length,
     siblings,
   };
 }

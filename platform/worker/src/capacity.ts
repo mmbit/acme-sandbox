@@ -5,7 +5,16 @@ import type { JobUse } from './shares.ts';
 import type { SeatState } from '../hq/seatwords.ts';
 import { decimal, readCgroup, workerMemory } from './memory.ts';
 
-type Occupant = { job: number; slot: string; uid: number; seat: string; engine: string; kind: string; cliPid?: number };
+// seat: null for a checks user, whose job holds no seat
+type Occupant = {
+  job: number;
+  slot: string;
+  uid: number;
+  seat: string | null;
+  engine: string;
+  kind: string;
+  cliPid?: number;
+};
 type Look = {
   at: number;
   intervalMs: number;

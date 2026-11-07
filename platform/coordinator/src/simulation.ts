@@ -184,7 +184,7 @@ function preparedPlay(
     conditions: ledger.conditions(snapshot),
   };
   for (const run of runs.values())
-    if (run.state === 'running' && !snapshot.memory?.checks?.includes(run.row.id))
+    if (run.state === 'running' && !memory.inChecks(snapshot.memory, run.row.id))
       run.seat = play.seats.find(s => s.id === run.row.seat) ?? null;
   return play;
 }
@@ -277,7 +277,7 @@ function resolve(play: Play, now: number) {
     }
 }
 
-// (planner.ts readyAfter, on the runs its edges wait for). A play's moments only go forward, so a prior met stays met
+// (planner.ts firstWait, on the runs its edges wait for). A play's moments only go forward, so a prior met stays met
 function ready(run: Run, now: number) {
   if (run.readyAt > now || run.needs.blocked || run.needs.readyAt > now) return false;
   for (; run.priorsMet < run.priors.length; run.priorsMet++) {
@@ -291,7 +291,7 @@ function start(play: Play, now: number) {
   const waiting: Run[] = [];
   for (const r of play.claimants) if (r.state === 'waiting' && ready(r, now)) waiting.push(r);
   // Started claims join this list. Runs paused by makeRoom stay in it until they stop.
-  const running = [...play.started].filter(run => !play.snapshot.memory?.checks?.includes(run.row.id));
+  const running = [...play.started].filter(run => !memory.inChecks(play.snapshot.memory, run.row.id));
   const seats = capacity.at(play.seats, now);
   const reservations = activeReservations(play, seats);
   if (play.account) ledger.pacing(play.account, seats);
@@ -321,7 +321,7 @@ function start(play: Play, now: number) {
     if ((engineFull || memoryFull || (!('id' in seat) && seat.on === 'queue')) && 'id' in roomSeat) {
       const pressure = memoryFull ? 'memory' : engineFull ? 'engine' : roomSeat;
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : pressure;
-      const pausing = makeRoom(play, run, running, now, resource, roomSeat, use.room, reservations);
+      const pausing = makeRoom(play, run, running, seats, resource, roomSeat, use.room, reservations);
       hold(run, now, { on: 'queue', engine: run.row.engine, minutes: 0, ...(pausing ? { pausing: true } : {}) });
       continue;
     }

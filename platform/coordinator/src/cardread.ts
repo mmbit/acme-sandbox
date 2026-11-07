@@ -9,15 +9,23 @@ import { STANDING } from './jobcodes.ts';
 import { carried, goalLine } from './ledger.ts';
 import * as later from './later.ts';
 import { made, madeCode } from './made.ts';
+import * as board from './board.ts';
 
 // Whether a card waits for the reader: every agent's but the reader's own. A card about one of the board's notes or
 // pages, or for its book, answers what the board itself raised, so it goes to it at once. A card on a decision the CEO
 // named is already the board's. A job marked as about customers keeps their details out of the reader's brief.
+// A check of the reader's own (is_check: HQ's hourly follow-through check, say) runs apart from their judgment, so its
+// cards are read too.
 export function waitsForRead(agent: string, job: number | undefined, card: Record<string, unknown>) {
   const reader = roles().cards;
-  if (!reader || agent === reader || card.book || card.note != null || card.page != null || card.decides) return false;
-  const marked = job !== undefined && db.prepare('select 1 from jobs where id = ? and customers = 1').get(job);
-  return !marked;
+  if (!reader || card.book || card.note != null || card.page != null || card.decides) return false;
+  const from =
+    job === undefined
+      ? undefined
+      : (db.prepare('select customers, is_check from jobs where id = ?').get(job) as
+          { customers: number; is_check: number } | undefined);
+  if (agent === reader && !from?.is_check) return false;
+  return !from?.customers;
 }
 
 // The reader's job reading the card, as soon as it can (made.ts made), and the card's hold naming it. jobs.ts createRead
@@ -82,12 +90,15 @@ function brief(card: Card) {
   const item = card.job === null ? undefined : carried(card.job);
   // (whole, in hq ask's --questions shape, which hq rewrite takes back)
   const questions = card.questions ? JSON.stringify(JSON.parse(card.questions), null, 2) : '';
+  const profile = board.briefing().trimEnd();
   return [
     `${card.agent} filed card #${card.id} for the board's desk phone. Every colleague's card comes to you first and waits off the desk phone until you pass it on or answer it. Read it as the board will: on a tablet, between other things, without having followed the work.`,
     `The card (${card.kind}, ${card.urgency}${card.topic ? `, under "${card.topic}"` : ''}):\n\nTitle: ${card.title}\n\n${card.body}${questions ? `\n\nIts questions, the fields the board answers in:\n${questions}` : ''}`,
     item ? goalLine(item) : '',
+    // (the board's profile, and 1's lines on it and on a new time of our own)
+    profile,
     `Ask four things.
-1. Is it the board's to decide? Read company/CHARTER.md ("Who's who") and company/AUTHORITY.md for what this company reserves for the board. A change to what it asked for that would lose what it wanted it for also goes to it. Keys, approvals and steps only it can take are its own too. How work is done, whether it's done well enough, proof, measurements, sizes, order, and scope that still gives the board what it wanted are the owner's or yours.
+1. Is it the board's to decide? Read company/CHARTER.md ("Who's who") and company/AUTHORITY.md for what this company reserves for the board. A change to what it asked for that would lose what it wanted it for also goes to it. Keys, approvals and steps only it can take are its own too. How work is done, whether it's done well enough, proof, measurements, sizes, order, and scope that still gives the board what it wanted are the owner's or yours. A card whose only news is a new time on our own deadline (one we gave, not one the board set itself) isn't the board's: it reads those on the projects overview. Nor is one it wouldn't want to be interrupted for${profile ? ' (its profile above says how it wants to hear from us)' : ''}.
 2. Does it read at once? One plain question in everyday words, as you'd ask it across a table: no names of our deliverables, tools or measures the board hasn't heard, nothing it has to decode.
 3. Does it ask only what it must? Every question and photo costs the board time: keep only what changes the work and only the board can answer, not what anything else can tell (a photo the author can read, their own files, how the thing is made). Photos or questions, never both for the same thing. Cut the rest.
 4. Can the board answer truthfully? Where several of a choice's answers can be true together (where it saw something, which of these apply), it's a question field with \`"many": true\`, tick boxes, with \`"picked": []\` when the board ticks what applies; a decision between options, with one true answer, stays one pick.`,

@@ -3890,6 +3890,54 @@ test("a changes ruling on work with no deliverable whose author's fix job was st
   assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'its push starts the next round');
 });
 
+test("a merge ruling on a deliverable's work whose bringing up to date was stopped before its push runs it again once by itself; stopped again, it is stuck until hq review", async () => {
+  const n = 8109;
+  const thread = h.dueThread({ deadline: Date.now() + 86_400_000 });
+  await submit(n, {}, await h.start({ agent: 'bolt', branch: `review/${n}`, thread }));
+  github.pr(n).mergeable = false;
+  await decide(n, 'merge');
+  const [sync] = await claim(n, j => j.kind === 'work');
+  assert.equal(sync.step, 'Bringing up to date');
+  await end(sync, stopped(n));
+  await review.actOnRulings();
+  longAgo(n);
+  await review.reviveRounds();
+  const reruns = queued(n).filter(j => j.kind === 'work');
+  assert.deepEqual(reruns.map(j => [j.agent, j.step]), [['bolt', 'Bringing up to date']], 'its author runs it again, once');
+  assert.equal(h.jobs.replacementOf(sync.id), reruns[0].id, 'it takes over the stopped job');
+  const [rerun] = await claim(n, j => j.id === reruns[0].id);
+  assert.equal(rerun.branch, `review/${n}`, 'it starts from what the stopped run pushed');
+  assert.match(rerun.note ?? '', new RegExp(`#${sync.id} \\(Bringing up to date\\)`), 'named by the stopped job');
+
+  await end(rerun, stopped(n));
+  longAgo(n);
+  await review.reviveRounds();
+  assert.equal(prs(n).status, 'stuck', 'stopped twice: no third run by itself');
+  assert.equal((await hqReview(n)).status, 200);
+  assert.deepEqual(doing(n), ['Bringing up to date'], 'hq review gives it to its author again');
+});
+
+test("a merge ruling's gates repair that was stopped before its push runs again by itself, named by its own step", async () => {
+  const n = 8119;
+  const thread = h.dueThread({ deadline: Date.now() + 86_400_000 });
+  await submit(n, {}, await h.start({ agent: 'bolt', branch: `review/${n}`, thread }));
+  github.pr(n).mergeable = false;
+  await decide(n, 'merge');
+  const [sync] = await claim(n, j => j.kind === 'work');
+  await submit(n, { gates: { passed: false, report: 'A type error' } }, sync);
+  assert.deepEqual(doing(n), ['Fixing the gates']);
+  const [gates] = await claim(n, j => j.kind === 'work');
+  await end(gates, stopped(n));
+  await review.actOnRulings();
+  longAgo(n);
+  await review.reviveRounds();
+  const reruns = queued(n).filter(j => j.kind === 'work');
+  assert.deepEqual(reruns.map(j => [j.agent, j.step]), [['bolt', 'Fixing the gates']], 'its author runs it again, once');
+  const [rerun] = await claim(n, j => j.id === reruns[0].id);
+  assert.match(rerun.note ?? '', new RegExp(`#${gates.id} \\(Fixing the gates\\)`), 'named by the stopped job');
+  assert.doesNotMatch(rerun.note ?? '', /origin\/main/, 'never told it was bringing the branch up to date');
+});
+
 // A drawn-at-once ruling that names no task can't be read: its consolidator rules again (a draw HQ refuses doesn't:
 // below)
 test('a drawn-at-once "changes" ruling that names no task is ruled again, then stuck for hq review, never held', async () => {

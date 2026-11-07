@@ -6,6 +6,8 @@ import * as ordering from './ordering.ts';
 import * as carries from './carries.ts';
 import { seatRunLimit, windowUsed } from '../../worker/src/pace.ts';
 import { windowsOf } from '../../worker/src/seatstatus.ts';
+import type { EmptyCheck, EmptyClaim } from '../../worker/hq/seatwords.ts';
+import * as emptyclaims from './emptyclaims.ts';
 import * as sizes from './sizes.ts';
 import * as predictions from './predictions.ts';
 import * as reviewroom from './reviewroom.ts';
@@ -66,6 +68,7 @@ import {
 } from './review.ts'; // (fixFailed; Check; archiving; withdrawn; threadTaskEnded)
 import type { ChangedLines } from './findings.ts';
 import { announceRequest } from './push.ts';
+import * as board from './board.ts';
 import * as tips from './tips.ts';
 import { saveSecrets, stored, secret, addressKeys, masksOf, type Mask } from './secrets.ts';
 import { maskReports } from './oversight.ts';
@@ -89,6 +92,7 @@ import { checkSeatWarning } from './seatwarning.ts';
 import * as models from './models.ts';
 import * as engineOnly from './engineonly.ts';
 import { runEnded, runStarted, runsLost } from './agenttime.ts';
+import * as idleruns from './idleruns.ts';
 import { sweepTeam } from './team.ts';
 import * as owed from './owed.ts';
 import * as cardread from './cardread.ts';
@@ -99,6 +103,7 @@ import * as decisions from './decisions.ts';
 import * as visualapproval from './visualapproval.ts';
 import * as voiceprints from './voiceprints.ts'; // a saved voice's yearly card, its own answer
 import * as wakes from './wakes.ts';
+import { openIn } from './whole.ts';
 import * as meetingseats from './meetingseats.ts';
 import * as meetingroom from './meetingroom.ts';
 import * as threadorder from './threadorder.ts';
@@ -108,6 +113,7 @@ import { cardProblem } from '../../hq/shell/cardcheck.js';
 import * as asking from '../../hq/shell/questions.js'; // a card's questions as form fields, the guest checklist's engine
 import * as cardFiles from './cardfiles.ts'; // a card's files to download
 import { holdLoose } from './sorting.ts';
+import * as savedWork from './savedwork.ts';
 
 type Job = {
   id: number;
@@ -357,7 +363,7 @@ function insertJob(
       j.pr ?? null,
       j.round ?? null,
       j.branch ?? null,
-      j.after ?? null,
+      j.after ? standInFor(j.after) : null,
       j.sha ?? null,
       j.queuedBy ?? null,
       j.call ?? null,
@@ -407,7 +413,8 @@ function taskAdded(id: number, j: { title: string; queuedBy?: string; plannedBy?
 // them for a job that replaces another already): it takes the first's turn in their thread (threadorder.ts), and carries
 // its call and item where it has none of its own, and a mark set before 31 Oct on that work (customers): its brief comes
 // with it (a retry's, a landing's), so the copy keeps the row's check (holdsCustomerData). Its code and engine rule come
-// as it's made (codeFrom, onlyFor), or from takeover.ts takesPlace for a job queued already.
+// as it's made (codeFrom, onlyFor), or from takeover.ts takesPlace for a job queued already. The jobs queued after the
+// work it replaces wait for it instead (redirectWaits), as its deploy's do (wakes.ts prOf).
 export function standsIn(id: number, replaced: number[]) {
   const [first] = replaced;
   const linked = (db.prepare('select instead_of from jobs where id = ?').get(id) as { instead_of: number | null })
@@ -422,6 +429,7 @@ export function standsIn(id: number, replaced: number[]) {
     from (select call, item, customers, thread, coalesce(seq, id) place from jobs where id = $first) w
     where jobs.id = $id`,
   ).run({ first, id });
+  redirectWaits(replaced, id, 'hq', `${replaced.map(r => `#${r}`).join(', ')}, whose work it does`);
 }
 // (kept prepared: the follow-through read asks it for each ended job carrying the board's items).
 export const replacementOf = (job: number) =>
@@ -431,6 +439,12 @@ export const replacementOf = (job: number) =>
     where r.replaces = ? and j.status != 'cancelled'`,
     ).get(job) as { id: number | null }
   ).id;
+// The job doing `job`'s work now: the last of its replacements, or the job itself. A wait made on the work after a
+// replacement took it over waits for that replacement, as standsIn moves the waits made before.
+export function standInFor(job: number): number {
+  const replacement = replacementOf(job);
+  return replacement === null ? job : standInFor(replacement);
+}
 // The SQL below is built as other modules load (ledger.ts imports this one in turn), so its builders are hoisted functions.
 // Whether the job (an SQL expression) has a replacement queued, under way or ended other than cancelled. (A replacement's
 // status here, in lineageFrom and in replacementOf from db.ts jobs_state, and the jobs it reaches in noteholds.ts carried.) The links come first (`cross join`): led by jobs, the view's job_replacements
@@ -653,9 +667,10 @@ export type Named = { title: string; step?: string | null; round?: number | null
 export function nameOf(j: Named) {
   return j.step ? `${j.step}: ${j.title}${j.round ? ` (round ${j.round})` : ''}` : j.title;
 }
+// An open job's status in agents' words: a blocked one waits for the board.
+export const statusWord = (status: string) => (status === 'blocked' ? 'waiting for the board' : status);
 function openStatus(j: OpenJob) {
-  if (j.status === 'blocked') return 'waiting for the board';
-  if (j.status !== 'queued') return j.status;
+  if (j.status !== 'queued') return statusWord(j.status);
   const holds: string[] = [];
   if (j.after) holds.push(`after #${j.after}`);
   if (j.waits.length) holds.push(untilMerged(j.waits));
@@ -884,17 +899,21 @@ export function outstandingWaitsByJob(jobIds: number[]) {
 // Neither would ever start. Deployment wakes and expanded review edges are checked atomically by writePlan.
 // The shared checks each return why a change is refused, or nothing when it may go ahead.
 // (add, and the shared checks)
-function whyNotYours(job: number, by: string, waitsFor: number | null, running = false) {
+// A job's waits on jobs change while it's queued or running. Its card waits change only while it's queued.
+type WaiterStatus = 'queued' | 'running';
+const JOB_WAIT_STATUSES: WaiterStatus[] = ['queued', 'running'];
+const CARD_WAIT_STATUSES: WaiterStatus[] = ['queued'];
+function whyNotYours(job: number, by: string, waitsFor: number | null, statuses: WaiterStatus[]) {
   const anyQueuedJob = by === ceo() || inProcess(by);
   const yours = db
     .prepare(
-      `select 1 from jobs j where j.id = $job and j.kind = 'work' and (j.status = 'queued' or ($running and j.status = 'running'))
+      `select 1 from jobs j where j.id = $job and j.kind = 'work' and j.status in (select value from json_each($statuses))
     and (j.agent = $by or j.queued_by = $by or $anyQueuedJob)
     and ($on is null or exists (select 1 from waits w where w.job = j.id and w.on_job = $on))`,
     )
-    .get({ job, by, on: waitsFor, anyQueuedJob: Number(anyQueuedJob), running: Number(running) });
+    .get({ job, by, on: waitsFor, anyQueuedJob: Number(anyQueuedJob), statuses: JSON.stringify(statuses) });
   if (!yours)
-    return `job #${job} isn't a ${running ? 'queued or running' : 'queued'} job of yours, or one you queued${waitsFor == null ? '' : `, that waits for #${waitsFor}`}`;
+    return `job #${job} isn't a ${statuses.join(' or ')} job of yours, or one you queued${waitsFor == null ? '' : `, that waits for #${waitsFor}`}`;
 }
 // The job waited for must still be able to meet the wait: open work, or done work whose latest pull request merged or is
 // still pending. Work that ended any other way already did, so nothing would ever release the job or say it's held.
@@ -911,12 +930,14 @@ function whyCantMeet(job: number, on: number, role: string) {
 }
 // The unfinished work `from` needs first, at any depth, with `from` itself while unfinished: its after, waits and --until
 // jobs of an open pause on its thread (pauses.ts). ordered adds task order, thread needs and redraw barriers.
-// includeFrom: false starts at the edges, so a root in its own prerequisites identifies a cycle.
-export function prerequisites(from: number[], { includeFrom = true, ordered = false } = {}) {
+// includeFrom: false starts at the edges, so a root in its own prerequisites identifies a cycle. threads: deliverables
+// (their ids) it starts from too, as nodes: the open ones of a whole a pause would wait for (pausewake.ts).
+export function prerequisites(from: number[], { includeFrom = true, ordered = false, threads = [] as string[] } = {}) {
   return db
     .prepare(
       `${dependencyEdges()}, needs(id) as (
       select 'job/' || value from json_each($from) where $includeFrom
+      union select 'thread/' || value from json_each($threads)
       union select e.needs from edges e join json_each($from) f on e.job = 'job/' || f.value where not $includeFrom
       union select e.needs from needs n join edges e on e.job = n.id)
     select j.id, j.thread, j.kind, j.expedite from needs n join jobs j on j.id = ${jobOfBranch('n.id')}
@@ -924,9 +945,25 @@ export function prerequisites(from: number[], { includeFrom = true, ordered = fa
     )
     .all({
       from: JSON.stringify(from),
+      threads: JSON.stringify(threads),
       includeFrom: Number(includeFrom),
       ordered: Number(ordered),
     }) as { id: number; thread: string | null; kind: string; expedite: number }[];
+}
+// The open deliverables jobs `from` and deliverables `threads` need first, at any depth, in order (as prerequisites'
+// ordered walk): those with no unfinished work too, which prerequisites leaves out (pausewake.ts untilWholeRefusal).
+export function prerequisiteDeliverables(from: number[], threads: string[]) {
+  return (
+    db
+      .prepare(
+        `${dependencyEdges()}, needs(id) as (
+        select 'job/' || value from json_each($from)
+        union select 'thread/' || value from json_each($threads)
+        union select e.needs from needs n join edges e on e.job = n.id)
+      select substr(n.id, 8) id from needs n where n.id like 'thread/%' order by n.id`,
+      )
+      .all({ from: JSON.stringify(from), threads: JSON.stringify(threads), ordered: 1 }) as { id: string }[]
+  ).map(t => t.id);
 }
 // The edges prerequisites walks, all at once: each node's needs ('job/<id>' or 'thread/<id>'), ordered as above.
 export function needsGraph() {
@@ -939,7 +976,8 @@ export function needsGraph() {
 // The unfinished jobs are read once, by index (MERGE_PENDING_IDS), and every edge starts from them or from the open and
 // failed tasks. Tasks keep only the columns the edges read, never a row's brief and output.
 // A failed task only holds the open ones after it in its thread, so only the threads with unfinished work read their
-// failed tasks.
+// failed tasks. A pause's --until milestone or deliverable holds its work after each open deliverable in it, as a node,
+// so one with no tasks yet counts, and after the work in them (whole.ts).
 function dependencyEdges() {
   return `with recursive ${redraws.relations()},
     pending(id) as materialized (${MERGE_PENDING_IDS}),
@@ -950,11 +988,17 @@ function dependencyEdges() {
           on f.thread = t.thread and f.status = 'failed') x
       cross join jobs j indexed by jobs_listed on j.id = x.id where j.kind = 'work' and j.pr is null
       and j.thread is not null and not ${failedAside('j')}),
+    until_whole(job, thread) as (select j.id, t.id from jobs j join pauses p on ${pauseHolds('p')}
+        and ${pauseCovers('p', 'j.thread')} join pause_until_whole w on w.pause = p.id join threads t on ${openIn('t', 'w.whole')}
+      where j.id in (select id from pending) and (j.thread is not null or not ${deskLets('j')})),
     edges(job, needs) as (
       select 'job/' || j.id, 'job/' || j.after from pending x cross join jobs j on j.id = x.id where j.after is not null
       union select 'job/' || w.job, 'job/' || w.on_job from pending x cross join waits w on w.job = x.id
       union select 'job/' || j.id, 'job/' || u.job from jobs j join pauses p on ${pauseHolds('p')} and ${pauseCovers('p', 'j.thread')}
         join pause_until u on u.pause = p.id where j.id in (select id from pending) and (j.thread is not null or not ${deskLets('j')})
+      union select 'job/' || u.job, 'thread/' || u.thread from until_whole u
+      union select 'job/' || u.job, 'job/' || prior.id from until_whole u join jobs prior on prior.thread = u.thread
+        and prior.kind = 'work' where prior.id in (select id from pending)
       union select 'job/' || j.id, 'job/' || prior.id from tasks j join tasks prior on prior.thread = j.thread
         and (coalesce(prior.seq, prior.id), prior.id) < (coalesce(j.seq, j.id), j.id)
         where $ordered and j.status in ('queued', 'running', 'blocked') and prior.status in ('queued', 'running', 'blocked', 'failed')
@@ -970,8 +1014,11 @@ function dependencyEdges() {
 // An agent adds waits to work they queued. The CEO or Process may also hold HQ-made work, with a reason on the feed.
 export function addWait(job: number, on: number, by: string, why = '') {
   why = oneLine(why);
+  on = standInFor(on);
   const refused =
-    whyNotYours(job, by, null, true) ?? whyMadeByHq(job, by, why) ?? whyCantMeet(job, on, `#${job} can wait for`);
+    whyNotYours(job, by, null, JOB_WAIT_STATUSES) ??
+    whyMadeByHq(job, by, why) ??
+    whyCantMeet(job, on, `#${job} can wait for`);
   if (refused) return refused;
   // Repeatable: it only writes rows and publishes after its step, so writePlan may run it twice.
   return redraws.writePlan(
@@ -987,22 +1034,25 @@ export function holdForMerge(job: number, on: number, by: string, why = '') {
   if (db.prepare('insert or ignore into waits (job, on_job) values (?, ?)').run(job, on).changes)
     recordWaitChange(job, by, `#${job} waits for #${on} too now${why ? `: ${why}` : ''}`);
 }
-export function redirectWaits(from: number[], on: number, by: string) {
+// Queued jobs that wait for any of `from` (their after, db.ts waits) wait for `on` instead: a redraw of closed work
+// (reviewclosure.ts redirect) or a job standing in for others (standsIn). `waitedFor` names what they waited for, in the
+// wait's record.
+export function redirectWaits(from: number[], on: number, by: string, waitedFor = 'the closed work') {
   const ids = JSON.stringify(from);
   const affected = db
     .prepare(
-      `select id, after from jobs where status = 'queued' and
+      `select id, after from jobs where status = 'queued' and id != $on and
     (after in (select value from json_each($ids)) or exists (select 1 from waits where job = jobs.id
       and on_job in (select value from json_each($ids))))`,
     )
-    .all({ ids }) as { id: number; after: number | null }[];
+    .all({ ids, on }) as { id: number; after: number | null }[];
   for (const job of affected) {
     if (job.after !== null && from.includes(job.after))
       db.prepare('update jobs set after = ? where id = ?').run(on, job.id);
     db.prepare(
       `update or replace waits set on_job = ? where job = ? and on_job in (select value from json_each(?))`,
     ).run(on, job.id, ids);
-    recordWaitChange(job.id, by, `#${job.id} now waits for #${on} in place of the closed work`);
+    recordWaitChange(job.id, by, `#${job.id} now waits for #${on} in place of ${waitedFor}`);
   }
 }
 function recordWaitChange(job: number, by: string, text: string) {
@@ -1020,7 +1070,7 @@ function whyMadeByHq(job: number, by?: string, why = '') {
     );
 }
 export function moveWait(job: number, from: number, to: number, by: string, why = '') {
-  const refused = whyNotYours(job, by, from, true) ?? whyCantMeet(job, to, `can replace #${from}'s`);
+  const refused = whyNotYours(job, by, from, JOB_WAIT_STATUSES) ?? whyCantMeet(job, to, `can replace #${from}'s`);
   if (refused) return refused;
   // Repeatable, as addWait's.
   return redraws.writePlan(
@@ -1033,7 +1083,7 @@ export function moveWait(job: number, from: number, to: number, by: string, why 
   );
 }
 export function dropWait(job: number, from: number, by: string, why = '') {
-  const refused = whyNotYours(job, by, from, true);
+  const refused = whyNotYours(job, by, from, JOB_WAIT_STATUSES);
   if (refused) return refused;
   db.prepare('delete from waits where job = ? and on_job = ?').run(job, from);
   publishWaitChange(job, by, `#${job} no longer waits for #${from}${why ? `: ${oneLine(why)}` : ''}`);
@@ -1048,7 +1098,7 @@ export function dropWait(job: number, from: number, by: string, why = '') {
 export function addCardWait(job: number, request: number, by: string, why = '') {
   why = oneLine(why);
   const refused =
-    whyNotYours(job, by, null) ??
+    whyNotYours(job, by, null, CARD_WAIT_STATUSES) ??
     whyMadeByHq(job, by, why) ??
     whyStarted(job) ??
     whyNotAgentCard(request, by, agentOf(job));
@@ -1058,7 +1108,7 @@ export function addCardWait(job: number, request: number, by: string, why = '') 
   return { ok: true };
 }
 export function dropCardWait(job: number, request: number, by: string, why = '') {
-  const refused = whyNotYours(job, by, null);
+  const refused = whyNotYours(job, by, null, CARD_WAIT_STATUSES);
   if (refused) return refused;
   const dropped = db.prepare('delete from request_waits where job = ? and request = ?').run(job, request);
   if (!dropped.changes) return `job #${job} doesn't wait for card #${request}`;
@@ -1158,16 +1208,31 @@ export function strandedWaits(prior: Named & { id: number; agent: string }, how:
 // before it in its own thread is that thread's order instead (threadorder.ts afterInOrder).
 // Wrap statements using this predicate in redraws.query().
 // (AFTER_MET: its after's part, which stillHolds reads too)
-// (AFTER_ENDED: the after `a` ended and its work left review, which openJobs' line reads too.)
+// (AFTER_ENDED: the after `a` ended, its work left review and no landing can still take it on. openJobs' line reads it
+// too.)
 const AFTER_ENDED = (a: string) => `(${a}.status in ('done', 'failed', 'stopped', 'cancelled')
     and not exists (select 1 from prs where branch = ${a}.branch and status in ('open', 'stuck', 'board'))
+    and not ${stillLands(a)}
     and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(${a}.branch, 'job/' || ${a}.id)))`;
+// Whether the job `a` failed or stopped with its pushed work on its branch, unmerged, in an open deliverable: a landing
+// can still take it on (standsIn moves what waits on it there), and the deliverable's close lets that go. Its deploy's
+// waits read it too (wakes.ts prOf).
+export function stillLands(a: string) {
+  return `(${a}.status in ('failed', 'stopped') and ${a}.sha is not null
+    and exists (select 1 from threads where id = ${a}.thread and status = 'open')
+    and not exists (select 1 from prs where branch = ${workBranch(a)} and status = 'merged'))`;
+}
 const AFTER_MET = `(j.after is null or exists (select 1 from jobs a where a.id = j.after and (${threadorder.afterInOrder('j', 'a')}
     or ${AFTER_ENDED('a')})))`;
 const READY = `j.status = 'queued' and j.not_before <= $now
   and ${AFTER_MET}
   and not exists (${outstanding('j.id')}) and not exists (${openCards('j.id')})
   and not exists (select 1 from wakes w where w.job = j.id and w.met is null)`; // (wakes.ts)
+// A queued job's own waits that READY holds it for, but a time (wakes.ts 'at', which threadorder.ts inTurn reads): a
+// job, a card, an event. What its deliverable's order passes it by. Wrap statements using this predicate in
+// redraws.query().
+export const OWN_WAIT = `(not ${AFTER_MET} or exists (${outstanding('j.id')}) or exists (${openCards('j.id')})
+  or exists (select 1 from wakes w where w.job = j.id and w.met is null and w.kind != 'at'))`;
 
 // The board's own word on a job (`x`, its alias): it follows up a call, works for one (call: queued on it, or handed out
 // for one of its items, ledger.handOut), or acts on the board's answer to a card (answers). What the board left for a
@@ -1214,10 +1279,11 @@ function sortLets(j: string) {
 }
 // Work (fix rounds too) of an agent a kind of run holds until the lent machine has finished one (runs.ts holds), and
 // everything on a paused thread or project, or in no thread with the desk paused, but the intercom: work, a pull
-// request's reviews, rulings and fixes (pauses.ts)
-// Wrap statements using this predicate in redraws.query().
-const HOLD_LETS = `(j.expedite = 1 or (j.kind != 'work' or j.agent not in (select value from json_each($held)))
-  and ${heldWith('j')} is null)`;
+// request's reviews, rulings and fixes (pauses.ts). Nothing holds expedited work.
+// Wrap statements using these predicates in redraws.query().
+const AGENT_LETS = `(j.expedite = 1 or j.kind != 'work' or j.agent not in (select value from json_each($held)))`;
+const PAUSED_WITH = `(case when j.expedite = 1 then null else ${heldWith('j')} end)`;
+const HOLD_LETS = `(${AGENT_LETS} and ${PAUSED_WITH} is null)`;
 const ROOM_WAITER = `${READY} and ${PAUSE_LETS} and ${HOLD_LETS} and j.kind != 'chat'`;
 
 // A pause (`p`, its row's alias) that holds: not resumed, and not waiting for a decision of the board's it has answered
@@ -1519,7 +1585,7 @@ const CARD_COLUMNS = `(select json_group_array(json_object('id', c.id, 'title', 
 // (server.ts), but only work: a review or the consolidator's check doesn't yield (heartbeat), so it could run on a seat
 // that's already full. `room`: the claim is below the worker's room line, with that many MB free, so a job starts only
 // when its measured memory fits (room.ts measuredMb), whatever its kind. `pacedUntil`: the seat's week runs ahead of its
-// pace (the worker's pacedUntil, while the board has pacing on), so it admits only urgent work
+// pace and has occupied its paced concurrency, so this claim admits only urgent work
 // until pacing lifts (planner.ts pacedTakes). Jobs abandoned by a crashed worker are
 // requeued first.
 // settings 'company.paused': {"since": "...", "allow": [job ids], "prs": [pull request numbers]} while the board has the
@@ -1556,18 +1622,15 @@ export function claim(
   const cli =
     (db.prepare('select coalesce(cli, engine) cli from seats where id = ?').get(seat) as { cli: string } | undefined)
       ?.cli ?? engine;
-  const fits = claimable(seat, engine, cli, util, probe, kind, room);
-  if (!fits.length) {
-    meetingseats.pick(fits, slot, seat);
+  const pick = firstFit({ seat, engine, cli, kind, util, probe, slot, room, pacedUntil });
+  // An ordinary claim keeps why it came back empty (emptyclaims.ts). The intercom's slot and an incident's ask only for
+  // their own kind, so they keep nothing.
+  if (!pick.job) {
+    if (kind === undefined) emptyclaims.record(seat, pick.whyEmpty());
     return null;
   }
-  const reserved = meetingroom.first(fits, kind, slot);
-  const sorted = reserved.jobs.length
-    ? inClaimOrder(reserved.jobs, seat, engine, kind, pacedUntil, room, reserved.gathering)
-    : [];
-  const first = meetingseats.pick(sorted, slot, seat);
-  if (!first) return null;
-  const job = db.prepare('select * from jobs where id = ?').get(first.id) as Job;
+  if (kind === undefined) emptyclaims.clear(seat);
+  const job = db.prepare('select * from jobs where id = ?').get(pick.job.id) as Job;
   // A board-named job (only a hand-edited database could hold one) never runs, gets a token or speaks.
   if (boardId(job.agent)) {
     db.prepare("update jobs set status = 'failed', result = 'No job runs as the board', finished = ? where id = ?").run(
@@ -1584,6 +1647,41 @@ export function claim(
   quickRunStarted(job);
   return claimed(job, seat, token, moved, inThread);
 }
+
+// The seat a claim is for and what it asks (claim).
+type Claimant = {
+  seat: string;
+  engine: string;
+  cli: string;
+  kind?: string;
+  util: number;
+  probe: boolean;
+  slot?: string;
+  room?: number;
+  pacedUntil?: number;
+};
+// The jobs a step of the claim lets through, and why there are none when it lets none through (emptyclaims.ts).
+type Fits<J> = { jobs: J[]; whyEmpty: () => EmptyClaim };
+
+// The first job in the shared order the seat can run, and why there's none when the claim comes back empty.
+function firstFit(claimant: Claimant): { job: { id: number } | null; whyEmpty: () => EmptyClaim } {
+  const { kind, slot, seat } = claimant;
+  const fits = claimable(claimant);
+  if (!fits.jobs.length) {
+    meetingseats.pick([], slot, seat);
+    return { job: null, whyEmpty: fits.whyEmpty };
+  }
+  const reserved = meetingroom.first(fits.jobs, kind, slot);
+  const noReservation = { jobs: [], whyEmpty: () => meetingKept(fits.jobs) };
+  const ordered: Fits<Claimable> = reserved.jobs.length
+    ? inClaimOrder(reserved.jobs, claimant, reserved.gathering)
+    : noReservation;
+  const job = meetingseats.pick(ordered.jobs, slot, seat) ?? null;
+  const meetingDeclined = ordered.jobs.length > 0;
+  return { job, whyEmpty: meetingDeclined ? () => meetingKept(ordered.jobs) : ordered.whyEmpty };
+}
+// A meeting keeps the slot for its seats, or rests, so the first of `jobs` waits for it.
+const meetingKept = (jobs: { id: number }[]): EmptyClaim => ({ check: 'meeting', job: jobs[0].id });
 
 function requeueAbandoned() {
   runsLost(now() - STALE_MS);
@@ -1617,16 +1715,8 @@ function requeueAbandoned() {
 // Work of an agent with a fallback on this seat's engine and CLI (models.ts) comes here too, before it has started,
 // while no seat its own engine and CLI (or its own Codex seat) has is ready: they're out, at their limit or past
 // their stop.
-function claimable(
-  seat: string,
-  engine: string,
-  cli: string,
-  util: number,
-  probe: boolean,
-  kind?: string,
-  room?: number,
-  yielding: number[] = [],
-) {
+function claimable(claimant: Claimant, { yielding = [] }: { yielding?: number[] } = {}): Fits<Candidate> {
+  const { seat, engine, cli, kind, util, probe, room } = claimant;
   const ready = db
     .prepare(`select id, engine || ':' || coalesce(cli, engine) runner from seats where ${SEAT_READY}`)
     .all({ now: now() }) as { id: string; runner: string }[];
@@ -1634,15 +1724,14 @@ function claimable(
   const candidates = db
     .prepare(
       redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${READY} ready, ${LANE('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare,
-      j.status = 'running' yielding
+      j.status = 'running' yielding, j.not_before, j.not_before <= $now on_time, ${PAUSE_LETS} pause_lets,
+      ${AGENT_LETS} agent_lets, ${PAUSED_WITH} paused_with
     from jobs j where (j.status = 'queued' or j.status = 'running' and j.id in (select value from json_each($yielding)))
-    and j.not_before <= $now
     and ($kind is null and (kind != 'chat' or j.engine != 'claude') or kind = $kind or $kind = 'incident' and j.incident = 1)
     and (${seatTakes('$seat', '$cli')}
       or ${FALLS_BACK} and j.agent in (select value from json_each($fallbacks))
       and iif(j.for_seat is null, j.engine || ':' || coalesce(j.cli, j.engine) not in (select value from json_each($readyRunners)),
-        j.for_seat not in (select value from json_each($readySeats))))
-    and ${PAUSE_LETS} and ${HOLD_LETS}`),
+        j.for_seat not in (select value from json_each($readySeats))))`),
     )
     .all({
       engine,
@@ -1659,40 +1748,68 @@ function claimable(
       fallbacks: JSON.stringify(models.fallingBackTo(engine, cli)),
       readyRunners: JSON.stringify(ready.map(r => r.runner)),
       readySeats: JSON.stringify(ready.map(r => r.id)),
-    }) as (Claimable & { spare: number; yielding: number; ready: number })[];
-  return candidates;
+    }) as Candidate[];
+  return {
+    jobs: candidates.filter(j => GATES.every(gate => gate.lets(j))),
+    whyEmpty: () =>
+      firstHeld(candidates, GATES, ordering.claimOrder(ordering.current().timings)) ?? { check: 'none', job: null },
+  };
 }
+
+// A job claimable reads, with each of its checks as a column of its own (GATES).
+type Candidate = Claimable & {
+  spare: number;
+  yielding: number;
+  ready: number;
+  not_before: number;
+  on_time: number;
+  pause_lets: number;
+  agent_lets: number;
+  paused_with: string | null;
+};
+// The checks claimable makes, in turn: the job's time, the company's pause, a kind of run's hold on its agent, and a
+// pause of its thread or project. Each says what it holds a job against for an empty claim's record.
+const GATES: ClaimCheck<Candidate>[] = [
+  { check: 'not before', lets: j => !!j.on_time, explain: j => ({ until: j.not_before }) },
+  { check: 'company paused', lets: j => !!j.pause_lets },
+  { check: 'runs held', lets: j => !!j.agent_lets, explain: () => ({ against: held()?.until }) },
+  { check: 'paused', lets: j => j.paused_with === null, explain: j => ({ against: pauseName(j.paused_with!) }) },
+];
 
 // Spare downtime work only on a seat with spare room, and only when nothing else can start.
 function inClaimOrder(
   fits: (Claimable & { spare: number; ready: number })[],
-  seat: string,
-  engine: string,
-  kind?: string,
-  pacedUntil?: number,
-  room?: number,
+  claimant: Claimant,
   gathering = false,
-) {
+): Fits<Claimable & { spare: number; ready: number }> {
+  const { kind, room } = claimant;
   // An expedited job starts before anything else, whatever the plan, pacing or room freed for another says (the board,
   // call 118): it counts as urgent (urgency.ts).
   const expedited = fits.filter(j => j.expedite && j.ready).sort((a, b) => a.id - b.id);
-  if (expedited.length) return expedited;
+  // Nothing holds expedited work, so only a meeting keeps it (firstFit).
+  if (expedited.length) return { jobs: expedited, whyEmpty: () => meetingKept(expedited) };
   const plan = ordering.current();
-  const ordered = claimOrderOn(
-    seat,
-    engine,
-    pacedUntil,
-    plan,
-    kind === 'chat' || gathering ? [] : freedRoom(plan),
-  )(fits);
-  if (room === undefined) return ordered;
+  const order = claimOrderOn(claimant, plan, kind === 'chat' || gathering ? [] : freedRoom(plan));
+  const ordered = order.take(fits);
+  // With none in order, the reason is the first check the best of them failed. With none admitted, the first in order
+  // didn't fit in the memory left.
+  const whyEmpty = (): EmptyClaim => {
+    if (!ordered.length) return order.whyEmpty(fits)!;
+    const mb = measuredMb(ordered[0].id);
+    return {
+      check: 'memory',
+      job: ordered[0].id,
+      against: `${mb === null ? 'a measured size' : `${mb} MB`}, with ${room} MB free`,
+    };
+  };
+  if (room === undefined) return { jobs: ordered, whyEmpty };
   // Memory admission follows eligibility and order, so smaller undated runs cannot keep taking a window's room.
   const admitted: typeof ordered = [];
   for (const job of ordered) {
     if ((measuredMb(job.id) ?? Infinity) <= room) admitted.push(job);
     else if (ordering.key(job.id, job.board, plan.timings).latestStart !== null) break;
   }
-  return admitted;
+  return { jobs: admitted, whyEmpty };
 }
 
 // A pause reserves its room from the first yield request until its waiter starts, on whichever engine: work after the
@@ -1712,12 +1829,12 @@ function freedRoom(plan: ReturnType<typeof ordering.current>) {
 // The claim's order on one seat, its reads made once: makesRoom orders the seat's work again for every run that might
 // yield (yielding: that run leaves the seat's running set).
 function claimOrderOn(
-  seat: string,
-  engine: string,
-  pacedUntil: number | undefined,
+  claimant: Claimant,
   plan: ReturnType<typeof ordering.current>,
   freedFor: Claimable[],
+  paceRuns?: number,
 ) {
+  const { seat, engine, pacedUntil } = claimant;
   const key = (j: Claimable) => ordering.key(j.id, j.board, plan.timings);
   const running = db.prepare("select id, kind from jobs where status = 'running' and seat = ?").all(seat) as (Pick<
     Claimable,
@@ -1725,27 +1842,48 @@ function claimOrderOn(
   > & { id: number })[];
   const limit = plannerCapacity()?.seatRuns[engine] ?? Infinity;
   const base = ordering.claimOrder(plan.timings);
+  // The seat's runs that hold a place (yielding: those that leave it), and until when pacing holds ordinary work: only
+  // once they hold all its paced places (paceRuns), where the play says how many.
+  const placed = (yielding: number[]) => {
+    const occupants = running.filter(r => !yielding.includes(r.id) && !inPushChecks(r.id));
+    return { occupants, until: paceRuns !== undefined && occupants.length < paceRuns ? undefined : pacedUntil };
+  };
+  // The checks a seat's job must pass, in turn: the plan's waits, spare work's room, pacing, and the room a pause keeps
+  // for another job. Each says what it holds a job against for an empty claim's record.
+  type Fit = Claimable & { spare: number };
+  const ahead = (j: Fit) => freedFor.find(w => w.id !== j.id && base(w, j) < 0);
+  const checks = (until: number | undefined): ClaimCheck<Fit>[] => [
+    { check: 'waits', lets: j => plan.eligible(j.id), explain: j => ({ wait: plan.firstWait(j.id) }) },
+    { check: 'spare', lets: j => !!j.spare || !spareOnly(j, key(j)) },
+    { check: 'pacing', lets: j => pacedTakes(key(j), until), explain: () => ({ until }) },
+    { check: 'room kept', lets: j => !ahead(j), explain: j => ({ against: `#${ahead(j)!.id}` }) },
+  ];
   // (a run that would yield started already, what it needed first met: an expedited one keeps its place, so it never
   // makes room for other work. Expedited work is urgent, so pacing never holds it: inClaimOrder.)
-  return (fits: (Claimable & { spare: number; ready: number; yielding?: number })[], yielding: number[] = []) => {
+  const take = (fits: (Claimable & { spare: number; ready: number; yielding?: number })[], yielding: number[] = []) => {
     const expedited = fits.filter(j => j.expedite && (j.ready || j.yielding)).sort((a, b) => a.id - b.id);
     if (expedited.length) return expedited;
-    const order = reviewroom.claimOrder<Claimable>(
-      running.filter(r => !yielding.includes(r.id) && !inPushChecks(r.id)),
-      limit,
-      base,
-      j => key(j).latestStart !== null,
-    );
-    const eligible = fits.filter(
-      j =>
-        plan.eligible(j.id) &&
-        (j.spare || !spareOnly(j, key(j))) &&
-        pacedTakes(key(j), pacedUntil) &&
-        !freedFor.some(w => w.id !== j.id && base(w, j) < 0),
-    );
+    const { occupants, until } = placed(yielding);
+    const order = reviewroom.claimOrder<Claimable>(occupants, limit, base, j => key(j).latestStart !== null);
+    const passes = checks(until);
+    const eligible = fits.filter(j => passes.every(c => c.lets(j)));
     const needsRoom = eligible.some(j => !spareOnly(j, key(j)));
     return eligible.filter(j => !needsRoom || !spareOnly(j, key(j))).sort(order);
   };
+  return { take, whyEmpty: (fits: Fit[]) => firstHeld(fits, checks(placed([]).until), base) };
+}
+
+// A check of the claim's by name. It lets a job through, or explains what it holds the job against (emptyclaims.ts).
+type ClaimCheck<J> = { check: EmptyCheck; lets: (j: J) => boolean; explain?: (j: J) => Partial<EmptyClaim> };
+// The first of `checks` that the best of `jobs` failed. The best job is the first in `order` of those that passed the
+// most checks. It's undefined when there are no jobs, or one passes every check.
+function firstHeld<J extends { id: number }>(jobs: J[], checks: ClaimCheck<J>[], order: (a: J, b: J) => number) {
+  let left = [...jobs].sort(order);
+  for (const c of checks) {
+    const passed = left.filter(c.lets);
+    if (left.length && !passed.length) return { ...c.explain?.(left[0]), check: c.check, job: left[0].id };
+    left = passed;
+  }
 }
 
 function startRun(job: Job, seat: string) {
@@ -1795,7 +1933,10 @@ function claimed(
       agent: job.agent,
       text: `Job #${job.id} runs on ${fallback.name}: its own model's seats are out or at their limit`,
     });
-  const quickRun = quickRunTurn(job);
+  // A session-less run hears only the later of its hand-up and HQ's ending its dead session (restartedWords, lightRun).
+  const quickRun = quickRunTurn(job),
+    up = job.up && !job.session ? handUpOf(job.up) : undefined,
+    restarted = idleruns.restartedWords(job, up?.at);
   // (title: as agents read it, a review step's with its step and round: nameOf.)
   // (archiving: the agent's open pull request that already moves its older profile lines, for the worker's oversized())
   return {
@@ -1812,7 +1953,9 @@ function claimed(
     ...(job.agent === ceo() && { page: padBriefing() }),
     ...carryOver(job, seat),
     ...(inThread && { inThread }),
-    ...(found && a && lightRun(job, a.model, found.model)),
+    ...(found && a && lightRun(job, a.model, found.model, restarted ? undefined : up)),
+    // (a new session in its kept clone after HQ ended its dead session, told why: idleruns.ts)
+    ...(restarted && { restarted }),
   };
 }
 
@@ -1836,14 +1979,13 @@ function companyOf(engine: string) {
 
 // A run on the lighter model its queuer chose (hq job --model) is told so, and how to hand the work up to its agent's
 // own model (lighter: the worker's briefing). The run after a hand-up (handUp) starts a new session in the job's kept
-// clone, with its note (handedUp), until it has a session of its own.
+// clone, with its note (handedUp: the hand-up claimed tells), until it has a session of its own.
 const ranLight = (job: Job) => job.kind === 'work' && !!job.light && !!job.model;
-function lightRun(job: Job, model: string | null | undefined, own: string | null | undefined) {
+function lightRun(job: Job, model: string | null | undefined, own: string | null | undefined, up?: HandUp) {
   const lighter =
     ranLight(job) && model === job.model
       ? { name: models.choiceName(job.model!), own: models.choiceName(own ?? '') }
       : undefined;
-  const up = job.up && !job.session ? handUpOf(job.up) : undefined;
   return {
     ...(lighter && { lighter }),
     ...(up && { handedUp: { from: models.choiceName(up.from), note: up.note } }),
@@ -1855,7 +1997,8 @@ export function handUpLine(json: string, withNote: boolean) {
   return { from: models.choiceName(up.from), ...(withNote && { note: up.note }) };
 }
 // (jobs.up is written by handUp alone)
-const handUpOf = (json: string) => JSON.parse(json) as { from: string; note: string };
+type HandUp = { from: string; note: string; at: string };
+const handUpOf = (json: string) => JSON.parse(json) as HandUp;
 
 const letsParams = () => {
   const pause = paused();
@@ -1876,8 +2019,15 @@ const seatTakes = (seat: string, cli: string, engine = '$engine') =>
 export const FALLS_BACK = "j.kind = 'work' and j.session is null and j.engine_only is null";
 // A seat that takes work now: ready, or past the reset its drain or sleep waits for. The statement binds $now. (exported for panel.ts)
 export const SEAT_READY = "(state = 'ready' or state in ('draining', 'sleeping') and until <= $now)";
-// Until when a seat is paced (its weekly reset), or null when it isn't. The statement binds $now.
-const PACED_UNTIL = 'iif(pace is null or week_resets <= $now, null, week_resets)';
+// The runs holding a place on the seats row `s` (an SQL alias): its running jobs, but for ended sessions doing checks,
+// which hold none, as in the worker. The statement binds $checks (checksParam).
+const placesTaken = (s: string) =>
+  `(select count(*) from jobs where status = 'running' and seat = ${s}.id and id not in (select value from json_each($checks)))`;
+const checksParam = (t: number) => JSON.stringify(plannerCapacity(t)?.memory?.checks ?? []);
+// Until when the seats row `s` takes only urgent work: its weekly reset, while its runs hold all its paced places
+// (pace_runs), else null. The statement binds $now and $checks.
+const pacedUntilOf = (s: string) =>
+  `iif(${s}.pace is null or ${s}.week_resets <= $now or ${placesTaken(s)} < coalesce(${s}.pace_runs, 1), null, ${s}.week_resets)`;
 
 // Whether a ready seat takes the job now (seatTakes, and a paced one only what it takes till its weekly reset:
 // pacedTakes, as claim), or that one seat (`on`): a meeting's seats each need one before the meeting gathers, and a slot
@@ -1887,11 +2037,14 @@ export function seatReadyFor(job: number, t = now(), on: string | null = null, p
   const seats = db
     .prepare(
       `select s.pacedUntil, ${LANE('j')} board from jobs j
-    join (select *, ${PACED_UNTIL} pacedUntil from seats where ${SEAT_READY}) s on ${seatTakes('s.id', 'coalesce(s.cli, s.engine)', 's.engine')}
+    join (select *, ${pacedUntilOf('s')} pacedUntil from seats s where ${SEAT_READY}) s on ${seatTakes('s.id', 'coalesce(s.cli, s.engine)', 's.engine')}
     and ($on is null or s.id = $on)
     where j.id = $job`,
     )
-    .all({ job, now: t, on }) as { pacedUntil: number | null; board: number }[];
+    .all({ job, now: t, on, checks: checksParam(t) }) as {
+    pacedUntil: number | null;
+    board: number;
+  }[];
   if (!seats.length || seats.some(s => s.pacedUntil === null)) return seats.length > 0;
   const order = ordering.key(job, seats[0].board, plan().timings);
   return seats.some(s => pacedTakes(order, s.pacedUntil!));
@@ -1902,7 +2055,7 @@ export function seatReadyFor(job: number, t = now(), on: string | null = null, p
 // - draining or asleep until a time still ahead (a reset, its stop level's).
 // - ready with its runs at the worker's limit for it (pace.ts seatRunLimit: one run at a time near its stop level),
 //   which a run's end or the window's reset frees.
-// - ready with room for a run but paced, and this job isn't one it takes before that seat's weekly reset.
+// - ready with all its paced places occupied, and this job has no urgency to bypass that rate.
 // No seat for it, or one signed out, won't come back by itself: that's no such wait. A paused seat takes no work, so it
 // doesn't count.
 export function seatsOut(job: number, t = now()) {
@@ -1929,11 +2082,10 @@ function seatsTaking(job: number, agent: string, t: number) {
   const seats = db
     .prepare(
       `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.state, ${SEAT_READY} ready,
-      ${PACED_UNTIL} pacedUntil, s.util, s.resets, s.week, s.week_resets, s.credits, l.stop,
-      (select count(*) from jobs where status = 'running' and seat = s.id and id not in (select value from json_each($checks))) running
+      ${pacedUntilOf('s')} pacedUntil, s.util, s.resets, s.week, s.week_resets, s.credits, l.stop, ${placesTaken('s')} running
       from seats s left join seat_list l on l.id = s.id where s.state != 'paused'`,
     )
-    .all({ now: t, checks: JSON.stringify(plannerCapacity(t)?.memory?.checks ?? []) }) as {
+    .all({ now: t, checks: checksParam(t) }) as {
     id: string;
     engine: string;
     cli: string;
@@ -1960,7 +2112,10 @@ function seatsTaking(job: number, agent: string, t: number) {
       };
       return own || (fallsBack && models.fallingBackTo(s.engine, s.cli).includes(agent));
     })
-    .map(s => ({ ...s, roomOn: !!s.ready && s.running < seatRunLimit(windowsOf(s), limits[s.engine], t) }));
+    .map(s => ({
+      ...s,
+      roomOn: !!s.ready && s.running < seatRunLimit(windowsOf(s), limits[s.engine], t),
+    }));
 }
 
 // The model and effort a run asks for, those of the engine and CLI the job is on: its fallback's once it moved there, the
@@ -2121,13 +2276,10 @@ function roomFor(room: InTheWay, t: number): Map<number, number> {
   if (!queued.length) return new Map();
   const plan = ordering.current(t);
   const running = roomRuns(plan);
-  const claims = roomClaims(
-    t,
-    plan,
-    running.map(v => v.id),
-  );
+  const yielding = running.map(v => v.id);
+  const claims = roomClaims(t, plan, yielding);
   const waiting = queued
-    .map(w => ({ ...w, seats: claims.seats.filter(s => claims.order(s).some(j => j.id === w.id)) }))
+    .map(w => ({ ...w, seats: claims.seats.filter(s => claims.order(s, yielding, true).some(j => j.id === w.id)) }))
     .filter(w => w.seats.length && (room.short || w.seats.every(s => room.capped.includes(s))));
   if (!waiting.length) return new Map();
   const key = (j: { id: number; board: number | boolean }) => ordering.key(j.id, j.board, plan.timings);
@@ -2174,28 +2326,30 @@ function roomClaims(t: number, plan: ReturnType<typeof ordering.current>, yielde
   const freed = freedRoom(plan);
   const onSeat = new Map(
     readySeats(t).map(s => {
-      const fits = claimable(s.id, s.engine, s.cli, s.util, false, undefined, undefined, yielders).filter(
-        j => j.kind !== 'chat',
-      );
+      const claimant = {
+        ...{ seat: s.id, engine: s.engine, cli: s.cli, util: s.util, probe: false },
+        pacedUntil: s.pacedUntil ?? undefined,
+      };
+      const fits = claimable(claimant, { yielding: yielders }).jobs.filter(j => j.kind !== 'chat');
       return [
         s.id,
         {
           fits,
-          order: claimOrderOn(s.id, s.engine, s.pacedUntil ?? undefined, plan, freed),
+          order: claimOrderOn(claimant, plan, freed, s.paceRuns),
           played: new Map<string, Claimable[]>(),
         },
       ] as const;
     }),
   );
-  const order = (seat: string, yielding: number[] = []): Claimable[] => {
+  const order = (seat: string, yielding: number[] = [], queuedOnly = false): Claimable[] => {
     const s = onSeat.get(seat);
     if (!s) return [];
-    const key = yielding.join(',');
+    const key = `${queuedOnly}:${yielding.join(',')}`;
     if (!s.played.has(key))
       s.played.set(
         key,
-        s.order(
-          s.fits.filter(j => !j.yielding || yielding.includes(j.id)),
+        s.order.take(
+          s.fits.filter(j => !j.yielding || (!queuedOnly && yielding.includes(j.id))),
           yielding,
         ),
       );
@@ -2205,13 +2359,13 @@ function roomClaims(t: number, plan: ReturnType<typeof ordering.current>, yielde
 }
 
 // The ready seats as a claim reads them: how much of its window each has used, and until when it's paced.
-function readySeats(t: number) {
+export function readySeats(t: number) {
   const seats = db
     .prepare(
       `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.util, s.resets, s.week, s.week_resets, s.credits, l.stop,
-      ${PACED_UNTIL} pacedUntil from seats s left join seat_list l on l.id = s.id where ${SEAT_READY}`,
+      ${pacedUntilOf('s')} pacedUntil, coalesce(s.pace_runs, 1) paceRuns from seats s left join seat_list l on l.id = s.id where ${SEAT_READY} and coalesce(l.paused, 0) = 0`,
     )
-    .all({ now: t }) as {
+    .all({ now: t, checks: checksParam(t) }) as {
     id: string;
     engine: string;
     cli: string;
@@ -2222,6 +2376,7 @@ function readySeats(t: number) {
     credits: number | null;
     stop: number | null;
     pacedUntil: number | null;
+    paceRuns: number;
   }[];
   return seats.map(s => ({
     ...s,
@@ -2348,6 +2503,8 @@ function beat(id: number, o: { util?: number; probe?: boolean; reined?: boolean 
       }
     | undefined;
   if (job?.stopping) return { ok: true, stop: job.stopping };
+  // (a session idle an hour that waits on nothing ends at once, and a fresh one takes its job: idleruns.ts)
+  if (job && idleruns.endIfDead(id, job.kind)) return { ok: true, yield: 'waiting', immediate: true };
   // (a review or ruling paused with its thread stops at its next step while the pause holds: suspendReview; one HQ takes
   // off the worker for its room yields with or without a pause: offWorker)
   if (job?.suspending && (job.off_worker || pausedOn(id)))
@@ -2614,13 +2771,17 @@ function handBack(job: Job, r: RunEnd, retryChat: boolean) {
       and (util is not null or week is not null)`,
       )
       .get(job.engine, heldBy);
+  // A dead session HQ ended (idleruns.ts) isn't resumed: its next run starts a new one in the kept clone, told why in
+  // its briefing (claimed), its note left as it was.
+  const fresh = idleruns.startAfresh(job.id);
   db.prepare("update jobs set status = 'queued', seat = null, not_before = ?, note = ?, held_by = ? where id = ?").run(
     retryChat ? now() + 120_000 : roomElsewhere || chatTurn ? 0 : (r.resetAt ?? 0),
-    pausedNote(job.note),
+    fresh ? job.note : pausedNote(job.note),
     roomElsewhere ? null : heldBy,
     job.id,
   );
   db.prepare('update jobs set cut = ? where id = ?').run(cutNote(r), job.id);
+  if (fresh) db.prepare('update jobs set session = null where id = ?').run(job.id);
   settle(
     job,
     'sleeping',
@@ -2740,19 +2901,7 @@ function recordEnd(job: Job, r: RunEnd) {
 
 // What an ended run hands on: the waits on it, its review, the call ledger and the jobs after it.
 function handOn(job: Job, r: RunEnd) {
-  // work that ended without a pull request never meets the waits on it, but a task's on its thread's branch does, at the
-  // thread's merge (threadorder.ts.)
-  const later = r.status === 'done' && threadorder.onThreadBranch(job, r.branch);
-  if (job.kind === 'work' && (r.status === 'failed' || !r.pr) && !later)
-    strandedWaits(
-      job,
-      r.status === 'stopped' ? 'stopped' : r.status === 'failed' ? 'failed' : 'ended done with no pull request',
-    );
-  // (one that pushed nothing, failed or stopped ends its thread, or wakes its owner to judge it, once all of it is in:
-  // threadends.ts runEnded.)
-  const ended = r.status === 'failed' || r.status === 'stopped' || (r.status === 'done' && !r.sha);
-  if ((job.kind === 'work' || job.kind === 'meeting') && ended && !r.pr && !later && job.thread)
-    threadends.runEnded(job.thread);
+  endedUnmerged(job, r);
   // (a judge that left a deliverable open with nothing drawn in it closes it, or wakes its owner again if it failed:
   // threadjudge.ts ended.)
   threadjudge.ended(job.id, r.status);
@@ -2788,6 +2937,26 @@ function handOn(job: Job, r: RunEnd) {
     reviewFinished({ ...job, status: r.status, pr: job.pr, round: job.round ?? 1, branch: job.branch! }).catch(err =>
       console.error('Could not pass the review on:', err),
     );
+}
+
+// What a run that ended without a pull request hands on. Work that ended so never meets the waits on it, but a task's
+// on its thread's branch does, at the thread's merge (threadorder.ts). A failed push's saved work goes to HQ's landing,
+// which takes its place with what waits on it (savedwork.ts landSaved). One that pushed nothing, failed or stopped ends
+// its thread, or wakes its owner to judge it, once all of it is in (threadends.ts runEnded).
+function endedUnmerged(job: Job, r: RunEnd) {
+  const later = r.status === 'done' && threadorder.onThreadBranch(job, r.branch);
+  const landing =
+    job.kind === 'work' && r.status === 'failed' && !r.pr && !job.pr
+      ? savedWork.landSaved(job.id, r.branch ?? workBranchOf(job), r.result)
+      : undefined;
+  if (job.kind === 'work' && (r.status === 'failed' || !r.pr) && !later && landing === undefined)
+    strandedWaits(
+      job,
+      r.status === 'stopped' ? 'stopped' : r.status === 'failed' ? 'failed' : 'ended done with no pull request',
+    );
+  const ended = r.status === 'failed' || r.status === 'stopped' || (r.status === 'done' && !r.sha);
+  if ((job.kind === 'work' || job.kind === 'meeting') && ended && !r.pr && !later && job.thread)
+    threadends.runEnded(job.thread);
 }
 
 // The opening of a long text for a one-line preview, marked when it's cut.
@@ -2878,18 +3047,24 @@ type Windows = {
   week?: number;
   weekResets?: number;
   pace?: boolean;
+  paceRuns?: number;
+  paceRest?: number;
   credits?: boolean;
+  // a held Codex seat's real hold end, beside its `until` (the next check: the worker's reportedUntil)
+  heldUntil?: number;
 };
 export function setSeat(id: string, engine: string, state: string, until?: number, note?: string, w: Windows = {}) {
   const share = (n: unknown) => (typeof n === 'number' && isFinite(n) ? Math.min(1, Math.max(0, n)) : null),
     at = (n: unknown) => (typeof n === 'number' && isFinite(n) ? n : null);
   db.prepare(
-    `insert into seats (id, engine, state, until, note, updated, util, resets, week, week_resets, pace, credits)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `insert into seats (id, engine, state, until, note, updated, util, resets, week, week_resets, pace, credits, pace_runs,
+    pace_rest, held_until)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     on conflict(id) do update set engine = excluded.engine, state = excluded.state, until = excluded.until,
     note = excluded.note, updated = excluded.updated, util = excluded.util, resets = coalesce(excluded.resets, seats.resets),
     week = excluded.week, week_resets = coalesce(excluded.week_resets, seats.week_resets), pace = excluded.pace,
-    credits = excluded.credits`,
+    credits = excluded.credits, pace_runs = excluded.pace_runs, pace_rest = excluded.pace_rest,
+    held_until = excluded.held_until`,
   ).run(
     id,
     engine,
@@ -2903,6 +3078,9 @@ export function setSeat(id: string, engine: string, state: string, until?: numbe
     at(w.weekResets),
     w.pace === true ? 1 : null,
     w.credits === true ? 1 : null,
+    typeof w.paceRuns === 'number' && Number.isInteger(w.paceRuns) && w.paceRuns >= 0 ? w.paceRuns : null,
+    at(w.paceRest),
+    at(w.heldUntil),
   );
   recordSeatReading(id, w);
   seatReported(id);
@@ -3010,6 +3188,17 @@ const urgentWork = (job?: number) => {
   const timing = job == null ? undefined : ordering.current().timings.get(job);
   return !!timing && (timing.latestStart !== null || !!timing.board);
 };
+// Something the board asked for, which still rings in the first minutes of its quiet hours (board.ts quiet): its own
+// work, or work on a deliverable whose time it set itself. Read as a card shows: filed (createRequest) or later (later.ts
+// ring).
+export const askedFor = (job?: number | null) =>
+  job != null &&
+  (!!ordering.current().timings.get(job)?.board ||
+    !!db
+      .prepare(
+        `select 1 from jobs j join thread_windows w on w.id = j.thread where j.id = ? and w.deadline_by = '${BOARD}'`,
+      )
+      .get(job));
 // What a card is made of (createRequest)
 type NewCard = {
   kind: string;
@@ -3067,6 +3256,10 @@ export function createRequest(r: NewCard) {
     return 400;
   const reworded = rewordSeatCard(r.seat, r.body);
   if (reworded) return reworded;
+  // (the board's quiet hours now, for its author: hq ask says when it's up. Read before anything is filed: a profile that
+  // no longer reads throws.)
+  const asked = askedFor(r.job);
+  const quiet = board.quiet(Date.now(), asked);
   // A card from the board's own work, or work with a latest start, rings whatever urgency its agent gave it (urgentWork).
   const urgency = urgentWork(r.job) ? 'now' : (r.urgency ?? 'today');
   const id = insertCard(r, urgency, topic.topic, hidden.at, box);
@@ -3075,18 +3268,21 @@ export function createRequest(r: NewCard) {
   publish({ type: 'log', agent: r.agent ?? roles().process, text: `Asked the board: ${r.title}` });
   // (one about a note shows in the book too, under the note's group: its page is read again.)
   bookReadsAgain(r);
-  const shows = !hidden.at && !r.holds?.length;
-  if (shows) {
-    announceRequest({
-      id,
-      kind: r.kind,
-      title: r.title,
-      urgency,
-      grant: r.approves ? approvals.describe(r.approves) : undefined,
-    }); // rings the board's devices, or waits for the digest (a card for later or held: when it shows, later.ts sweep)
-    tips.cardShows({ kind: r.kind, agent: r.agent ?? null });
-  }
-  return { id };
+  if (!hidden.at && !r.holds?.length) showFiled(id, r, urgency, asked);
+  return { id, ...(quiet && { quiet_until: quiet.until }) };
+}
+// A card that shows as it's filed rings the board's devices, or waits for the digest (a card for later or held: when it
+// shows, later.ts sweep), and brings its tip
+function showFiled(id: number, r: NewCard, urgency: string, asked: boolean) {
+  announceRequest({
+    id,
+    kind: r.kind,
+    title: r.title,
+    urgency,
+    grant: r.approves ? approvals.describe(r.approves) : undefined,
+    asked,
+  });
+  tips.cardShows({ kind: r.kind, agent: r.agent ?? null });
 }
 
 // A card's photo fields go next to an answer box: not with keys, an approval or a sign-in (and document and zip fields,

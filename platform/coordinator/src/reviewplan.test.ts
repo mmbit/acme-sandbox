@@ -18,6 +18,20 @@ function forecast(pr: number, extra: number[] = []) {
   return { input, sizes, seen: play(input, sizes) };
 }
 
+function measuredTriageAndRuling(now: number) {
+  for (const [stage, minutes] of [
+    ['triage', 2],
+    ['ruling', 3],
+  ] as const)
+    h.pastJob({
+      agent: 'quill',
+      engine: 'claude',
+      kind: 'consolidate',
+      stage,
+      run: { started: now - 10 * MINUTE, ended: now - (10 - minutes) * MINUTE },
+    });
+}
+
 test('work before its first push budgets triage and a ruling before releasing dependents', async () => {
   await h.capacity({ claude: 1, codex: 1 });
   const cancelOpenWork = scenarioCleanup(h.db);
@@ -442,18 +456,7 @@ test('remaining branch work gets a fresh measured round after an earlier push', 
   const cancelOpenWork = scenarioCleanup(h.db);
   const threadpush = await import('./threadpush.ts');
   const { threadOutlooks } = await import('./forecast.ts');
-  const now = Date.now();
-  for (const [stage, minutes] of [
-    ['triage', 2],
-    ['ruling', 3],
-  ] as const)
-    h.pastJob({
-      agent: 'quill',
-      engine: 'claude',
-      kind: 'consolidate',
-      stage,
-      run: { started: now - 10 * MINUTE, ended: now - (10 - minutes) * MINUTE },
-    });
+  measuredTriageAndRuling(Date.now());
   for (const [index, decision, running, round] of [
     [0, 'changes', false, 6],
     [1, 'changes', true, 6],
@@ -495,57 +498,97 @@ test('remaining branch work gets a fresh measured round after an earlier push', 
   }
 });
 
-test('branch work waits for the current round still outstanding, and a board-held pull request holds it', async () => {
+test('branch work waits for the current round still outstanding', async () => {
   await h.capacity({ claude: 1, codex: 1 });
   const cancelOpenWork = scenarioCleanup(h.db);
   const threadpush = await import('./threadpush.ts');
-  const now = Date.now();
-  for (const [stage, minutes] of [
-    ['triage', 2],
-    ['ruling', 3],
-  ] as const)
-    h.pastJob({
-      agent: 'quill',
-      engine: 'claude',
-      kind: 'consolidate',
-      stage,
-      run: { started: now - 10 * MINUTE, ended: now - (10 - minutes) * MINUTE },
-    });
-  for (const [index, status] of [
-    [0, 'open'],
-    [1, 'board'],
-  ] as const) {
-    const thread = h.dueThread();
-    const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
-    const pr = 1410 + index;
-    const branch = `job/${author}`,
-      sha = 'e'.repeat(40);
-    h.storedPr(pr, author, status, ['game.ts'], { round: 6, sha, since: author });
-    threadpush.pushed(jobs.findJob(author)!, { status: 'done', branch, sha, pr });
-    // the round-6 ruling on another engine than the work, still outstanding, or already gone to the board
-    const ruling =
-      status === 'open'
-        ? h.queue({ agent: 'quill', engine: 'codex', kind: 'consolidate', pr, branch, sha, round: 6, stage: 'ruling' })
-        : h.ended({ agent: 'quill', kind: 'consolidate', pr, branch, sha, round: 6, stage: 'ruling' }, 'done', 'merge');
-    const continuation = h.queue({ agent: 'bolt', engine: 'claude', thread });
-    const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
-    const { input, sizes } = forecast(pr, [author, continuation, after]);
-    sizes.set(ruling, { agent_ms: 60 * MINUTE });
-    for (const pace of ['usual', 'slow'] as const) {
-      const seen = play(input, sizes, { pace });
-      const finish = seen.get(continuation)!;
-      if (status === 'board') {
-        assert.equal(finish.merged, null, 'the board hold shows no merge');
-        assert.equal(seen.get(author)!.merged, null);
-        assert.equal(seen.get(after)!.start, null);
-        continue;
-      }
-      assert.equal(finish.done, input.now + MINUTE);
-      assert.equal(finish.merged, input.now + 65 * MINUTE, 'the next round follows the current ruling, not the work');
-      assert.equal(seen.get(author)!.merged, finish.merged, 'earlier tasks share the branch merge');
-      assert.equal(seen.get(after)!.start, finish.merged, 'dependent work starts at the merge');
-    }
-    if (status === 'open') h.failedJobs(ruling);
-    cancelOpenWork();
+  measuredTriageAndRuling(Date.now());
+  const thread = h.dueThread();
+  const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
+  const pr = 1410;
+  const branch = `job/${author}`,
+    sha = 'e'.repeat(40);
+  h.storedPr(pr, author, 'open', ['game.ts'], { round: 6, sha, since: author });
+  threadpush.pushed(jobs.findJob(author)!, { status: 'done', branch, sha, pr });
+  // the round-6 ruling, on another engine than the work, still outstanding
+  const ruling = h.queue({
+    agent: 'quill',
+    engine: 'codex',
+    kind: 'consolidate',
+    pr,
+    branch,
+    sha,
+    round: 6,
+    stage: 'ruling',
+  });
+  const continuation = h.queue({ agent: 'bolt', engine: 'claude', thread });
+  const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
+  const { input, sizes } = forecast(pr, [author, continuation, after]);
+  sizes.set(ruling, { agent_ms: 60 * MINUTE });
+  for (const pace of ['usual', 'slow'] as const) {
+    const seen = play(input, sizes, { pace });
+    const finish = seen.get(continuation)!;
+    assert.equal(finish.done, input.now + MINUTE);
+    assert.equal(finish.merged, input.now + 65 * MINUTE, 'the next round follows the current ruling, not the work');
+    assert.equal(seen.get(author)!.merged, finish.merged, 'earlier tasks share the branch merge');
+    assert.equal(seen.get(after)!.start, finish.merged, 'dependent work starts at the merge');
   }
+  h.failedJobs(ruling);
+  cancelOpenWork();
+});
+
+test('a board-held pull request shows no merge, even below the measured rounds of its review class', async () => {
+  await h.capacity({ claude: 1, codex: 1 });
+  const cancelOpenWork = scenarioCleanup(h.db);
+  const threadpush = await import('./threadpush.ts');
+  measuredTriageAndRuling(Date.now());
+  const past = h.ended({ agent: 'bolt' });
+  h.storedPr(1419, past, 'merged', [], { round: 3, reviewClass: 'deep' });
+  const thread = h.dueThread();
+  const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
+  const pr = 1411;
+  const branch = `job/${author}`,
+    sha = 'e'.repeat(40);
+  h.storedPr(pr, author, 'board', ['game.ts'], { round: 1, sha, since: author, reviewClass: 'deep' });
+  threadpush.pushed(jobs.findJob(author)!, { status: 'done', branch, sha, pr });
+  // round 1 of the class's three, already ruled
+  h.ended({ agent: 'quill', kind: 'consolidate', pr, branch, sha, round: 1, stage: 'ruling' }, 'done', 'changes');
+  const continuation = h.queue({ agent: 'bolt', engine: 'claude', thread });
+  const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
+  const { input, sizes } = forecast(pr, [author, continuation, after]);
+  for (const pace of ['usual', 'slow'] as const) {
+    const seen = play(input, sizes, { pace });
+    assert.equal(seen.get(continuation)!.merged, null, 'the board hold shows no merge');
+    assert.equal(seen.get(author)!.merged, null);
+    assert.equal(seen.get(after)!.start, null, 'dependent work waits for it');
+  }
+  cancelOpenWork();
+  h.clearReviewHistory();
+});
+
+test('later branch work on a ruled stuck pull request merges after the round its push opens', async () => {
+  await h.capacity({ claude: 1, codex: 1 });
+  const cancelOpenWork = scenarioCleanup(h.db);
+  const threadpush = await import('./threadpush.ts');
+  measuredTriageAndRuling(Date.now());
+  const thread = h.dueThread();
+  const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
+  const pr = 1412;
+  const branch = `job/${author}`,
+    sha = 'e'.repeat(40);
+  h.storedPr(pr, author, 'stuck', ['game.ts'], { round: 1, sha, since: author });
+  threadpush.pushed(jobs.findJob(author)!, { status: 'done', branch, sha, pr });
+  // round 1 ruled "changes" and its fix ended short twice: the continuation's push opens round 2 (review.ts openRound)
+  h.ended({ agent: 'quill', kind: 'consolidate', pr, branch, sha, round: 1, stage: 'ruling' }, 'done', 'changes');
+  const continuation = h.queue({ agent: 'bolt', engine: 'claude', thread });
+  const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
+  const { input, sizes } = forecast(pr, [author, continuation, after]);
+  for (const pace of ['usual', 'slow'] as const) {
+    const seen = play(input, sizes, { pace });
+    const finish = seen.get(continuation)!;
+    assert.equal(finish.merged, finish.done! + 5 * MINUTE, "round 2's measured triage and ruling follow the push");
+    assert.equal(seen.get(author)!.merged, finish.merged, 'earlier tasks share the branch merge');
+    assert.equal(seen.get(after)!.start, finish.merged, 'dependent work starts at the merge');
+  }
+  cancelOpenWork();
 });

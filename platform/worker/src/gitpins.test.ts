@@ -1,37 +1,18 @@
 // node --test src/gitpins.test.ts (real mirrors, profile publication and borrowed review clones)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { gitFlow } from './git.ts';
+import { seededMirror } from './mirror.fixture.ts';
 
 for (const mutation of ['withdraw', 'replace', 'merge'] as const) {
   test(`cleanup preserves a pinned review clone through direct profile ${mutation}`, async () => {
-    const folder = mkdtempSync(join(tmpdir(), 'git-pin-'));
-    const remote = join(folder, 'remote.git'),
-      mirror = join(folder, 'mirror.git');
+    let clones: string[] = [];
+    const { folder, remote, mirror, env, git, tree, main, flow } = seededMirror(() => clones);
     const writer = join(folder, 'writer'),
       review = join(folder, 'review');
-    const env = {
-      ...process.env,
-      GIT_AUTHOR_NAME: 'Test',
-      GIT_AUTHOR_EMAIL: 'test@example.invalid',
-      GIT_COMMITTER_NAME: 'Test',
-      GIT_COMMITTER_EMAIL: 'test@example.invalid',
-    };
-    const git = (...args: string[]) => execFileSync('git', args, { encoding: 'utf8', env }).trim();
     const who = { name: 'Test', email: 'test@example.invalid' };
     try {
-      git('init', '-q', '--bare', '-b', 'main', remote);
-      const tree = git('--git-dir', remote, 'mktree');
-      const main = git('--git-dir', remote, 'commit-tree', tree, '-m', 'seed');
-      git('--git-dir', remote, 'update-ref', 'refs/heads/main', main);
-      let clones: string[] = [];
-      const flow = gitFlow({ mirror, remote, base: 'main', clones: () => clones });
-      flow.ensureMirror();
-      flow.fetchMirror();
       const job = flow.forAgent({ env });
       job.clone(writer, 'job/1');
       mkdirSync(join(writer, 'company/people'), { recursive: true });

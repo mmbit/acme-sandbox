@@ -125,7 +125,8 @@ test('a job with no open thread to inherit must name one, and the refusal says t
   // a thread that's done hands nothing on (the step queued above cancelled: it'd hold the lead in the thread's order)
   h.cancelQueued();
   const lead = await inThread('wren', levels);
-  assert.deepEqual(plan.done(levels, 'wren'), { ok: true });
+  // (closed by the fixture: plan.done waits for the lead)
+  h.closedThreads(levels);
   assert.match((await handOff(lead)).body.error, /its deliverable game\/levels is done/);
   // a company that doesn't ask for threads queues it without one
   const file = `${h.repo}/company/projects.yaml`;
@@ -516,7 +517,8 @@ test("a team member speaks as itself: never with its lead's rights over plans an
   // the lead, named or not, keeps its own rights
   assert.equal((await as('project-notes', { project: 'game', text: 'Levels play.' }, 'wren')).status, 200);
   assert.equal(projects.sentenceOf('game')?.by, 'wren');
-  assert.equal((await as('plan/done', { thread: 'game/levels' }, 'wren')).status, 200);
+  const kept = await as('plan/done', { thread: 'game/levels' }, 'wren');
+  assert.match(kept.body.error, new RegExp(`task #${lead.id}\\b.*running`), 'past the rights, held by its own job');
   const own = await h.agent('plan/thread', lead.token, thread);
   assert.equal(projects.ownerOf(own.body), 'wren');
 });
@@ -817,7 +819,26 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   );
   assert.match((await hq('project', 'say', 'game', 'The boss is next.')).out, /Recorded game's sentence\./);
   assert.match((await hq('thread', 'new', 'game', 'X', 'Y')).out, /hq plan deliverable/);
+  // (done waits for the queued task)
+  assert.match((await hq('plan', 'done', 'game/boss-fight')).out, /task #\d+\b.*queued/);
+  h.cancelQueued();
   assert.match((await hq('plan', 'done', 'game/boss-fight')).out, /Deliverable game\/boss-fight is done\./);
+});
+
+// A job that judges its deliverable's goal met can't close it around itself: its push would find the deliverable done,
+// take no branch there and wake nobody at its end
+test('a deliverable is done only once none of its tasks is queued or at work', async () => {
+  reset();
+  const levels = started('levels');
+  const lead = await inThread('wren', levels);
+  const next = h.queue({ agent: 'moss', title: 'Level 4', thread: levels });
+  assert.match(plan.done(levels, 'wren') as string, new RegExp(`task #${lead.id}\\b.*running`), 'its own job included');
+  await h.finish(lead);
+  assert.match(plan.done(levels, 'wren') as string, new RegExp(`task #${next}\\b.*queued`));
+  assert.equal(projects.findThread(levels)!.status, 'open');
+  const last = await h.claimJob(next);
+  await h.finish(last);
+  assert.deepEqual(plan.done(levels, 'wren'), { ok: true });
 });
 
 // The jobs HQ makes from the same template every time go to the project projects.yaml's made sets for their kind and

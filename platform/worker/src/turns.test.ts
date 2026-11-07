@@ -16,7 +16,7 @@ test('two at a time: the third starts only once one ends, the rest in the order 
     started: string[] = [],
     runs = ['a', 'b', 'c', 'd'].map(name => ({ name, ...held() }));
   const all = runs.map(r =>
-    turn(() => {
+    turn.take(() => {
       started.push(r.name);
       return r.run();
     }),
@@ -28,7 +28,7 @@ test('two at a time: the third starts only once one ends, the rest in the order 
   assert.deepEqual(started, ['a', 'b', 'c']);
   // a newcomer while c and a run waits behind d
   const late = held();
-  const lateDone = turn(() => {
+  const lateDone = turn.take(() => {
     started.push('late');
     return late.run();
   });
@@ -45,21 +45,18 @@ test('two at a time: the third starts only once one ends, the rest in the order 
 test('a run that fails gives its place back, and its error reaches its caller', async () => {
   const turn = fewAtOnce(1);
   await assert.rejects(
-    turn(() => Promise.reject(new Error('broke'))),
+    turn.take(() => Promise.reject(new Error('broke'))),
     /broke/,
   );
-  assert.equal(await turn(async () => 'next'), 'next');
+  assert.equal(await turn.take(async () => 'next'), 'next');
 });
 
 test('only a run that had to wait hears how long', async () => {
   const turn = fewAtOnce(1),
     first = held(),
     heard: number[] = [];
-  const one = turn(first.run, ms => heard.push(ms));
-  const two = turn(
-    async () => 'second',
-    ms => heard.push(ms),
-  );
+  const one = turn.take(first.run, { waited: ms => heard.push(ms) });
+  const two = turn.take(async () => 'second', { waited: ms => heard.push(ms) });
   await settle();
   assert.deepEqual(heard, []);
   first.end();
@@ -75,13 +72,12 @@ test('a waiting run of urgent work takes the next place before those that came e
     urgent = new Set(['c']),
     runs = ['a', 'b', 'c', 'd'].map(name => ({ name, ...held() }));
   const all = runs.map(r =>
-    turn(
+    turn.take(
       () => {
         started.push(r.name);
         return r.run();
       },
-      undefined,
-      () => urgent.has(r.name),
+      { first: () => urgent.has(r.name) },
     ),
   );
   await settle();
@@ -122,9 +118,9 @@ test('resource waits name the active holders, follow the handover and end with t
   const turn = fewAtOnce(1),
     first = held(),
     second = held();
-  const one = turn(first.run, undefined, undefined, 10);
-  const two = turn(second.run, undefined, undefined, 20);
-  const three = turn(async () => 'done', undefined, undefined, 30);
+  const one = turn.take(first.run, { job: 10 });
+  const two = turn.take(second.run, { job: 20 });
+  const three = turn.take(async () => 'done', { job: 30 });
   assert.deepEqual(turn.waits(), [
     { job: 20, on: 10 },
     { job: 30, on: 10 },

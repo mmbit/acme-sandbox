@@ -5,4 +5,7 @@ ARG IMAGE=node:24.22.1-slim
 FROM ${IMAGE}
 COPY helper.mjs manager.mjs /opt/helper/
 USER 0:0
+# A fresh Docker volume at /work (this server's) copies this folder's mode. Every run's user may write in it, and only
+# a file's owner may remove it, as on the lent machines' in-memory /work (mode 1777).
+RUN mkdir -p /work && chmod 1777 /work
 ENTRYPOINT ["node", "/opt/helper/helper.mjs"]

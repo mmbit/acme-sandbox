@@ -5,20 +5,23 @@ import { parse } from 'yaml';
 import { DATA_DIR, REPO_DIR } from './config.ts';
 
 // org.yaml's company.timeZone, an IANA name, or UTC without one. A name that isn't a time zone throws: it's our own config,
-// fixed there, never read as UTC. Each name is checked once: the clock is read for every event, and making a formatter
-// takes ~0.2 ms.
+// fixed there, never read as UTC.
+export const zoneOf = (org: any) =>
+  org?.company?.timeZone == null ? 'UTC' : namedZone(org.company.timeZone, 'company/org.yaml: company.timeZone');
+// A zone's IANA name as a file gives it (where: the file and its key, for the error), or an error that says it isn't one.
+// Each name is checked once: the clock is read for every event, and making a formatter takes ~0.2 ms.
+// (where)
 const zones = new Map<string, string>();
-export function zoneOf(org: any) {
-  const tz = org?.company?.timeZone;
-  if (tz == null) return 'UTC';
-  if (!zones.has(tz)) {
+export function namedZone(tz: unknown, where: string) {
+  const key = String(tz);
+  if (!zones.has(key)) {
     try {
-      zones.set(tz, new Intl.DateTimeFormat('en', { timeZone: tz }).resolvedOptions().timeZone);
+      zones.set(key, new Intl.DateTimeFormat('en', { timeZone: key }).resolvedOptions().timeZone);
     } catch {
-      throw new Error(`company/org.yaml: company.timeZone ${JSON.stringify(tz)} isn't a time zone`);
+      throw new Error(`${where} ${JSON.stringify(tz)} isn't a time zone`);
     }
   }
-  return zones.get(tz)!;
+  return zones.get(key)!;
 }
 
 // A time on a zone's clock, in ms, at the zone's offset on that date (company.ts companyMoment)

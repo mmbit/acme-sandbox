@@ -18,6 +18,8 @@ export function advance(play: Play, now: number, next: number) {
 export function finish(play: Play, now: number) {
   for (const run of play.started.filter(r => r.ends <= now)) {
     play.started.splice(play.started.indexOf(run), 1);
+    const stint = run.active.at(-1);
+    if (run.seat && stint) capacity.rest(run.seat, stint.end - stint.start, now, play.seats);
     if (run.state === 'pausing') {
       run.state = 'waiting';
       run.seat = null;

@@ -1,21 +1,32 @@
-// A few at a time across the worker, the rest waiting their turn in the order they came: for checks that each take
-// every core (a node --test run starts a file per core), where ten at once slow each other down. A waiting run whose
-// `first` says so as a place frees (urgent work's: the heartbeat's `first`) takes it before those that came earlier;
-// the others keep their order among themselves.
+// Waiters in the order they came, but one whose `first` says so as a place frees (urgent work's: the heartbeat's
+// `first`) takes it before those that came earlier; the others keep their order among themselves. A freed place goes
+// straight to `next`, so a newcomer can't take it first (fewAtOnce, checkplaces.ts CheckPlaces).
+export function waitingLine<W extends { first?: () => boolean }>() {
+  const waiters: W[] = [];
+  return {
+    waiters: waiters as readonly W[],
+    add: (waiter: W) => void waiters.push(waiter),
+    remove: (waiter: W) => void waiters.splice(waiters.indexOf(waiter), 1),
+    next: (): W | undefined => {
+      const first = waiters.findIndex(w => w.first?.());
+      return waiters.splice(Math.max(first, 0), 1)[0];
+    },
+  };
+}
+
+// A few at a time across the worker, the rest waiting their turn (waitingLine): for checks that each take every core (a
+// node --test run starts a file per core), where ten at once slow each other down.
+type Turn = { waited?: (ms: number) => void; first?: () => boolean; job?: number };
 export function fewAtOnce(limit: number) {
   let running = 0;
-  const waiting: { go: () => void; first?: () => boolean; job?: number }[] = [];
+  const waiting = waitingLine<Turn & { go: () => void }>();
   const holders = new Set<number>();
-  // runs `run` once there's room; `waited` hears how long it waited (ms), when it had to
-  const take = async <T>(
-    run: () => Promise<T>,
-    waited?: (ms: number) => void,
-    first?: () => boolean,
-    job?: number,
-  ): Promise<T> => {
+  // Runs `run` once there's room. `waited` hears how long it waited (ms), when it had to. `job` is the job the run is
+  // for, named in `waits` while it waits or holds a place.
+  const take = async <T>(run: () => Promise<T>, { waited, first, job }: Turn = {}): Promise<T> => {
     const askedAt = Date.now();
     const queued = running >= limit;
-    if (queued) await new Promise<void>(go => waiting.push({ go, first, job }));
+    if (queued) await new Promise<void>(go => waiting.add({ go, first, job }));
     else running++;
     if (job !== undefined) holders.add(job);
     try {
@@ -23,20 +34,20 @@ export function fewAtOnce(limit: number) {
       return await run();
     } finally {
       if (job !== undefined) holders.delete(job);
-      // a finished run hands its place straight to the next in line, so a newcomer can't take it first
-      const firstAt = waiting.findIndex(w => w.first?.());
-      const [next] = waiting.splice(Math.max(firstAt, 0), 1);
+      const next = waiting.next();
       if (next) next.go();
       else running--;
     }
   };
+  // Pair each waiting job with every other job holding a place. worker.ts includes these resource waits in its
+  // capacity report to the coordinator's room.ts.
   const waits = () =>
-    waiting.flatMap(waiter =>
+    waiting.waiters.flatMap(waiter =>
       waiter.job === undefined
         ? []
         : [...holders].filter(on => on !== waiter.job).map(on => ({ job: waiter.job!, on })),
     );
-  return Object.assign(take, { waits });
+  return { take, waits };
 }
 
 // Waits until `roomy` says there's room, asking every `ms`. While a waiter whose `first` says so waits, the others

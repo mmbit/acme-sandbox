@@ -19,8 +19,9 @@ starts another per-process budget and preserves earlier rows.
 ## Push checks
 
 
-A session returns its work slot and seat place before its push checks queue. The fifteen work users and the intercom
-user stay available for sessions. Fifteen separate checks users run pushes in isolation, with one push per user.
+A session returns its work slot and seat place before its push checks queue. The work users and the intercom user
+stay available for sessions. Separate checks users, one per work slot (slots.ts `CHECK_SLOTS`), run pushes in
+isolation, with one push per user.
 A push waiting for a checks user has root-owned folders. The worker kills and sweeps the previous user's processes
 and temporary files before handing its folders over. Checks retain their own user through test-turn, browser and
 memory waits. A full checks-user pool queues more checks without holding any session slots.
@@ -34,9 +35,8 @@ job lease but consume no session or seat place. Checks' actual memory remains in
 and share enforcement. The forecast conservatively keeps that memory external until a later report measures its
 release. `heldSlots` and `totalSlots` continue to describe work slots alone.
 
-The checks users are created in the worker Dockerfile. Deployment builds that image through `infra/compose.yaml`
-and `infra/sync.sh`, then replaces the changed worker container. This first release needs the image rebuild, rather
-than only a code reload. Later code-only releases retain the ordinary reload path.
+The checks users are created in the worker Dockerfile, so a change to their number needs the image rebuilt
+(`infra/compose.yaml`, `infra/sync.sh`) rather than only a code reload.
 
 ## Account readings
 
@@ -59,3 +59,32 @@ on the seat.
 Failed reads leave other seats' checks running and retry while still due,
 at the same per-seat intervals. Paused, removed, signed-out and key seats
 are excluded.
+
+## Seat pacing
+
+Pacing reduces concurrent ordinary runs when a seat is ahead of its week's pace.
+The allowance per wall hour is the remaining share to the pacing target, minus the
+two-point reading margin, divided by hours until reset. The worker divides that
+allowance by the seat's measured weekly cost per agent-hour and rounds down to a
+whole number of concurrent runs. A seat whose one run costs more than that allowance
+keeps one place. After each run on it, the seat rests with none, long enough that the
+run's spend over the run and the rest together comes to the allowance. Its average
+spend so lands on its week's budget by the reset, instead of reaching its stop days early. A rest still going is added to, and
+none lasts past the reset. The worker reports the rest's end to HQ, which hands it back
+in the seat list after a restart. An unmeasured or zero cost permits one place, with no
+rest, until a useful price is available. The coordinator supplies its existing measured
+seat prices with the worker's seat list.
+
+The same admission limit includes the near-stop band: within ten points of either
+active window's stop, one run at a time. Configured stops still admit no runs at or
+past the stop. Running work is not killed by a reduction in pacing places. New
+ordinary claims wait for a place to free or a rest to end, while urgent claims can use
+spare places, and a resting seat, within the stop and engine limits. Urgent runs count
+toward the next rest all the same. Intercom and incident reservations keep their
+existing access. Credits bypass quota stops but retain weekly pacing.
+
+The forecast uses the same allowance and rests with its measured prices. HQ's seat
+line names the ordinary concurrency, or the rest's end, and the remaining weekly
+allowance per wall hour. Changing work costs, provider reading lag and urgent work
+still move measured spend around the allowance. Stop handling remains responsible
+for keeping work inside the seat's configured window.

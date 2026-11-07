@@ -73,8 +73,11 @@ const server = createServer((req, res) => {
       const a = new URL(u, 'http://x').searchParams.get('agent');
       return res.end(JSON.stringify(a ? open[a] ?? [] : Object.values(open).flat()));
     }
-    if (u === '/api/agent/pauses')
-      return res.end(JSON.stringify({ target: 'shop/checkout', why: JSON.parse(b).why, until: [], untilTime: '2026-10-26T08:00:00.000Z', held: 1, running: [] }));
+    if (u === '/api/agent/pauses') {
+      const asked = JSON.parse(b);
+      return res.end(JSON.stringify({ target: 'shop/checkout', why: asked.why, until: asked.until.map((id: number) => ({ id, agent: 'kit', state: 'queued' })),
+        untilWhole: asked.untilWhole.map((words: string) => ({ words })), untilTime: '2026-10-26T08:00:00.000Z', held: 1, running: [] }));
+    }
     if (u === '/api/agent/room') { res.statusCode = roomStatus; return res.end(JSON.stringify({ line: roomLine })); }
     if (u.startsWith('/api/agent/orders')) return res.end(JSON.stringify(ordersReply));
     if (u === '/api/agent/owed') return res.end(JSON.stringify(owedList));
@@ -1066,6 +1069,9 @@ test('say tells what is true now: queued for a running job, or a job of its own;
   said = { id: 20, state: 'job', job: 940, why: 'deliverable' };   // nobody live on it: a job on it, for its owner
   assert.equal((await run(['say', '--deliverable', 'shop/logs', 'Logs moved'])).out,
     "Nobody is working on shop/logs now: it's job #940 for its owner on that deliverable (message #20), which starts once it's sorted into the plan. Check: hq sent 20\n");
+  // a needed answer's job runs beside it, not on it
+  assert.equal((await run(['say', '--needs-answer', '--deliverable', 'shop/logs', 'Which logs?'])).out,
+    "Nobody is working on shop/logs now: it's job #940 for its owner on its own beside that deliverable, outside its task order (message #20), which starts once it's sorted into the plan. Check: hq sent 20\n");
   assert.match((await run(['say', 'bolt', '--job', 'x', 'hi'])).err, /^usage: hq say .*--job <n>/);
   const long = await run(['say', 'bolt', '-'], 'x'.repeat(8001));
   assert.equal(long.code, 1); assert.match(long.err, /8001 characters, over the 8000 .* Nothing was sent/);
@@ -1313,12 +1319,14 @@ test('wait and mail use the agent routes too; the worker token is never sent', a
   assert.ok(seen.every(r => !r.body || (r.body.agent === undefined || r.url === '/api/agent/job') && (r.body.job === undefined || r.url === '/api/agent/message' && r.body.to !== undefined)));
 });
 
-test("a pause's --until-time confirms on hq's clock, the board's on a run that speaks to it", async () => {
+test("a pause's --until-time confirms on hq's clock, the board's on a run that speaks to it, and --until takes a milestone or a job", async () => {
   const pause = (zone?: string) => new Promise<string>((resolve, reject) =>
-    execFile('bash', [HQ, 'thread', 'pause', 'shop/checkout', 'Waits for the price list', '--until-time', '2026-10-26 09:00'],
+    execFile('bash', [HQ, 'thread', 'pause', 'shop/checkout', 'Waits for the price list', '--until', 'shop', '--until', '12', '--until-time', '2026-10-26 09:00'],
       { env: zone ? { ...env, HQ_TIME_ZONE: zone } : env }, (e, out, err) => e ? reject(new Error(err)) : resolve(out)));
-  assert.match(await pause(), /once 2026-10-26 08:00 UTC has come, HQ queues you a job/i);
-  assert.match(await pause('Europe/Amsterdam'), /once 2026-10-26 09:00 CET has come, HQ queues you a job/i);
+  assert.match(await pause(), /once 2026-10-26 08:00 UTC has come and shop is live and #12 \(kit, queued\) has merged or ended, HQ queues you a job/i);
+  const posted = seen.filter(r => r.url === '/api/agent/pauses').at(-1)!.body;
+  assert.deepEqual([posted.untilWhole, posted.until], [['shop'], [12]], 'a milestone goes as untilWhole, a number as a job');
+  assert.match(await pause('Europe/Amsterdam'), /once 2026-10-26 09:00 CET has come and shop is live/i);
 });
 
 test("hq's times are UTC, and on a run that speaks to the board (HQ_TIME_ZONE) its own, either side of winter time", async () => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """python3 infra/test_shell.py: the Overseer's way in takes a GitHub token for this repo's overseer workflow on main, once,
-and nothing else; it does only its fixed actions, on compose's own services and infra's own test files; its output cuts
-key-shaped words. Tokens are signed with a throwaway RSA key by openssl, as GitHub's
+and nothing else; it does only its fixed actions, on compose's own services and infra's own test files; a logs read says
+what it covers; its output cuts key-shaped words. Tokens are signed with a throwaway RSA key by openssl, as GitHub's
 are with its own."""
 import base64
 import json
@@ -46,6 +46,49 @@ def check(t):
     return shell.verified(t, REPO, AUD, keys=KEYS)[1]
 
 
+# journalctl as the server's: --field lists a field's values; a read gives the last --lines entries of those matching,
+# from --since to --until (both included, @ seconds since the epoch), oldest first, as JSON. With --until but no --since
+# it starts --lines before until, or at the head, and reads on past until
+JOURNALCTL = """import json, os, sys
+entries, args = json.load(open(os.environ['SHELL_JOURNAL'])), sys.argv[1:]
+if args == ['--field=CONTAINER_NAME']:
+    print('\\n'.join(sorted({e['CONTAINER_NAME'] for e in entries})))
+    sys.exit()
+opt = lambda name: next((a.split('=', 1)[1] for a in args if a.startswith(f'--{name}=')), None)
+since, until, names = opt('since'), opt('until'), [a.split('=', 1)[1] for a in args if a.startswith('CONTAINER_NAME=')]
+usec = lambda at: round(float(at[1:]) * 10**6)
+lines = int(opt('lines'))
+ours = [e for e in entries if e['CONTAINER_NAME'] in names]
+found = [e for e in ours if (since is None or int(e['__REALTIME_TIMESTAMP']) >= usec(since))
+         and (until is None or int(e['__REALTIME_TIMESTAMP']) <= usec(until))]
+if until is not None and since is None:
+    start = max(len(found) - lines, 0)   # lines before until, or the head
+    found = ours[start:start + lines]
+for e in found[-lines:]:
+    print(json.dumps(e))
+"""
+with open(f'{tmp}/journalctl.py', 'w') as f:
+    f.write(JOURNALCTL)
+shell.JOURNALCTL = [sys.executable, f'{tmp}/journalctl.py']
+
+
+def at(minute, second=0):
+    """2026-11-07T04:<minute>:<second>Z in microseconds since the epoch."""
+    return (1794026400 + (minute - 40) * 60 + second) * 10**6
+
+
+def entry(name, id, usec, message):
+    """A journal entry as journalctl's JSON has it: its container, the container's id, microseconds and message."""
+    return {'__REALTIME_TIMESTAMP': str(usec), 'CONTAINER_NAME': name, 'CONTAINER_ID': id, 'MESSAGE': message}
+
+
+def on_journal(entries):
+    """The stand-in journal's entries, in the journal's order: (container, its id, microseconds, message)."""
+    with open(f'{tmp}/journal.json', 'w') as f:
+        json.dump([entry(*e) for e in entries], f)
+    os.environ['SHELL_JOURNAL'] = f'{tmp}/journal.json'
+
+
 class Shell(unittest.TestCase):
     def test_only_this_repos_overseer_workflow_on_main_once(self):
         good = token()
@@ -64,8 +107,8 @@ class Shell(unittest.TestCase):
 
     def test_only_the_fixed_actions_on_compose_services(self):
         known = lambda: {'coordinator', 'worker'}
-        self.assertEqual(shell.commands({'action': 'logs', 'service': 'coordinator', 'lines': 50}, known)[0][-3:],
-                         ['--tail', '50', 'coordinator'])
+        self.assertEqual(shell.commands({'action': 'logs', 'service': 'coordinator', 'lines': 50}, known),
+                         shell.Logs('coordinator', 50, None, None))
         self.assertEqual(shell.commands({'action': 'restart', 'service': 'worker'}, known)[0][-2:], ['restart', 'worker'])
         self.assertEqual(shell.commands({'action': 'deploy'}, known)[0][:3], ['systemctl', 'start', '--no-block'])
         self.assertTrue(all(isinstance(argv, list) for argv in shell.commands({'action': 'status'}, known)))
@@ -73,6 +116,92 @@ class Shell(unittest.TestCase):
                         {'action': 'logs', 'service': 'worker', 'lines': 10 ** 6}, {'action': 'exec', 'command': 'id'},
                         {'command': 'id'}):
             self.assertIsInstance(shell.commands(request, known), str, request)
+
+    def test_logs_reads_an_interval_given_as_utc_timestamps(self):
+        known = lambda: {'worker'}
+        request = {'action': 'logs', 'service': 'worker', 'lines': 2000}
+        self.assertEqual(shell.commands({**request, 'since': '2026-11-07T04:40:00Z', 'until': '2026-11-07T04:49:00.5Z'}, known),
+                         shell.Logs('worker', 2000, at(40), at(49) + 500000))
+        self.assertEqual(shell.commands({**request, 'since': '2026-11-07T04:40:00.000001Z'}, known),
+                         shell.Logs('worker', 2000, at(40) + 1, None))
+        for interval in ({'since': '42m'}, {'since': '2026-13-07T04:40:00Z'}, {'until': '2026-11-07T04:40:00+01:00'},
+                         {'until': 1762490400}, {'since': '2026-11-07T04:40:00Z --lines=99'},
+                         {'until': '2026-11-07T04:40:00.0000001Z'},
+                         {'since': '2026-11-07T04:49:00Z', 'until': '2026-11-07T04:40:00Z'}):
+            self.assertIsInstance(shell.commands({**request, **interval}, known), str, interval)
+
+    def test_a_logs_read_reaches_past_the_containers_compose_replaced(self):
+        # worker-1 replaced at 04:42 (a changed image), beside a second worker and other services
+        on_journal([('infra-worker-1', 'aaa', at(40), 'starting'), ('infra-coordinator-1', 'ccc', at(41), 'hq up'),
+                    ('infra-worker-1', 'aaa', at(41, 5), 'stopping'), ('infra-worker-1', 'bbb', at(42), 'starting again'),
+                    ('infra-worker-2', 'ddd', at(42, 1), 'a seat back'), ('infra-worker-x-1', 'eee', at(43), 'another service'),
+                    ('infra-worker-1', 'bbb', at(43, 1), 'sk_live_abcdefgh12345678 in a line')])
+        text, code = shell.read_logs(shell.Logs('worker', 300, at(40), at(43)))
+        self.assertEqual((text, code), ('infra-worker-1 aaa | 2026-11-07T04:40:00.000000Z starting\n'
+                                        'infra-worker-1 aaa | 2026-11-07T04:41:05.000000Z stopping\n'
+                                        'infra-worker-1 bbb | 2026-11-07T04:42:00.000000Z starting again\n'
+                                        'infra-worker-2 ddd | 2026-11-07T04:42:01.000000Z a seat back\n'
+                                        '\n(covers: 4 lines from 2026-11-07T04:40:00.000000Z to 2026-11-07T04:42:01.000000Z;'
+                                        ' no cap cut it)\n', 0))
+        self.assertIn('bbb | 2026-11-07T04:43:01.000000Z [a key, cut] in a line', shell.read_logs(shell.Logs('worker', 1, None, None))[0])
+        self.assertEqual(shell.read_logs(shell.Logs('voice', 300, None, None)), ('\n(covers: no lines; no cap cut it)\n', 0))
+
+    def test_a_cut_read_goes_on_from_its_first_line_without_a_gap(self):
+        # The review's two cases: the line cap over two containers, and the byte cap over long lines
+        for lines, entries in ((2, [('infra-worker-2', 'w2', at(40, 0), 'zero'), ('infra-worker-1', 'w1', at(40, 1), 'one'),
+                                    ('infra-worker-1', 'w1', at(40, 2), 'two'), ('infra-worker-1', 'w1', at(40, 3), 'three')]),
+                               (2000, [('infra-worker-1', 'w1', at(40, second), f'{second} ' + 'x' * (200 * 1024))
+                                       for second in (0, 1, 10)])):
+            on_journal(entries)
+            got, until, pieces = set(), at(41), []
+            while True:
+                text, _ = shell.read_logs(shell.Logs('worker', lines, at(40), until))
+                rows, covers = text.split('\n(covers: ')
+                pieces.append(covers)
+                got |= {row.split(' ', 4)[4] for row in rows.splitlines()}
+                if 'no cap cut it' in covers:
+                    break
+                until = shell.micros(shell.INSTANT.search(covers))
+            self.assertEqual(got, {message for *_, message in entries}, pieces)
+            self.assertGreater(len(pieces), 1, pieces)
+        on_journal([('infra-worker-1', 'w1', at(40, second), 'x' * (200 * 1024)) for second in range(4)])
+        self.assertIn('2 lines from 2026-11-07T04:40:02.000000Z to 2026-11-07T04:40:03.000000Z; the 512 KiB cap left out'
+                      ' earlier lines)', shell.read_logs(shell.Logs('worker', 2000, None, None))[0])
+        on_journal([('infra-worker-1', 'w1', at(40, second), 'a line') for second in range(4)])
+        self.assertIn('2 lines from 2026-11-07T04:40:02.000000Z to 2026-11-07T04:40:03.000000Z; the 2-line cap left out'
+                      ' earlier lines)', shell.read_logs(shell.Logs('worker', 2, None, None))[0])
+        # Until alone: what journalctl sends past it isn't shown, and the lines before it are all there were
+        self.assertIn('2 lines from 2026-11-07T04:40:00.000000Z to 2026-11-07T04:40:01.000000Z; no cap cut it)',
+                      shell.read_logs(shell.Logs('worker', 300, None, at(40, 1)))[0])
+        # journalctl's stderr counts toward the byte cap, and its keys are cut before the cap can split one
+        journal = shell.journal
+        sent = b''.join(json.dumps(entry('infra-worker-1', 'w1', at(40, second), 'x' * (200 * 1024))).encode() + b'\n'
+                        for second in range(2))
+        diagnostics = b'e' * (200 * 1024)
+        shell.journal = lambda logs: (sent, diagnostics, 0)
+        try:
+            text, _ = shell.read_logs(shell.Logs('worker', 300, None, None))
+            self.assertLessEqual(len(text.split('\n(covers: ')[0].encode()), shell.OUTPUT_MAX)
+            self.assertIn('1 lines from 2026-11-07T04:40:01.000000Z', text)
+            body = b'A' * 36
+            diagnostics = b'ghp_' + body + b'\n' + b'e' * (shell.OUTPUT_MAX - len(body) - 1)
+            text, _ = shell.read_logs(shell.Logs('worker', 300, None, None))
+            self.assertIn('[a key, cut]', text)
+            self.assertNotIn(body.decode(), text)
+            diagnostics = b'e' * (shell.OUTPUT_MAX + 1)
+            self.assertIn('no lines; the 512 KiB cap left out earlier diagnostics',
+                          shell.read_logs(shell.Logs('worker', 300, None, None))[0])
+        finally:
+            shell.journal = journal
+        # A read stopped at its time cap keeps the whole entries it had sent
+        journal = shell.journal
+        sent = json.dumps(entry('infra-worker-1', 'w1', at(40), 'first')).encode()
+        shell.journal = lambda logs: (sent + b'\n{"__REALTIME_TIMESTAMP": "17', b'', 124)
+        try:
+            self.assertIn('1 lines from 2026-11-07T04:40:00.000000Z to 2026-11-07T04:40:00.000000Z; the 600 s cap may'
+                          ' have left out later lines', shell.read_logs(shell.Logs('worker', 300, None, None))[0])
+        finally:
+            shell.journal = journal
 
     def test_githubs_keys_are_kept_and_unknown_key_ids_fetch_them_at_most_once_a_minute(self):
         fetched, jwks, monotonic = [], shell.jwks, shell.time.monotonic
@@ -139,9 +268,13 @@ class Shell(unittest.TestCase):
                     return res.status, res.read().decode()
             except urllib.error.HTTPError as e:
                 return e.code, e.read().decode()
-        status, text = post({'action': 'logs', 'service': 'coordinator', 'lines': 5}, f'Bearer {token()}')
-        self.assertEqual(status, 200, text)
-        self.assertIn('compose logs --no-color --timestamps --tail 5 coordinator', text)
+        on_journal([('infra-coordinator-1', 'c1', at(40, 30), 'hq up'), ('infra-coordinator-1', 'c1', at(41, 30), 'later')])
+        status, text = post({'action': 'logs', 'service': 'coordinator', 'lines': 5, 'since': '2026-11-07T04:40:00Z',
+                             'until': '2026-11-07T04:41:00Z'}, f'Bearer {token()}')
+        self.assertEqual((status, text), (200, 'infra-coordinator-1 c1 | 2026-11-07T04:40:30.000000Z hq up\n\n(covers: 1 lines'
+                                               ' from 2026-11-07T04:40:30.000000Z to 2026-11-07T04:40:30.000000Z; no cap cut'
+                                               ' it)\n\n(exit 0)\n'))
+        self.assertEqual(post({'action': 'logs', 'service': 'coordinator', 'since': 'yesterday'}, f'Bearer {token()}')[0], 400)
         # A test runs as nobody, with none of the service's environment: a checkout
         # whose one test says who it runs as and whether the service's variable reached it
         checkout = tempfile.mkdtemp()

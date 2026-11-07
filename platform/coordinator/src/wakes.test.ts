@@ -28,7 +28,14 @@ const DEPLOYS = `${h.dataDir}/deploys`;
 mkdirSync(DEPLOYS);
 let deploys = 0;
 async function deploy(
-  o: { sha?: string; ok?: boolean; recreated?: string[]; reloaded?: string[]; fetched?: string } = {},
+  o: {
+    sha?: string;
+    ok?: boolean;
+    recreated?: string[];
+    reloaded?: string[];
+    fetched?: string;
+    kept?: Record<string, string>;
+  } = {},
 ) {
   await sleep(5);
   const finished = new Date().toISOString(),
@@ -42,6 +49,7 @@ async function deploy(
       ok: o.ok ?? true,
       recreated: o.recreated ?? [],
       reloaded: o.reloaded ?? [],
+      kept: o.kept ?? {},
       services: ['caddy', 'coordinator', 'worker'],
     }),
   );
@@ -232,4 +240,25 @@ test('hq stop: its own agent or the CEO ends a running job, which hears it with 
   const review = h.queue({ agent: 'juno', title: 'Review', kind: 'review', after: 999999 });
   assert.notEqual((await h.hq(juno, 'stop', String(review), 'x')).code, 0, "the coordinator's own review, not work");
   await h.finish(juno);
+});
+
+test('a successful partial deploy records each service it kept and why, and the job it wakes reads which', async () => {
+  const bolt = await running('bolt');
+  const { id } = await queue(bolt, '--when', 'recreated:coordinator', 'bolt', 'After a partial deploy');
+  const kept = { voice: 'parakeet.tar.bz2: FAILED' };
+  await deploy({ sha: 'abcdef01234', recreated: ['coordinator', 'worker'], kept });
+  assert.equal(ready(id), true);
+  const row = db.prepare('select ok, recreated, kept from deploys where sha = ?').get('abcdef01234') as {
+    ok: number;
+    recreated: string;
+    kept: string;
+  };
+  assert.equal(row.ok, 1);
+  assert.deepEqual(JSON.parse(row.recreated), ['coordinator', 'worker']);
+  assert.deepEqual(JSON.parse(row.kept), kept);
+  assert.match(
+    await starts(id),
+    /deploy abcdef012 .*\(recreated: coordinator, worker\) \(kept on its current image: voice\)/,
+  );
+  await h.finish(bolt);
 });

@@ -118,15 +118,12 @@ test('a company pause still alarms for stalled reviews and consolidations of a p
 
 // Whether any ready seat's own claim starts a job, paced as the worker sends it. This claims the job.
 const startsAny = () =>
-  (
-    db.prepare("select id, iif(pace is null, null, week_resets) until from seats where state = 'ready'").all() as {
-      id: string;
-      until: number | null;
-    }[]
-  ).some(s => jobs.claim(s.id, 'codex', undefined, 1, false, undefined, undefined, s.until ?? undefined));
+  jobs
+    .readySeats(Date.now())
+    .some(s => jobs.claim(s.id, s.engine, undefined, 1, false, undefined, undefined, s.pacedUntil ?? undefined));
 const WEEK_RESETS = Date.now() + 2 * 24 * 3600_000;
 
-test('work pinned to a paced seat that can wait for its reset is not waiting, though another seat is unpaced', () => {
+test('work pinned to an idle paced seat is waiting for a start', () => {
   reset();
   jobs.setSeat('codex-1', 'codex', 'ready', 0, undefined, { week: 0.6, weekResets: WEEK_RESETS, pace: true });
   jobs.setSeat('codex-2', 'codex', 'ready', 0);
@@ -139,8 +136,8 @@ test('work pinned to a paced seat that can wait for its reset is not waiting, th
     forSeat: 'codex-1',
   });
   stallSweep();
-  assert.equal(spell(), null);
-  assert.equal(startsAny(), false);
+  assert.notEqual(spell(), null);
+  assert.equal(startsAny(), true);
 });
 
 test('work for a CLI no ready seat runs is not waiting', () => {
@@ -154,13 +151,13 @@ test('work for a CLI no ready seat runs is not waiting', () => {
   assert.notEqual(spell(), null);
 });
 
-test("a paced seat's urgent work is waiting, and work with a deadline or none isn't", async () => {
+test('an idle paced seat takes ordinary and deadline work as well as urgent work', async () => {
   reset();
   const { setUrgent } = await import('./urgency.ts');
   jobs.setSeat('codex-1', 'codex', 'ready', 0, undefined, { week: 0.6, weekResets: WEEK_RESETS, pace: true });
   jobs.createJob({ agent: 'bolt', title: 'Undated work', prompt: 'x', engine: 'codex' });
   stallSweep();
-  assert.equal(spell(), null);
+  assert.notEqual(spell(), null);
   const due = jobs.createJob({
     agent: 'bolt',
     title: 'Due work',
@@ -169,7 +166,7 @@ test("a paced seat's urgent work is waiting, and work with a deadline or none is
     thread: h.dueThread({ deadline: Date.now() + 3600_000 }),
   });
   stallSweep();
-  assert.equal(spell(), null, 'a deadline orders work within the pace');
+  assert.notEqual(spell(), null, 'a deadline orders work within the pace');
   assert.equal(typeof setUrgent('task', String(due.id), true, ceo()), 'object');
   stallSweep();
   assert.notEqual(spell(), null);

@@ -5,9 +5,10 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
+// (build, not tests: a tests run is refused while no tests machine is there, so it never waits for one)
 const h = await harness('away', {
   before: repo =>
-    appendFileSync(`${repo}/company/org.yaml`, '\nruns:\n  kinds:\n    tests: {}\n    voice: {}\n    other: {}\n'),
+    appendFileSync(`${repo}/company/org.yaml`, '\nruns:\n  kinds:\n    build: {}\n    voice: {}\n    other: {}\n'),
 });
 const { awayCheck } = await import('./away.ts'); // (what the server runs each minute: here with a time of the test's)
 const machines = await import('./machines.ts');
@@ -43,13 +44,13 @@ test('one alarm for the CEO once a lent machine that took work is away half an h
 
   awayCheck();
   assert.equal(alarms().length, 0, 'a machine never heard from took no work: no alarm');
-  await send('tests');
-  assert.ok((await ask(desktop.key, 'tests')).json.id, 'it takes a run');
+  await send('build');
+  assert.ok((await ask(desktop.key, 'build')).json.id, 'it takes a run');
   assert.equal((await ask(desktop.key, 'voice')).status, 204);
   const since = seen();
   awayCheck(Date.parse(since) + 15 * M);
   assert.equal(alarms().length, 0, 'away a quarter of an hour, as a reboot is: no alarm');
-  const withdrawn = await send('tests');
+  const withdrawn = await send('build');
   assert.equal((await h.agent(`runs/${withdrawn}/withdraw`, job.token, {})).status, 200);
   await send('voice');
   await send('other');
@@ -58,7 +59,7 @@ test('one alarm for the CEO once a lent machine that took work is away half an h
   assert.ok(alarm, 'half an hour away: an alarm');
   const brief = (await h.claim('claude'))!;
   assert.equal(brief.id, alarm.id);
-  const line = `The office desktop hasn't asked for work since ${since.slice(0, 16).replace('T', ' ')} UTC \\(its tests, voice\\)`;
+  const line = `The office desktop hasn't asked for work since ${since.slice(0, 16).replace('T', ' ')} UTC \\(its build, voice\\)`;
   assert.match(brief.prompt, new RegExp(`${line}: 2 runs went without it`));
   assert.match(brief.prompt, /Docker/);
   assert.match(brief.prompt, /is your call/);
@@ -66,8 +67,8 @@ test('one alarm for the CEO once a lent machine that took work is away half an h
   const summary = async () => (await h.agent('summary', reader.token)).body.text as string;
   await send('voice');
   const attic = await lend('The attic laptop');
-  await send('tests');
-  assert.ok((await ask(attic.key, 'tests')).json.id, "another lent machine's run");
+  await send('build');
+  assert.ok((await ask(attic.key, 'build')).json.id, "another lent machine's run");
   assert.equal((await h.board('/api/machines/remove', { machine: attic.id })).status, 200);
   awayCheck(Date.parse(since) + 45 * M);
   assert.equal(alarms().length, 1, 'still away: the same alarm');

@@ -7,6 +7,7 @@
 // lent machine and this server run a helper per kind, each in the kind's image, taking only that kind's runs. A kind can
 // keep its runs off this server, and departments' work in the queue, until a lent machine has finished a run of it
 // (holds). The board's HQ sees each machine live (listMachines, the 'machines' event).
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { publish } from './events.ts';
 import {
@@ -24,10 +25,11 @@ import {
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import type { RouteRequest, RouteTable } from '../../../shared/routes/routes.ts';
 import { companyTime, roles, yamlFile } from './company.ts';
 import { DATA_DIR, ORIGIN, REPO_DIR, RUNS_TOKEN } from './config.ts';
-import { db, remember, setting } from './db.ts';
+import { columnsOf, db, remember, setting } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as machines from './machines.ts';
 import { secret } from './secrets.ts';
@@ -63,6 +65,8 @@ type RunRow = {
   attempt: string | null;
   // how many times a helper took it
   takes: number | null;
+  // the commit of HQ's checkout its bundle stands on (thinBase), which the helper keeps, or none for a whole one
+  base: string | null;
   created: string;
   taken: string | null;
   beat: string | null;
@@ -95,6 +99,12 @@ type Kind = {
   sockets: boolean;
   checkout: boolean;
   browsers: boolean;
+  // its checkout runs carry the worker's infrastructure tools (age, versitygw, caddy, docker-compose, jq: shared/gates/
+  // bundle.ts), which only infra's tests use.
+  tools: boolean;
+  // what a job does instead while no helper that may take its runs is there ('' for none): a run is then refused at
+  // once, with this line, rather than waiting out the take window.
+  whenAway: string;
 };
 
 const DIR = `${DATA_DIR}/runs`;
@@ -118,6 +128,9 @@ const OUTPUT_MAX_BYTES = 2 ** 20 + 64 * 1024;
 // a beat's readings and the run's new output (4 KB at most, escaped in JSON)
 const BEAT_MAX_BYTES = 64 * 1024;
 const COMMAND_MAX_CHARS = 4000;
+const COMMIT = /^[0-9a-f]{40}$/;
+// the commits a helper says it has, at most
+const HAVE_MAX = 20;
 const BRING_MAX = 100;
 // A job's runs waiting for a helper, those still coming in counted: each holds its bundle on HQ's volume until a helper
 // takes it
@@ -142,7 +155,8 @@ const SWEEP_MS = 60_000;
 db.exec(`create table if not exists helper_runs (id integer primary key, job integer not null, agent text not null,
   command text not null, cwd text not null, bring text not null, minutes integer not null, state text not null,
   helper text, passed integer, created text not null, taken text, beat text, ended text, exit_code integer,
-  timed_out integer, why text, kind text, attempt text, takes integer, machine integer, slot integer)`);
+  timed_out integer, why text, kind text, attempt text, takes integer, machine integer, slot integer, base text)`);
+if (!columnsOf('helper_runs').includes('base')) db.exec('alter table helper_runs add column base text');
 db.exec("create index if not exists helper_runs_open on helper_runs (state) where state in ('waiting', 'running')");
 db.exec('create unique index if not exists helper_runs_attempt on helper_runs (attempt)');
 mkdirSync(DIR, { recursive: true });
@@ -187,8 +201,9 @@ function kindProblem(name: string, entry: unknown) {
   if (!KIND_NAME.test(name)) return 'its name: a to z, 0 to 9 and -, starting with a letter, at most 24 characters';
   if (entry === null || entry === undefined) return '';
   if (!isMap(entry))
-    return 'its settings: a map (about, image, serverImage, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers)';
+    return 'its settings: a map (about, image, serverImage, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers, tools, whenAway)';
   if (entry.about !== undefined && typeof entry.about !== 'string') return 'about: a line of text';
+  if (entry.whenAway !== undefined && typeof entry.whenAway !== 'string') return 'whenAway: a line of text';
   if (entry.image !== undefined && !(typeof entry.image === 'string' && IMAGE_NAME.test(entry.image)))
     return 'image: a plain Docker reference (a to z, 0 to 9 and . _ / : @ -)';
   if (
@@ -201,6 +216,7 @@ function kindProblem(name: string, entry: unknown) {
   if (entry.sockets !== undefined && typeof entry.sockets !== 'boolean') return 'sockets: true or false';
   if (entry.checkout !== undefined && typeof entry.checkout !== 'boolean') return 'checkout: true or false';
   if (entry.browsers !== undefined && typeof entry.browsers !== 'boolean') return 'browsers: true or false';
+  if (entry.tools !== undefined && typeof entry.tools !== 'boolean') return 'tools: true or false';
   if (entry.serverAfterLent !== undefined && typeof entry.serverAfterLent !== 'boolean')
     return 'serverAfterLent: true or false';
   if (entry.holdUntilLent !== undefined && !isDepartmentList(entry.holdUntilLent))
@@ -230,6 +246,8 @@ const kindOf = (name: string, entry: Record<string, unknown> | null): Kind => ({
   sockets: entry?.sockets === true,
   checkout: entry?.checkout === true,
   browsers: entry?.browsers === true,
+  tools: entry?.tools === true,
+  whenAway: (entry?.whenAway as string | undefined) ?? '',
 });
 
 // A cap: a number, or a share of the machine ({ share: 0.5 } for '50%')
@@ -296,6 +314,9 @@ const attemptOf = (request: RouteRequest) => request.params.attempt;
 export const routeTable: RouteTable = {
   'POST /api/agent/runs': forJob(async (job, { req, res }) => answer(res, await createRun(job, specOf(req), req))),
   'GET /api/agent/runs/helper': forJob((job, { res }) => answer(res, helperState())),
+  'GET /api/agent/runs/base': forJob(async (job, { res, url }) =>
+    answer(res, await thinBase(url.searchParams.get('kind') ?? '')),
+  ),
   'GET /api/agent/runs/:id(\\d+)': forJob((job, request) => answer(request.res, showRun(job, runId(request)))),
   'POST /api/agent/runs/:id(\\d+)/withdraw': forJob((job, request) =>
     answer(request.res, withdrawRun(job, runId(request))),
@@ -324,6 +345,12 @@ export const routeTable: RouteTable = {
   'GET /api/helper/runs/:attempt(\\d+-\\d+)/bundle': forHelper((helper, request) =>
     sendFile(request.res, bundleFor(helper, attemptOf(request)), 'application/gzip'),
   ),
+  'GET /api/helper/runs/:attempt(\\d+-\\d+)/base': forHelper(async (helper, request) => {
+    const bundle = await baseFor(helper, attemptOf(request), request.url.searchParams.get('have') ?? '');
+    if (bundle instanceof Refusal) return answer(request.res, bundle);
+    await sendFile(request.res, bundle, 'application/octet-stream');
+    rmSync(bundle, { force: true });
+  }),
   'POST /api/helper/runs/:attempt(\\d+-\\d+)/beat': forHelper(async (helper, request) =>
     answer(request.res, beat(helper, attemptOf(request), await request.jsonBody(BEAT_MAX_BYTES))),
   ),
@@ -337,7 +364,8 @@ export const routeTable: RouteTable = {
 
 export function start() {
   // the uploads a restart cut off (none is under way yet).
-  for (const name of readdirSync(DIR)) if (name.startsWith('incoming-')) rmSync(`${DIR}/${name}`, { force: true });
+  for (const name of readdirSync(DIR))
+    if (name.startsWith('incoming-') || name.startsWith('base-')) rmSync(`${DIR}/${name}`, { force: true });
   publishKinds();
   publishHolds();
   setInterval(() => {
@@ -399,6 +427,8 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
   if (problem) return new Refusal(400, problem);
   const kind = kindNamed(spec.kind);
   if (kind instanceof Refusal) return kind;
+  const unavailable = kindHelper(kind.name).unavailable;
+  if (unavailable) return new Refusal(409, unavailable);
   const room = roomForBundle(job, body);
   if (room instanceof Refusal) return room;
   // (received in full before the run is there for a helper to take)
@@ -413,7 +443,7 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
     return new Refusal(413, `the bundle is over ${BUNDLE_MAX_BYTES / 2 ** 20} MB: name only the folders the run needs`);
   const { id } = db
     .prepare(
-      "insert into helper_runs (job, agent, command, kind, cwd, bring, minutes, state, created) values (?, ?, ?, ?, ?, ?, ?, 'waiting', ?) returning id",
+      "insert into helper_runs (job, agent, command, kind, cwd, bring, minutes, base, state, created) values (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?) returning id",
     )
     .get(
       job.id,
@@ -423,6 +453,7 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
       spec.cwd,
       JSON.stringify(spec.bring),
       spec.minutes,
+      spec.base ?? null,
       new Date().toISOString(),
     ) as {
     id: number;
@@ -486,6 +517,8 @@ function specProblem(spec: any) {
   const { maxMinutes } = runSettings();
   if (!Number.isSafeInteger(spec.minutes) || spec.minutes < 1 || spec.minutes > maxMinutes)
     return `minutes: a whole number from 1 to ${maxMinutes}`;
+  if (spec.base !== undefined && !(typeof spec.base === 'string' && COMMIT.test(spec.base)))
+    return "base: the commit of HQ's checkout the bundle stands on (GET /api/agent/runs/base)";
   return '';
 }
 
@@ -496,11 +529,16 @@ function kindNamed(given: unknown) {
   const declared = kinds.map(kind => (kind.about ? `${kind.name} (${kind.about})` : kind.name)).join(', ');
   if (!kinds.length)
     return new Refusal(400, "no kind of run is declared (org.yaml's runs.kinds): hq run helper says why");
-  const plain = kinds.filter(kind => !kind.sockets);
   if (given === undefined || given === '')
-    return plain.length === 1 ? plain[0] : new Refusal(400, `name the kind of run (--kind): ${declared}`);
+    return impliedKind(kinds) ?? new Refusal(400, `name the kind of run (--kind): ${declared}`);
   const kind = kinds.find(declaredKind => declaredKind.name === given);
   return kind ?? new Refusal(400, `no kind of run is called ${String(given).slice(0, 40)}: the kinds are ${declared}`);
+}
+
+// The kind a run that names none is of: the one kind whose runs keep no sockets, when there's one
+function impliedKind(kinds: Kind[]) {
+  const plain = kinds.filter(kind => !kind.sockets);
+  return plain.length === 1 ? plain[0] : undefined;
 }
 
 // A relative path with no . or .. part, no backslash and nothing a shell or tar reads as an option
@@ -609,13 +647,15 @@ function helperState() {
       about: kind.about,
       checkout: kind.checkout,
       browsers: kind.browsers,
+      tools: kind.tools,
       image: kind.image,
       gpus: kind.gpus,
       lentOnly: kind.lentOnly,
-      ...kindPresence(kind.name, serverTakes(kind)),
+      ...kindPresence(kind.name, serverTakes(kind), kind.whenAway),
       holds: holdsWork(kind) ? holdLine(kind, settings.helper) : '',
       setup: setup.kinds[index].commands,
     })),
+    impliedKind: impliedKind(settings.kinds)?.name ?? null,
     leftOut: settings.leftOut,
     browser: settings.browser,
     removeKey: setup.removeKey,
@@ -632,22 +672,29 @@ function kindHelper(kind: string, passed = false) {
     ...machineState(settings),
     kind,
     lentOnly: declared?.lentOnly === true,
-    ...kindPresence(kind, !declared || serverTakes(declared), passed),
+    ...kindPresence(kind, !declared || serverTakes(declared), declared?.whenAway ?? '', passed),
   };
 }
 
 // A kind's helpers on the lent machines (the fastest one's size) and on this server, and whether one that may take a run
 // of it is there (mayTake): lent.ts in a branch's checkout waits while it is. A run a lent helper lost (passed) waits for
-// this server's alone.
-function kindPresence(kind: string, takes: boolean, passed = false) {
+// this server's alone. With none there, a kind that says what to do instead (whenAway) has its runs refused at once
+// (unavailable), for createRun and for lent.ts and hq run to say before they bundle one.
+function kindPresence(kind: string, takes: boolean, whenAway: string, passed = false) {
   const lent = presence('lent', kind);
   const server = presence('server', kind);
+  const present = (lent.present && (!passed || !takes)) || (takes && server.present);
+  const unavailable =
+    whenAway && !present
+      ? `No ${kind} machine is there, and retrying won't help until one is back. ${whenAway}`
+      : undefined;
   return {
     ...lent,
     lentPresent: lent.present,
     server,
     serverTakes: takes,
-    present: (lent.present && (!passed || !takes)) || (takes && server.present),
+    present,
+    ...(unavailable ? { unavailable } : {}),
   };
 }
 
@@ -821,11 +868,15 @@ function managerBootstrap() {
 
 // The hash of the manager's code HQ serves now, which the install command trusts
 const managerCode = () => createHash('sha256').update(readFileSync(MANAGER_CODE)).digest('hex');
+// The hash of the helpers' code HQ serves now
+const helperCode = () => createHash('sha256').update(readFileSync(HELPER_CODE)).digest('hex');
 
 // What a lent machine's manager keeps it in step with: every kind's helpers, with their image and caps (a share of the
-// machine sized from what the call says it has, and no helper of such a kind while HQ doesn't know its size, UNSIZED), and the ones of them that have a run now, which it changes only once that run
-// has ended, and the hash of the manager's code HQ serves, which a manager that follows HQ starts again on. Each call is kept with the code the manager says it runs ({ code },
-// its hash, and { follows }: managerOf).
+// machine sized from what the call says it has, and no helper of such a kind while HQ doesn't know its size, UNSIZED),
+// and the ones of them that have a run now, which it changes only once that run has ended, the hash of the manager's
+// code HQ serves, which a manager that follows HQ starts again on, and the hash of the helpers' code, which their
+// containers start again on. Each call is kept with the code the manager says it
+// runs ({ code }, its hash, and { follows }: managerOf).
 function managerSetup(helper: Helper, said: unknown) {
   if (helper.name !== 'lent') return new Refusal(403, 'a lent machine sets itself up, never this server');
   const refused = machines.managerHeard(helper.machine, said);
@@ -851,7 +902,7 @@ function managerSetup(helper: Helper, said: unknown) {
     .filter(row => row.machine === helper.machine)
     .map(row => ({ kind: row.kind, slot: row.slot ?? 1 }));
   // (code)
-  return { kinds, busy, code: managerCode() };
+  return { kinds, busy, code: managerCode(), helperCode: helperCode() };
 }
 
 // Docker's sign-in for the manager's pull of a kind's image from a private registry (manager.mjs signIn), for that pull
@@ -1015,8 +1066,7 @@ function keyCommand(key: string) {
 // Fetches the helper code, checks it's the code the command trusts by its hash, and runs it. Node's -e, in double quotes
 // with no $, " or ` inside, reads the same in PowerShell, cmd and a Unix shell.
 function bootstrapCode() {
-  const code = readFileSync(HELPER_CODE);
-  const hash = createHash('sha256').update(code).digest('hex');
+  const hash = helperCode();
   return (
     "fetch(process.env.HQ_URL+'/api/helper/code',{redirect:'error'}).then(r=>r.text()).then(t=>{" +
     `if(require('crypto').createHash('sha256').update(t).digest('hex')!='${hash}')` +
@@ -1083,7 +1133,8 @@ function takeRun(helper: Helper, asked: unknown) {
     if (row.machine === helper.machine && row.kind === kind && (row.slot ?? 1) === slot)
       lose(row, `${helperName(helper.name, helper.machine)} started again during the run`);
   for (const row of openRuns('waiting')) if (!jobRuns(row.job)) end(row.id, 'waiting', 'withdrawn', 'its job ended');
-  const row = inLine().find(waiting => mayTake(helper, named, waiting));
+  const keepsBase = isMap(asked) && asked.keepsBase === true;
+  const row = inLine().find(waiting => mayTake(helper, named, waiting) && (!waiting.base || keepsBase));
   sayMachines();
   if (!row) return 204;
   const now = new Date().toISOString();
@@ -1104,6 +1155,7 @@ function takeRun(helper: Helper, asked: unknown) {
     bring: JSON.parse(row.bring),
     minutes: row.minutes,
     sockets,
+    ...(row.base ? { base: row.base } : {}),
   };
 }
 
@@ -1134,7 +1186,8 @@ function mayTake(helper: Helper, kind: Kind, row: RunRow) {
 function firstInLine(machine: number, kind: Kind, row: RunRow) {
   const helpers = machines.kindHelpers(kind.name, true);
   const own = helpers.find(helper => helper.machine === machine)?.speed ?? 0;
-  const faster = helpers.filter(helper => (helper.speed ?? 0) > own);
+  // (a run that stands on a base waits for no machine whose helper can't take it)
+  const faster = helpers.filter(helper => (helper.speed ?? 0) > own && (!row.base || helper.keeps_base));
   const busy = (helper: machines.KindHelper) =>
     openRuns('running').filter(running => running.machine === helper.machine && running.kind === kind.name).length >=
     kind.helpers;
@@ -1184,6 +1237,7 @@ export function offloadPlaces() {
       about: kind.about,
       checkout: kind.checkout,
       browsers: kind.browsers,
+      tools: kind.tools,
       server: serverTakes(kind) && presence('server', kind.name).present,
     })),
   };
@@ -1198,6 +1252,15 @@ const lentFinished = (kind: string) =>
 // Any lent machine the board hasn't paused has a helper of that kind asking for work or beating
 const lentPresent = (kind: string) => machines.kindHelpers(kind, true).some(helper => machines.isPresent(helper.seen));
 
+// Helpers of that kind are there, on this server or a lent machine the board hasn't paused, and each says it keeps the
+// base
+function onlyKeepersPresent(kind: string) {
+  const present = [...machines.kindHelpers(kind, false), ...machines.kindHelpers(kind, true)].filter(helper =>
+    machines.isPresent(helper.seen),
+  );
+  return present.length > 0 && present.every(helper => helper.keeps_base);
+}
+
 // The running run this helper's attempt is still on, or none: not once the run was stopped, lost, its job ended, or
 // another take, by any helper, has it now
 const attemptRun = (helper: Helper, attempt: string) => {
@@ -1211,6 +1274,48 @@ function bundleFor(helper: Helper, attempt: string) {
   const row = attemptRun(helper, attempt);
   return row ? `${DIR}/${row.id}/bundle.tar.gz` : '';
 }
+
+// A run's bundle stands on this checkout's commit: the commit and the tree as
+// the job has them, on top of it, so it carries only what came after (shared/gates/lent.ts). The helper keeps what it
+// fetched of it (baseFor), so a run that stands on a commit it has brings a few MB, not the repo. None from a shallow
+// checkout, which can't give the history whole. None unless every helper of the kind that's there keeps a base, as only
+// such a helper takes a run that stands on one (its take says keepsBase): one that doesn't gets the whole repo, rather
+// than leaving the run to the others. The answer names the kind, and lent.ts stands on the commit only when it does.
+async function thinBase(kind: string) {
+  const named = kindNamed(kind);
+  if (named instanceof Refusal) return { commit: null, kind: null };
+  const shallow = (await hqGit('rev-parse', '--is-shallow-repository')) !== 'false';
+  const commit = onlyKeepersPresent(named.name) && !shallow ? await hqGit('rev-parse', 'HEAD^{commit}') : null;
+  return { commit, kind: named.name };
+}
+
+// The commit an attempt's run stands on, with everything before it, as a git bundle in a file of its own: this
+// checkout's HEAD, and main as it last fetched it (a deploy gone back to the last good commit has an earlier HEAD),
+// less what the helper has (have: its commits, comma-separated, those this checkout knows).
+async function baseFor(helper: Helper, attempt: string, have: string) {
+  const row = attemptRun(helper, attempt);
+  if (!row?.base) return new Refusal(404, 'this run stands on no base');
+  const known = [];
+  for (const commit of have.split(',').slice(0, HAVE_MAX))
+    if (COMMIT.test(commit) && (await inHqCheckout(`${commit}^{commit}`))) known.push(commit);
+  const main = 'refs/remotes/origin/main';
+  const fetched = (await inHqCheckout(main)) ? [main] : [];
+  const file = `${DIR}/base-${randomUUID()}.bundle`;
+  try {
+    await hqGit('bundle', 'create', '-q', file, 'HEAD', ...fetched, ...(known.length ? ['--not', ...known] : []));
+    return file;
+  } catch (error) {
+    rmSync(file, { force: true });
+    return new Refusal(404, `HQ's checkout gave no bundle: ${(error as Error).message.slice(0, 300)}`);
+  }
+}
+const inHqCheckout = (name: string) => hqGit('rev-parse', '-q', '--verify', name).then(Boolean, () => false);
+// (safe.directory: the checkout is root's on the server, mounted read-only)
+const hqGit = async (...args: string[]) =>
+  (
+    await execute('git', ['-c', `safe.directory=${REPO_DIR}`, '-C', REPO_DIR, ...args], { encoding: 'utf8' })
+  ).stdout.trim();
+const execute = promisify(execFile);
 
 // The helper's word that its attempt goes on, with its machine's readings and the run's new output ({ live, lines }).
 // The answer says whether it should.

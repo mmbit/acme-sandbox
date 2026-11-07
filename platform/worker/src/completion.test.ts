@@ -318,6 +318,8 @@ for (const cli of ['claude', 'codex'])
           HOME: home,
           CODEX_HOME: `${home}/.codex`,
           CLAUDE_CONFIG_DIR: `${home}/.claude`,
+          // the CLI's temp folder in the home: a helper's /tmp can be read-only, and the CLI reads no TMPDIR.
+          CLAUDE_CODE_TMPDIR: home,
           ANTHROPIC_BASE_URL: url,
           ANTHROPIC_API_KEY: 'test',
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',

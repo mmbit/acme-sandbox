@@ -41,11 +41,12 @@ const NO_ROOM_TRIES = 3;
 // (one an earlier process launched takes its place too, so the checks still running count against the limit).
 // A check here runs to its end: it's our own code, so a slow one is fixed where it is, its time in the log (outcomeOf).
 // here: what a launch here waits for and holds to its end (fresh: false for one an earlier process launched, which
-// holds it too), and for a fresh one with a lent launch, `lent`: that launch, which it runs instead when a helper came
-// while it waited for its place. lent: a launch that sends it to a lent machine's helper, with a time limit of its own where it has one:
-// a pass or a failure there is the check's, and any other end (not taken, lost, its limit) launches it here. Each
-// launch, a run again included, goes there while `present` says a helper is there now (asked again each time: a first
-// answer goes stale), and here once the lent machine gave no verdict.
+// holds it too), and for a fresh one with a lent launch, its third argument: that launch, which it runs instead when a
+// helper came while it waited for its place.
+// lent: a launch that sends it to a lent machine's helper, with a time limit of its own where it has one: a pass or a
+// failure there is the check's, and any other end (not taken, lost, its limit) launches it here. Each launch, a run
+// again included, goes there while `present` says a helper is there now (asked again each time: a first answer goes
+// stale), and here once the lent machine gave no verdict.
 export type CheckSpec<Name extends string = string> = {
   name: Name;
   launch: () => Launched;

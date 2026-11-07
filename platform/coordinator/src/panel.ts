@@ -59,10 +59,13 @@ export function consolidator(pr?: number, stage = 'triage', suggested?: string) 
   const assigned = suggested ?? (selected ? (JSON.parse(selected.selection).consolidator as string) : undefined);
   if (assigned && candidates.includes(assigned)) {
     if (!reviewSettings().consolidatorEngine) return assigned;
-    candidates.unshift(...candidates.splice(candidates.indexOf(assigned), 1));
+    candidates.splice(candidates.indexOf(assigned), 1);
+    candidates.unshift(assigned);
   }
   if (!candidates.length) throw new Error(`No eligible consolidator${pr === undefined ? '' : ` for PR #${pr}`}`);
-  return pr === undefined ? candidates[0] : capacity.choose(capacity.choices(pr, candidates, stage)).agent;
+  if (pr === undefined) return candidates[0];
+  const projectedStarts = capacity.choices(pr, candidates, stage);
+  return capacity.choose(projectedStarts).agent;
 }
 
 // Each agent on the engine it runs on, from one read of the chart (a findAgent per agent read it and the picks again).
