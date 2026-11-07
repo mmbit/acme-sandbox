@@ -100,6 +100,22 @@ test('a confined snapshot reuses unchanged tracked contents and stages changed c
   }
 });
 
+test('a snapshot takes in the carried files though git ignores them, and leaves out the rest it ignores', () => {
+  const root = mkdtempSync(join(tmpdir(), 'snapshot-carried-'));
+  try {
+    git(root, 'init', '-q');
+    writeFileSync(join(root, '.gitignore'), '*.log\n');
+    git(root, 'add', '-A');
+    for (const name of ['carried.log', 'left.log']) writeFileSync(join(root, name), `${name}\n`);
+    const tree = workingTree(root, ['carried.log']);
+    assert.equal(git(root, 'show', `${tree}:carried.log`), 'carried.log\n');
+    assert.equal(git(root, 'ls-tree', tree, 'left.log'), '');
+    assert.equal(git(root, 'ls-files', 'carried.log'), '', "the repo's own index as it was");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function confinedTree(root: string, scratch: string) {
   const source = new URL('./repo.ts', import.meta.url).href;
   const script = `import { workingTree } from ${JSON.stringify(source)}; console.log(workingTree(process.cwd()));`;

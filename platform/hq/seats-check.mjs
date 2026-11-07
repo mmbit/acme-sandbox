@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // HQ-OS › Seats and Settings › Seats in a real browser, on mock/seats.json and mock/seat-providers.json with dev mode's
-// mock worker: the Seats app shows each seat's state in a word and its windows, a
+// mock worker: the Seats app shows each seat's state in a word and its windows, why one out takes no new work, a
 // paced seat's tooltip and even-pace tick, and nothing to change; Settings' Seats row says what needs the board; each seat's
 // row reads in a word or two, and its page has its sign-in, Pause, Stop at and Remove, each change saying how it went; Add a seat (a subscription that signs in, a key, a service of the board's own, a refused name); a
 // sign-in step by step (a code pasted, a wrong one, a code to type on the provider's page); Remove asks in place and says
@@ -25,6 +25,49 @@ import { lookNames } from './looks.mjs';
 // (its pace lets non-urgent work start again in two days, before that reset)
 mockSeats.find(s => s.id === 'claude-1').week_resets = Date.now() + 2.5 * 864e5;
 mockSeats.find(s => s.id === 'claude-1').status.until = Date.now() + 2 * 864e5;
+// why a seat takes no new work: claude-2 at its stop until its reset; codex-4 ready with no usage read since a restart
+mockSeats.find(s => s.id === 'claude-2').status.reason = 'quota';
+mockSeats.push({
+  id: 'codex-4',
+  engine: 'codex',
+  provider: 'openai',
+  provider_name: 'OpenAI: ChatGPT subscription',
+  sign_in: 'login',
+  stop: 90,
+  paused: false,
+  state: 'ready',
+  until: null,
+  note: 'Usage not read yet: return time unknown until the account is read',
+  util: null,
+  resets: null,
+  week: null,
+  week_resets: 1799341200000,
+  action: null,
+  status: { admission: 'unavailable', until: null, running: 0, reason: 'usage' },
+  signin: null,
+});
+// codex-5 held by its provider's refusal for days: back at the hold's end, its account read again within the hour
+const heldEnd = Date.now() + 5 * 864e5,
+  heldCheck = Date.now() + 50 * 60e3;
+mockSeats.push({
+  id: 'codex-5',
+  engine: 'codex',
+  provider: 'openai',
+  provider_name: 'OpenAI: ChatGPT subscription',
+  sign_in: 'login',
+  stop: 90,
+  paused: false,
+  state: 'sleeping',
+  until: heldCheck,
+  note: `held until ${new Date(heldEnd).toISOString()}, its account read an hour`,
+  util: null,
+  resets: null,
+  week: 0,
+  week_resets: heldEnd,
+  action: null,
+  status: { admission: 'unavailable', until: heldEnd, running: 0, reason: 'provider', nextCheck: heldCheck },
+  signin: null,
+});
 const files = {
   'mock/seats.json': Buffer.from(JSON.stringify(mockSeats)),
   'mock/requests.json': Buffer.from(
@@ -109,6 +152,8 @@ for (const look of RENDERERS)
       'claude-5': 'setting up',
       'claude-6': 'closed',
       'codex-3': 'removing',
+      'codex-4': 'waiting',
+      'codex-5': 'waiting',
     };
     for (const [id, word] of Object.entries(states))
       assert.match(
@@ -123,7 +168,7 @@ for (const look of RENDERERS)
     );
     assert.match(
       await text(page, '.seat-status [data-seat="claude-2"]'),
-      /nothing running · new work from (\w{3} )?\d\d:\d\d\s*5-hour\s*91%\s*↻ (\w{3} )?\d\d:\d\d\s*Week\s*71%\s*↻/i,
+      /nothing running · at its stop, new work from (\w{3} )?\d\d:\d\d\s*5-hour\s*91%\s*↻ (\w{3} )?\d\d:\d\d\s*Week\s*71%\s*↻/i,
       at,
     );
     assert.equal(
@@ -144,10 +189,19 @@ for (const look of RENDERERS)
       'claude-1': /^5 running · urgent only until (\w{3} )?\d\d:\d\d$/i,
       'claude-key-1': /^1 running · takes new work$/i,
       'mistral-1': /^nothing running · takes new work$/i,
+      'codex-4': /^nothing running · no new work until its usage is read$/i,
+      'codex-5':
+        /^nothing running · held by its provider, new work from (\w{3} )?\d\d:\d\d, checked again (\w{3} )?\d\d:\d\d$/i,
     };
     for (const [id, re] of Object.entries(now))
       assert.match(await text(page, `.seat-status [data-seat="${id}"] .seat-until`), re, `${at}: ${id}`);
     assert.equal(await page.$('.seat-status [data-seat="claude-3"] .seat-until'), null, `${at}: signed out says so`);
+    assert.equal(
+      await page.$eval('.seat-status [data-seat="codex-4"] .st', e => e.title),
+      'Usage not read yet: return time unknown until the account is read',
+      `${at}: the worker's words on the missing reading`,
+    );
+    assert.equal(await page.$('.seat-status [data-seat="codex-4"] .use'), null, `${at}: no bars for an unread seat`);
     assert.ok(
       paced.tick > 50 && paced.tick < paced.week,
       `${at}: the week (${paced.week}%) past its even pace (${paced.tick}%)`,
@@ -166,7 +220,7 @@ for (const look of RENDERERS)
     assert.equal(await crumb(page), '› Settings › Seats', at);
 
     // every row in a word or two
-    assert.equal(await page.$$eval('.seats > li[data-seat]', l => l.length), 12, at);
+    assert.equal(await page.$$eval('.seats > li[data-seat]', l => l.length), 14, at);
     const reads = {
       'claude-1': /Claude subscription/,
       'claude-2': /Claude subscription/,
@@ -180,6 +234,8 @@ for (const look of RENDERERS)
       'claude-6': /Closed/,
       'codex-3': /Removing…/,
       'mistral-1': /Le Chat subscription/,
+      'codex-4': /ChatGPT subscription/,
+      'codex-5': /ChatGPT subscription/,
     };
     for (const [id, re] of Object.entries(reads))
       assert.match(await text(page, row(id)), new RegExp(re.source, 'i'), `${at}: ${id}`); // (a word shows in capitals in some looks)

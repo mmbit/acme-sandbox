@@ -147,12 +147,11 @@ export const pausesAtStop = (seat: { engine: string; drainAt?: number; hasCredit
 export const paceTo = (s: Windows, pacing: boolean, reserve: boolean) =>
   pacing ? (hasConfiguredStop(s) ? s.drainAt : reserve ? 1 : DRAIN_AT) : undefined;
 
-// The week's pace, while the board has pacing on: at the average pace of the week so far, would the seat reach the
-// level its pacing aims for (`to`) more than PACE_EARLY before the weekly reset? Then it's paced until that reset: it
-// takes only explicitly urgent work (the coordinator's claim), and the rest waits, so a few jobs start later rather than everything
-// stopping a day or two early (the board, 15 Oct). A stop due only a few hours early costs less than holding work back,
-// so it doesn't pace. It aims PACE_MARGIN under the level, so a week on pace ends just short of it. Before a day of the
-// week has gone there's no pace to go by. `to`: paceTo. Only a default target relaxes in the last day. Undefined: not paced.
+// Whether a seat's week runs ahead of its pace, while the board has pacing on: at the average pace of the week so far,
+// would it reach the level its pacing aims for (`to`: paceTo) more than PACE_EARLY before the weekly reset? Then it's
+// paced until that reset (pacedRuns: how many runs at a time). A small lead doesn't pace it, and it aims PACE_MARGIN
+// under the level, which leaves room for readings and work in flight. Before a day of the week has gone there's no pace
+// to go by. Only a default target relaxes in the last day (pacedLevel). Undefined: not paced.
 const PACE_FROM = 1 / 7,
   PACE_MARGIN = 0.02;
 const PACE_EARLY = 3 * 3600_000;
@@ -162,7 +161,7 @@ export function pacedUntil(s: PacedWeek, to: number | undefined, now = Date.now(
   const left = s.weekResets - now,
     gone = 1 - Math.min(1, left / WEEK_MS);
   if (gone < PACE_FROM) return undefined;
-  const level = hasConfiguredStop(s) ? to : relaxedLevel(to, s.weekResets, true, now);
+  const level = pacedLevel(s, to, now);
   const pace = s.week / (gone * WEEK_MS),
     early = left - Math.max(0, level - PACE_MARGIN - s.week) / pace; // (ms)
   return early > PACE_EARLY ? s.weekResets : undefined;
@@ -182,12 +181,76 @@ export function paceChange(s: PacedWeek, to: number | undefined, now = Date.now(
 // When a seat paced now (pacedUntil gives its reset) stops being paced with its use as it stands: `early` comes down to
 // PACE_EARLY only as time goes (the time left shrinks faster than the stop its pace leads to, the last day's reserve
 // shrinking too), so that moment is found by halving, to the second, and comes before the reset.
-export function pacingLifts(s: PacedWeek, to: number, now = Date.now()) {
-  let [paced, lifted] = [now, s.weekResets];
-  while (lifted - paced > 1000) {
-    const mid = (paced + lifted) / 2;
-    if (pacedUntil(s, to, mid) === undefined) lifted = mid;
-    else paced = mid;
+export const pacingLifts = (s: PacedWeek, to: number, now = Date.now()) =>
+  firstWhen(now, s.weekResets, t => pacedUntil(s, to, t) === undefined);
+
+// The remaining weekly allowance per wall hour, and the concurrent runs its measured per-agent-hour cost affords.
+// A seat whose one run costs more than that allowance keeps one place, and rests after each run (restUntil: pacedRest)
+// with none. An unknown cost permits one place with no rest.
+export function pacedRuns(
+  s: PacedWeek,
+  to: number | undefined,
+  weekRate?: number | null,
+  now = Date.now(),
+  restUntil?: number,
+) {
+  if (pacedUntil(s, to, now) === undefined) return undefined;
+  const perHour = (Math.max(0, pacedLevel(s, to!, now) - PACE_MARGIN - s.week!) * 3600_000) / (s.weekResets - now);
+  const affords = weekRate && weekRate > 0 ? perHour / weekRate : 1;
+  const resting = affords < 1 && restUntil !== undefined && restUntil > now;
+  return {
+    perHour,
+    runs: affords >= 1 ? Math.floor(affords) : resting ? 0 : 1,
+    restUntil: resting ? restUntil : undefined,
+  };
+}
+
+// The level a paced seat's week aims for now: `to`, which relaxes through the last day as the reserve does (drainLevel),
+// but for a configured stop.
+const pacedLevel = (s: PacedWeek, to: number, now: number) =>
+  hasConfiguredStop(s) ? to : relaxedLevel(to, s.weekResets, true, now);
+
+// When a paced seat's rest ends after a run of `ranMs` ends now: the run's spend at its measured cost, taken back at
+// the seat's allowance, so its average spend lands on its week's budget. A rest still going (restUntil) is added to,
+// and none lasts past the weekly reset. A seat that affords the run keeps restUntil as it is.
+export function pacedRest(
+  s: PacedWeek,
+  to: number | undefined,
+  weekRate: number | null | undefined,
+  ranMs: number,
+  restUntil?: number,
+  now = Date.now(),
+) {
+  const paced = pacedRuns(s, to, weekRate, now);
+  if (!paced || !weekRate || weekRate <= paced.perHour) return restUntil;
+  const rest = paced.perHour > 0 ? ranMs * (weekRate / paced.perHour - 1) : Infinity;
+  return Math.min(s.weekResets, Math.max(restUntil ?? now, now) + rest);
+}
+
+// When a paced seat next takes more runs at a time (pacedRuns), or its pacing lifts: its allowance per hour grows as the
+// reset nears and the last day's reserve relaxes, while its running work spends `spend` of its week an hour. A resting
+// seat (restUntil) takes its first run once its allowance affords one, or its rest ends. Undefined: an unknown cost,
+// whose one place lasts until pacing lifts (paceChange).
+export function pacedRunsRise(
+  s: PacedWeek,
+  to: number | undefined,
+  weekRate: number | null | undefined,
+  spend: number,
+  now = Date.now(),
+  restUntil?: number,
+) {
+  const runs = pacedRuns(s, to, weekRate, now, restUntil)?.runs;
+  if (runs === undefined || !weekRate || weekRate <= 0) return undefined;
+  const spent = (t: number) => ({ ...s, week: s.week! + (spend * (t - now)) / 3600_000 });
+  return firstWhen(now, s.weekResets, t => (pacedRuns(spent(t), to, weekRate, t, restUntil)?.runs ?? Infinity) > runs);
+}
+
+// The first moment between start and end, to the second, at which holds is true. Once holds is true it stays true.
+function firstWhen(start: number, end: number, holds: (t: number) => boolean) {
+  while (end - start > 1000) {
+    const mid = (start + end) / 2;
+    if (holds(mid)) end = mid;
+    else start = mid;
   }
-  return lifted;
+  return end;
 }

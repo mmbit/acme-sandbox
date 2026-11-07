@@ -124,8 +124,9 @@ body,
   --tile-lip: 0 var(--depth-tile) 0 var(--lip);
   --key-r: 999px;
 }
-/* the Notebook's Shelf (shell/ink/bookshelfwindow.css): its real wood a little towards the colourway (its knop's side
-   over a pale ground, so never dark), lettered in the colourway's ink; on a dark colourway, its ground is the dark ink */
+/* the Notebook's Shelf (shell/ink/bookshelfwindow.css): its real wood a little towards the colourway (the accent's side
+   over a pale ground, so never dark), lettered in the colourway's ink; on a dark colourway, its ground is the dark ink
+ */
 #book {
   --bk-shelf-tint: color-mix(in oklab, var(--k-side) 25%, #f2efe8);
   --bk-shelf-tint-share: 28%;

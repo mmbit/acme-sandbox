@@ -30,13 +30,15 @@ judge it. Start from it.
 // (a new time reaches the board only for a time it set itself, once)
 // (the next look the CEO names)
 // (linked companies, in step 1 and their own section)
+// (a pause on a whole milestone: --until <project>)
 const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    our goals with each bet's window and next step, the numbers the company steers by, the meetings closed since the
    last check, what finished since then (deliverables done and the board's items, merged and deployed: whether the board
    hears is yours, and what it asked to hear the moment it's ready goes to it as a notice marked \`now\`), the alarms on
    now, the linked companies' unread messages and links that stalled or ended, what threatens the plan (windows the plan misses and what holds them, deliverables giving past their aim, and the
-   threats before anything slips: work past its size, a stuck pull request, tests slow or failing, timeouts, the
-   worker's room down to a couple of jobs, a seat near its limit, and from the owners' plans; a missed window and a
+   threats before anything slips: work past its size, a run idle an hour with what it waits on, a stuck pull request,
+   tests slow or failing, timeouts, the worker's room down to a couple of jobs, a seat near its limit, and from the
+   owners' plans; a missed window and a
    stuck pull request with when their work last moved: a new commit pushed, a review round opened or ruled, the merge
    or its deploy, never a job queued, started, re-sent or ended with nothing pushed), what waits for the board's
    decision, and the queue. \`hq followthrough\`: the paused projects and deliverables (why, until what, the board's item,
@@ -60,8 +62,8 @@ const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: 
      what it waits for wakes its owner with a job to judge it. Its owner hasn't decided yet (no job woke them, it
      ended without a resume or a new condition, or the work ended without the result the hold was for): decide now,
      as the pause's reason says: lift it, take the results to the board, or queue what's missing and pause it again
-     on that (\`hq project pause\` with the same why and \`--until\` the new job keeps it on), or, where only the
-     board can judge it, make the pause wait for its answer, which lifts it: ${BOARD_WAITS('<project or deliverable>')}.
+     on that (\`hq project pause\` with the same why and \`--until\` the new job or its whole milestone keeps it on),
+     or, where only the board can judge it, make the pause wait for its answer, which lifts it: ${BOARD_WAITS('<project or deliverable>')}.
    - A result the board asked for first (its priority, an experiment, a comparison) promised and not in its hands: no
      work running that brings it, or the work that should have ended without it. Queue what's missing now, and tell
      the board on the desk phone where it stands when its time is at risk.
@@ -70,8 +72,9 @@ const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: 
    Work running on a pause yields at its next step and goes on in its session once resumed; a review or ruling runs to
    its end (\`hq stop\` pauses one).
    A hold the board agreed on a project or deliverable that isn't a pause yet goes in as the pause (\`hq project pause\`
-   or \`hq deliverable pause\`, \`--until\` the jobs whose end wakes you to judge it, \`--until-time\` a time, or
-   \`--by-hand\`, then \`hq item link <item> pause:<project or deliverable>\`), not as waits or a line in a brief.
+   or \`hq deliverable pause\`, \`--until <project>\` the whole milestone whose going live wakes you to judge it, or
+   \`--until <job>\` one job, \`--until-time\` a time, or \`--by-hand\`, then
+   \`hq item link <item> pause:<project or deliverable>\`), not as waits or a line in a brief.
 
 ## The second question: is each goal's number moving toward its target in time?
 

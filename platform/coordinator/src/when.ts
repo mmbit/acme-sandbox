@@ -13,6 +13,7 @@ import * as seatreplay from './seatreplay.ts';
 import { db } from './db.ts';
 import { findAgent } from './jobs.ts';
 import * as predictions from './predictions.ts';
+import * as board from './board.ts';
 import type { Confidence } from './confidence.ts';
 import { readSizing, type TokenBudget } from './tokenbudget.ts';
 import { readSize } from './sizes.ts';
@@ -94,7 +95,7 @@ export async function when(ask: Ask, asker: string, now = Date.now()) {
     size: quotedSize(given, planned, asker),
     free,
     ...answer,
-    safe: await safeFinish(due),
+    ...safeTold(await safeFinish(due)),
     horizon_days: HORIZON_DAYS,
     played: { plays: plays(), ms: Math.round(performance.now() - t0) },
   };
@@ -225,6 +226,10 @@ async function trials(planned: ReturnType<typeof plannedWork>, now: number) {
   };
   return { snapshot, trialsFor, relaxedTrial, safeFinish, plays: () => plays };
 }
+
+// The time to tell the board, and when it falls in the board's quiet hours the time it's up, which it's told instead ("by
+// the time you're up").
+const safeTold = (safe: number | null) => ({ safe, safe_up: board.upAfter(safe) });
 
 // The deadlines between lo and hi where one of the work's rows (its own, its review stages', work it waits for) meets one
 // that doesn't move with it in the play's order.

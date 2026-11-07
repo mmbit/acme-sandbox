@@ -27,11 +27,22 @@ const RUNS_TOKEN = 'runs-secret';
 const CARD_KEY = `helper_${'c'.repeat(43)}`;
 const h = await harness('runs', {
   env: { RUNS_TOKEN },
-  before: () => {
+  before: repo => {
     mkdirSync(process.env.SECRETS_DIR!, { recursive: true });
     writeFileSync(`${process.env.SECRETS_DIR}/RUN_HELPER_KEY`, `${CARD_KEY}\n`);
+    // HQ's checkout, two commits, the runs' bundles stand on the later
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+    git('init', '-q');
+    git('add', '-A');
+    git('commit', '-qm', 'first');
+    writeFileSync(`${repo}/later.txt`, 'later\n');
+    git('add', 'later.txt');
+    git('commit', '-qm', 'later');
   },
 });
+const checkout = (...args: string[]) =>
+  execFileSync('git', ['-C', process.env.REPO_DIR!, ...args], { encoding: 'utf8' }).trim();
 const secrets = await import('./secrets.ts');
 const runs = await import('./runs.ts');
 const storage = await import('./storage.ts');
@@ -39,6 +50,7 @@ storage.FLOOR.bytes = 0; // (bundles are taken whatever this machine's disk has 
 const events = await import('./events.ts');
 const HQ = new URL('../../worker/bin/hq', import.meta.url).pathname;
 const HELPER = new URL('../../helper/helper.mjs', import.meta.url).pathname;
+const GATES_REPO = new URL('../../../shared/gates/repo.ts', import.meta.url).pathname;
 const ROOT = process.getuid!() === 0;
 const OTHER_UID = ROOT ? unusedId() : 0;
 
@@ -64,11 +76,14 @@ function idsOf(pid: string) {
   }
 }
 
-// A job's tree: a git repo with sim/ committed, and a file in it that isn't committed yet
+// A job's tree: a git repo with sim/ committed, and a file in it that isn't committed yet. Like a job's checkout, it
+// has the gates' repo code, which hq run snapshots the tree with
 function jobTree() {
   const tree = mkdtempSync(`${tmpdir()}/runs-tree-`);
   mkdirSync(`${tree}/sim`);
   mkdirSync(`${tree}/other`);
+  mkdirSync(`${tree}/shared/gates`, { recursive: true });
+  writeFileSync(`${tree}/shared/gates/repo.ts`, readFileSync(GATES_REPO));
   writeFileSync(`${tree}/sim/seed.txt`, '42\n');
   writeFileSync(`${tree}/other/big.txt`, 'not needed\n');
   const git = (...args: string[]) => execFileSync('git', ['-C', tree, ...args]);
@@ -125,6 +140,7 @@ async function startHelper(
   how: ({ server: true } | { bootstrap: string; keyCommand?: string; state?: string }) & {
     kind?: string;
     tools?: string;
+    cache?: true;
     locked?: boolean;
   },
   hqUrl = h.base,
@@ -134,6 +150,9 @@ async function startHelper(
   chmodSync(machine, 0o755);
   mkdirSync(`${machine}/work`, { mode: 0o1777 });
   chmodSync(`${machine}/work`, 0o1777);
+  // (a kind with sockets has one, manager.mjs: open to the runs, as /work)
+  if (how.cache) mkdirSync(`${machine}/cache`, { mode: 0o1777 });
+  if (how.cache) chmodSync(`${machine}/cache`, 0o1777);
   const keyFile = `${'state' in how && how.state ? how.state : machine}/key`;
   if ('server' in how) writeFileSync(keyFile, `${RUNS_TOKEN}\n`, { mode: 0o600 });
   else if (how.keyCommand) saveKey(how.keyCommand, keyFile);
@@ -146,6 +165,7 @@ async function startHelper(
       TMPDIR: machine,
       KEY_FILE: keyFile,
       WORK_DIR: `${machine}/work`,
+      CACHE_DIR: `${machine}/cache`,
       NONET_FILE: `${machine}/nonet.pl`,
       TASK_UID: String(uid),
       TASK_GID: String(uid === process.getuid!() ? process.getgid!() : uid),
@@ -465,6 +485,26 @@ test('a waiting run goes to the fastest free machine: a slower one leaves it whi
   assert.equal((await asServer('/api/helper/take', {})).json.id, takeOf(fourth.json.id), 'no machine is there');
   assert.deepEqual([(await shownMachine(fast.id)).state, (await shownMachine(slow.id)).state], ['away', 'paused']);
   t.mock.timers.reset();
+  await h.finish(job);
+});
+
+test('HQ names no base while a helper that keeps none is there, and a run that stands on one waits for no faster machine whose helper keeps none: a slower one that keeps it takes it at once', async () => {
+  await lendNone();
+  const fast = await lend('the rig');
+  const slow = await lend('an old laptop');
+  const job = await h.start({ agent: 'bolt' });
+  const asFast = () => asKey(fast.key, '/api/helper/take', { cpus: 16, memoryGb: 64, bench: 120 });
+  const asSlow = () => asKey(slow.key, '/api/helper/take', { cpus: 4, memoryGb: 8, bench: 60, keepsBase: true });
+  assert.equal((await asFast()).status, 204);
+  assert.equal((await asSlow()).status, 204);
+  assert.equal((await h.agent('runs/base', job.token)).body.commit, null, 'the rig keeps none: the whole repo goes');
+
+  // (a run sent on a base before the rig was there)
+  const sent = await sendRun(job.token, { command: 'true', base: checkout('rev-parse', 'HEAD') });
+  assert.equal((await asFast()).status, 204, 'the rig keeps no base');
+  const take = (await asSlow()).json.id;
+  assert.equal(take, takeOf(sent.json.id), 'the rig is free and asking, but the laptop keeps the base');
+  assert.equal((await finishAs(slow.key, take)).status, 200);
   await h.finish(job);
 });
 
@@ -856,6 +896,113 @@ const TWO_KINDS = `
     bad-disk: { diskGb: null }
 `;
 
+// A run's output as its job reads it
+const outputOf = async (id: number, token: string) =>
+  (await h.send(`/api/agent/runs/${id}/output`, { authorization: `Bearer ${token}` })).text;
+// A bundle's refs, and the commits it needs the repo to have already (each "-<commit> <subject>"), from its header
+const headsOf = (bundle: string) => bundle.slice(0, bundle.indexOf('\n\n')).split('\n').slice(1);
+
+test("a run's bundle may stand on HQ's own commit: HQ names it, the helper hears it with the run, and HQ gives it what it lacks of it", async () => {
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const [head, first] = [checkout('rev-parse', 'HEAD'), checkout('rev-parse', 'HEAD~1')];
+  const base = async () => (await h.agent('runs/base', job.token)).body;
+  assert.equal((await base()).commit, null, 'while no helper keeps one');
+  await asHelper('/api/helper/take', { keepsBase: true });
+  assert.equal((await asServer('/api/helper/take', {})).status, 204);
+  assert.equal((await base()).commit, null, "while this server's helper, there too, keeps none");
+  assert.equal((await asServer('/api/helper/take', { keepsBase: true })).status, 204);
+  const named = await base();
+  assert.equal(named.commit, head);
+  assert.equal(typeof named.kind, 'string', 'the kind it weighed named');
+  assert.equal((await sendRun(job.token, { command: 'true', base: 'HEAD' })).status, 400, 'a commit by its full name');
+  const plain = await sendRun(job.token, { command: 'true' });
+  const plainTake = (await asHelper('/api/helper/take', {})).json;
+  assert.equal(plainTake.base, undefined, 'a whole bundle stands on nothing');
+  assert.equal((await asHelper(`/api/helper/runs/${plainTake.id}/base`)).status, 404);
+  await h.agent(`runs/${plain.json.id}/stop`, job.token, {});
+
+  await sendRun(job.token, { command: 'true', base: head });
+  assert.equal((await asHelper('/api/helper/take', {})).status, 204, 'never to a helper that keeps no base');
+  const take = (await asHelper('/api/helper/take', { keepsBase: true })).json;
+  assert.equal(take.base, head);
+  const whole = await asHelper(`/api/helper/runs/${take.id}/base`);
+  assert.equal(whole.status, 200);
+  assert.deepEqual(headsOf(whole.text), [`${head} HEAD`], 'all of it, for a helper that has none');
+  const unknown = await asHelper(`/api/helper/runs/${take.id}/base?have=${'f'.repeat(40)}`);
+  assert.deepEqual(headsOf(unknown.text), [`${head} HEAD`], 'a commit HQ has never had is no help');
+  const since = await asHelper(`/api/helper/runs/${take.id}/base?have=${first}`);
+  assert.deepEqual(headsOf(since.text), [`-${first} first`, `${head} HEAD`], 'only what came after what it has');
+  assert.equal((await asHelper(`/api/helper/runs/${take.id}/base?have=${head}`)).status, 404, 'nothing new to give');
+  assert.equal((await asKey(RUNS_TOKEN, `/api/helper/runs/${take.id}/base`)).status, 404, "another helper's take");
+  await h.finish(job);
+});
+
+test("the helper keeps the base its runs stand on, fetched from HQ once, and lends its objects to each run's own repo", async t => {
+  await lendNone();
+  const job = await h.start({ agent: 'bolt' });
+  const machine = await startHelper(t, { server: true, cache: true });
+  const head = checkout('rev-parse', 'HEAD');
+  const kept = `${machine}/cache/base.git`;
+  const ran = async (command: string, base = head) => {
+    const { id } = (await sendRun(job.token, { command, base })).json;
+    await until(async () => (await h.agent(`runs/${id}`, job.token)).body.state === 'done', 'the run ended', 15_000);
+    return { ...(await h.agent(`runs/${id}`, job.token)).body, output: await outputOf(id, job.token) };
+  };
+  const borrowed =
+    'git init -q r && echo "$PWD/../base.git/objects" > r/.git/objects/info/alternates && git -C r log --format=%s ';
+  const first = await ran(`${borrowed}${head}`);
+  assert.equal(first.exitCode, 0, first.output);
+  assert.equal(first.output, 'later\nfirst\n');
+  assert.equal(execFileSync('git', ['-C', kept, 'rev-parse', 'refs/kept/HEAD'], { encoding: 'utf8' }).trim(), head);
+  const packs = readdirSync(`${kept}/objects/pack`);
+  const again = await ran(`${borrowed}${head} && (touch ../base.git/HEAD 2>/dev/null && echo changed || echo kept)`);
+  assert.equal(again.exitCode, 0, again.output);
+  if (ROOT) assert.match(again.output, /kept$/, "a run can't change it for the next");
+  assert.deepEqual(readdirSync(`${kept}/objects/pack`), packs, 'nothing fetched again');
+  // (main fetched past HQ's HEAD, which the helper has: the bundle HQ gives leaves HEAD out)
+  const onMain = checkout(
+    '-c',
+    'user.name=t',
+    '-c',
+    'user.email=t@t',
+    'commit-tree',
+    `${head}^{tree}`,
+    '-p',
+    head,
+    '-m',
+    'main',
+  );
+  checkout('update-ref', 'refs/remotes/origin/main', onMain);
+  try {
+    const later = await ran(`${borrowed}${onMain}`, onMain);
+    assert.equal(later.exitCode, 0, later.output);
+    assert.equal(later.output, 'main\nlater\nfirst\n');
+  } finally {
+    checkout('update-ref', '-d', 'refs/remotes/origin/main');
+  }
+  await leftNothing(machine);
+  await h.finish(job);
+});
+
+test("a helper that can't keep a base never gets one: HQ names none while only it is there, and it leaves such a run", async t => {
+  await lendNone();
+  const job = await h.start({ agent: 'bolt' });
+  await startHelper(t, { server: true });
+  // (the server's helper of the test before kept one: this one says it keeps none as it asks)
+  const named = async () => (await h.agent('runs/base', job.token)).body.commit;
+  await until(async () => (await named()) === null, 'HQ names none', 15_000);
+  const { id } = (await sendRun(job.token, { command: 'echo ran', base: checkout('rev-parse', 'HEAD') })).json;
+  const sent = new Date().toISOString();
+  const asked = async () =>
+    (await h.agent('runs/helper', job.token)).body.kinds.some(
+      (kind: { server: { seen: string | null } }) => (kind.server.seen ?? '') > sent,
+    );
+  await until(asked, 'the helper asked for work since', 15_000);
+  assert.equal((await h.agent(`runs/${id}`, job.token)).body.state, 'waiting');
+  await h.finish(job);
+});
+
 test("with two kinds declared, each kind's helper takes only its kind's runs, and a run whose kind has no helper there goes to this server's helper of its kind at once", async t => {
   h.declareKinds(t, TWO_KINDS);
   await lendOne();
@@ -929,6 +1076,64 @@ test("with a kind's lent helper away, its run uses that kind's tools on this ser
   await h.finish(job);
 });
 
+const TESTS_AWAY =
+  "Run only the test files the change touches here, in one batch within the job's share. The push's own tests run the rest.";
+test('a run of a kind that says what to do instead is refused at once while no machine of it is there, then a returning busy helper takes it', async t => {
+  h.declareKinds(
+    t,
+    `    tests:\n      sockets: true\n      checkout: true\n      whenAway: ${JSON.stringify(TESTS_AWAY)}\n    render:\n      sockets: true\n    sim:\n      whenAway: Wait for it.\n    voice:\n      sockets: true\n`,
+  );
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  await asHelper('/api/helper/take', { kind: 'render' });
+  await asServer('/api/helper/take', { kind: 'tests', locked: true });
+  const before = lastRun();
+  const started = performance.now();
+  const refused = await sendRun(job.token, { command: 'touch should-not-run', kind: 'tests' });
+  assert.equal(refused.status, 409, refused.text);
+  assert.ok(performance.now() - started < 5000, 'no take-window wait');
+  assert.equal(
+    refused.json.error,
+    `No tests machine is there, and retrying won't help until one is back. ${TESTS_AWAY}`,
+  );
+  const other = await sendRun(job.token, { command: 'true', kind: 'sim' });
+  assert.equal(other.status, 409, 'any kind that says what to do instead');
+  assert.match(other.json.error, /^No sim machine is there.*Wait for it\.$/);
+  assert.equal(lastRun(), before, 'no run queued');
+  const waits = await sendRun(job.token, { command: 'true', kind: 'voice' });
+  assert.equal(waits.status, 200, 'a kind that says nothing waits for its machine');
+  assert.equal((await h.agent(`runs/${waits.json.id}/withdraw`, job.token, {})).status, 200);
+  const queued = lastRun();
+  const listed = (await h.agent('runs/helper', job.token)).body;
+  const tests = listed.kinds.find((kind: { name: string }) => kind.name === 'tests');
+  const guidance = refused.json.error;
+  assert.equal(tests.unavailable, guidance);
+  const tree = jobTree();
+  const unnamed = await hqIn(`${tree}/sim`, job, 'run', '--paths', 'sim', '--', 'touch should-not-run');
+  assert.match(unnamed.out, /hq run: No sim machine is there.*Wait for it\./, 'the kind a run naming none is of');
+  assert.doesNotMatch(unnamed.out, /HQ refused it/, 'said before a bundle is sent');
+  for (const paths of [[], ['--paths', 'sim']]) {
+    const began = performance.now();
+    const refused = await hqIn(`${tree}/sim`, job, 'run', '--kind', 'tests', ...paths, '--', 'touch should-not-run');
+    assert.notEqual(refused.code, 0, refused.out);
+    assert.ok(refused.out.includes(`hq run: ${guidance}`), refused.out);
+    assert.ok(performance.now() - began < 5000, 'CLI answers without waiting');
+  }
+  assert.equal(existsSync(`${tree}/sim/should-not-run`), false, 'no silent fallback');
+  assert.equal(lastRun(), queued);
+  await asHelper('/api/helper/take', { kind: 'tests', locked: true });
+  const accepted = await sendRun(job.token, { command: 'true', kind: 'tests' });
+  assert.equal(accepted.status, 200, accepted.text);
+  assert.equal((await asHelper('/api/helper/take', { kind: 'tests', locked: true })).json.id, takeOf(accepted.json.id));
+  assert.equal((await sendRun(job.token, { command: 'true', kind: 'tests' })).status, 200, 'busy stays present');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 4 * 60_000 });
+  assert.equal((await sendRun(job.token, { command: 'true', kind: 'tests' })).status, 409, 'stale asks are absent');
+  await asHelper('/api/helper/take', { kind: 'tests', locked: true });
+  assert.equal((await sendRun(job.token, { command: 'true', kind: 'tests' })).status, 200, 'no setting to flip');
+  t.mock.timers.reset();
+  await h.finish(job);
+});
+
 test('a socket kind enabled on this server runs loopback checks on its locked helper when no machine is lent', async t => {
   h.declareKinds(t, '    tests:\n      sockets: true\n      lentOnly: false\n      serverImage: service:worker\n');
   await lendNone();
@@ -954,8 +1159,8 @@ test('a socket kind enabled on this server runs loopback checks on its locked he
 });
 
 test("a run a lent helper lost has no helper present while this server's is away, even once the lent one asks again", async t => {
+  h.declareKinds(t, '    lost: { about: runs this server has never asked for }\n'); // (earlier tests' clocks left its others seen ahead)
   await lendOne();
-  h.db.prepare('delete from machine_kinds where machine = 0').run(); // (this server's helper, as earlier tests left it)
   const job = await h.start({ agent: 'bolt' });
   const sent = await sendRun(job.token, { command: 'true' });
   assert.equal(sent.status, 200, sent.text);
@@ -1504,9 +1709,11 @@ test("a machine set up with its install command: one command with its key, the m
     ],
     busy: [],
     code: pinned,
+    helperCode: await servedHelperHash(h.base),
   });
   assert.equal((await asServer('/api/helper/setup', {})).status, 403, 'never this server');
 
+  await asHelper('/api/helper/take', { kind: 'tests', slot: 1, locked: true });
   const job = await h.start({ agent: 'bolt' });
   const [first, second, third] = [
     await sendRun(job.token, { command: 'true', kind: 'tests' }),
@@ -1629,13 +1836,20 @@ test("a lent machine's manager says what the machine has: HQ shows it as the mac
   await h.finish(job);
 });
 
-// A Docker Engine on a socket for the manager: it has the manager's own image and makes containers, but a kind's image
-// never pulls, in turn refused at once with a 404 and Docker's words (an unknown digest, a refused sign-in), and failing
-// on the way, its error on the stream's last line with a 200 (a full disk). It keeps the containers it's asked to make
-// ({ name: their spec }), and has those `have` names. Its socket, docker.sock in the folder given, is bound and reached
-// by a path relative to that folder: a socket's path holds 107 bytes, a test checkout's temp folder can be longer, and
-// a short folder such as /tmp may not be writable
-function fakeDocker(t: TestContext, folder: string, have: Record<string, unknown> = {}) {
+// The hash of the helpers' code an HQ serves
+async function servedHelperHash(base: string) {
+  return createHash('sha256')
+    .update(await (await fetch(`${base}/api/helper/code`)).text())
+    .digest('hex');
+}
+
+// A Docker Engine on a socket for the manager: it has the manager's own image (and the `images` given) and makes
+// containers, but a kind's image never pulls, in turn refused at once with a 404 and Docker's words (an unknown
+// digest, a refused sign-in), and failing on the way, its error on the stream's last line with a 200 (a full disk). It
+// keeps the containers it's asked to make ({ name: their spec }), and has those `have` names. Its socket, docker.sock
+// in the folder given, is bound and reached by a path relative to that folder: a socket's path holds 107 bytes, a test
+// checkout's temp folder can be longer, and a short folder such as /tmp may not be writable
+function fakeDocker(t: TestContext, folder: string, have: Record<string, unknown> = {}, images: string[] = []) {
   let pulls = 0;
   const made: Record<
     string,
@@ -1660,7 +1874,8 @@ function fakeDocker(t: TestContext, folder: string, have: Record<string, unknown
             '{"status":"Pulling from library/node"}\n{"errorDetail":{"message":"no space left on device"},"error":"no space left on device"}\n',
           )
         : send(404, '{"message":"manifest unknown"}');
-    if (req.method === 'GET' && path === '/images/node:24.22.1-slim/json') return send(200, '{}');
+    if (req.method === 'GET' && ['node:24.22.1-slim', ...images].some(image => path === `/images/${image}/json`))
+      return send(200, '{}');
     if (req.method === 'GET' && path === '/containers/json') return send(200, '[]');
     if (req.method === 'GET') return send(404);
     send(200, '{}');
@@ -1820,7 +2035,7 @@ test("a lent machine's manager follows HQ's code: its install starts it on what 
   const state = mkdtempSync(`${tmpdir()}/manager-`);
   writeFileSync(`${state}/key`, `${lentKey}\n`);
   const have: Record<string, unknown> = {};
-  const made = fakeDocker(t, state, have);
+  const made = fakeDocker(t, state, have, ['node:24.22.1-bookworm']);
   const node = (args: string[], env: Record<string, string> = {}) => {
     const one = spawn(process.execPath, args, {
       cwd: state,
@@ -1852,6 +2067,9 @@ test("a lent machine's manager follows HQ's code: its install starts it on what 
   await new Promise(resolve => setTimeout(resolve, 1000));
   assert.equal(made[`${name}-swap`], undefined, 'its own container as it should be');
   manager.one.kill();
+  // a helper fetches its code only as it starts: the hash of HQ's is in its container, so new code is a new one
+  const helper = `${name.slice(0, -'manager'.length)}tests_1`;
+  assert.ok(made[helper].Env.includes(`HELPER_CODE=${await servedHelperHash(h.base)}`));
 
   // a manager whose own container changes (a new image): a one-off container installs it again, and ends
   have[name] = { Config: { Labels: { 'hq.spec': 'an older one' } } };

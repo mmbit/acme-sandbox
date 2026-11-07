@@ -151,8 +151,7 @@ export function* orderingInParts(
   const rounds = reviewPlans(now, prospective);
   yield 'review plans';
   const byPr = Map.groupBy(rows, row => row.pr);
-  const holdingOf = pauses.holdings(); // (one read for every thread)
-  const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, holdingOf(thread)]));
+  const holds = threadHolds(rows);
   const { mergeWait, branchOf, urgency } = rowReads(rows, placement, open, prospective?.id);
   const queued: QueuedJob[] = [];
   for (const [index, row] of rows.entries()) {
@@ -166,12 +165,15 @@ export function* orderingInParts(
     queued.push(job);
     if (index % JOBS_PER_PART === JOBS_PER_PART - 1 || index === rows.length - 1) yield 'the jobs';
   }
+  holdResources(queued, now);
   inThreads(rows, queued, placement.place, rounds, keepLoops, now);
   holdMerges(queued, answers);
   yield 'the thread order';
   return { now, planner: 3, windows: threadWindows, pauseUntil: pauses.untilJobs(), jobs: queued, deployLagMs: lag };
 }
 
+// A running job waiting its turn at a resource another running job holds (room.ts resourceWaits) waits for that job.
+// It comes before inThreads, whose unloop breaks any loop these edges close.
 function holdResources(queued: QueuedJob[], now: number) {
   const byId = new Map(queued.map(job => [job.id, job]));
   for (const edge of plannerCapacity(now)?.resourceWaits ?? []) {
@@ -180,6 +182,12 @@ function holdResources(queued: QueuedJob[], now: number) {
     if (waiting?.status !== 'running' || holding?.status !== 'running') continue;
     (waiting.dependencies ??= []).push({ job: holding.id, until: 'done' });
   }
+}
+
+// Each thread's pause holdings, in one read for every thread
+function threadHolds(rows: Row[]) {
+  const holdingOf = pauses.holdings();
+  return new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, holdingOf(thread)]));
 }
 
 // A row's branch and the task before it in its thread, as its thread places it
@@ -293,7 +301,6 @@ function inThreads(
   keepLoops: boolean,
   now: number,
 ) {
-  holdResources(queued, now);
   rows.forEach((row, i) => {
     const placed = place(row),
       job = queued[i];

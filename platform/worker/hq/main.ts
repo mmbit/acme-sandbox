@@ -69,6 +69,7 @@ const COMMANDS: Record<string, Command> = {
   urgent,
   when,
   plan,
+  // the whole milestone's before one deliverable's
   project: projects.project,
   deliverable: projects.deliverable,
   decision,

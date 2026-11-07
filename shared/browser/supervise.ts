@@ -11,7 +11,7 @@ const MINUTES = 30;
 // (libuv closes the lock's descriptor in what it starts). HQ_RENDER_SLOT: a test's lock file of its own, so a test never
 // takes, or leaves held, the slot every job's renders wait for. The worker ends a holder past its bound (its
 // browserslot.ts).
-const slot = () => process.env.HQ_RENDER_SLOT || '/run/lock';
+const SLOT = process.env.HQ_RENDER_SLOT ?? '/run/lock';
 const SCRIPT = fileURLToPath(import.meta.url);
 const REAPER = fileURLToPath(new URL('reaper.pl', import.meta.url)); // the render's parent, and its subreaper
 
@@ -24,7 +24,7 @@ export async function supervise(entry: string, args: string[], options: Options)
     asked = Date.now();
   const command = [process.execPath, SCRIPT, entry, ...args];
   const flock = ['flock', '--exclusive', '--no-fork', '--timeout', String(minutes * 60), '--conflict-exit-code', '124'];
-  const argv = options.lock ? [...flock, slot(), ...command] : command;
+  const argv = options.lock ? [...flock, SLOT, ...command] : command;
   const child = spawn('perl', [REAPER, ...argv], {
     cwd: options.cwd,
     env: {

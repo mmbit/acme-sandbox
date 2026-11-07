@@ -12,24 +12,37 @@ the machine's GPUs. Each lent machine and our server run one helper per kind, ea
 image, and each takes only its own kind's runs. A machine may leave a kind out (a laptop with no graphics card runs no
 render helper). A new kind is a few lines of settings, never new code, and nobody at the machines.
 
-
 Kinds with `checkout: true` carry a git snapshot of the checkout, its comparison base and pinned dependencies with
 `hq run --kind <kind> -- <command>`. `hq run helper` lists a company's kinds and their checkout and browser support.
 `--bring <folder>` returns screenshots and reports even when the command fails. A kind with `browsers: true` receives
-the worker's Chromium and its libraries. Otherwise its image supplies the browsers. Setup lives in `shared/gates` in
-the checkout, so older jobs rebase on main first. Checkout checks use `sockets: true` for loopback page servers and
-package installation and return the command's exit code. Socket kinds default to lent machines alone. A kind with
-`lentOnly: false` also runs on this server's locked helper, through the same registry proxy.
-`serverImage` optionally builds its server helper from one of this server's compose services (`service:<name>`, such as
-`service:worker`, the worker's build) instead of pulling the lent machine's private image. Nothing else is taken: compose
-reads any other build context as a path or URL on the host. Example commands are in
+the worker's Chromium and its libraries. Otherwise its image supplies the browsers. A kind with `tools: true` receives
+the worker's infrastructure tools too (age, versitygw, caddy, docker-compose, jq: 202 MB), for infra's tests; others go
+without. Setup lives in `shared/gates` in the checkout, so older jobs rebase on main first. Checkout checks use
+`sockets: true` for loopback page servers and package installation and return the command's exit code. Socket kinds
+default to lent machines alone. A kind with `lentOnly: false` also runs on this server's locked helper, through the
+same registry proxy. `serverImage` optionally builds its server helper from one of this server's compose services
+(`service:<name>`, such as `service:worker`, the worker's build) instead of pulling the lent machine's private image.
+Nothing else is taken: compose reads any other build context as a path or URL on the host. Example commands are in
 `shared/browser/README.md`.
+
+**A checkout stands on HQ's commit**. The whole repo is a few hundred MB, most
+of a run's wait before its check starts. So `hq run` asks HQ for its checkout's commit (`GET /api/agent/runs/base
+?kind=…`) and, when the job's repo has it, sends only what came after it: the job's base and tree as commits on top of
+it, a few MB. The helper keeps the repo the runs stand on in its cache (`/cache/base.git`, made as it starts, the
+helper's own, so a run reads it but can't change it for the next). A run on a commit it lacks fetches from HQ only
+what's new since the commits it has (`GET /api/helper/runs/<attempt>/base?have=…`: HQ's checkout's HEAD and its
+fetched main), once per helper and HQ deploy. The run's own repo borrows the kept objects (`base.git` in its tree,
+git's alternates). Only a helper whose take says it keeps a base (`keepsBase`: it has a cache and git) takes such a
+run, and HQ names a commit only while every helper of the kind that's there keeps one, so a helper that doesn't say so gets the whole repo and never waits on another. HQ on a shallow checkout
+names no commit, and the whole repo goes, as it does when the job's repo hasn't fetched HQ's commit.
 
 ## The flow
 
+
 1. `hq run --kind <name> --paths <folders> --bring <paths> --minutes n -- <command>` packs the folders as the job's
    tree has them now (uncommitted changes and new files included, through an index of its own) or at `--commit`, and
-   sends the gzipped tar to HQ with the command. `--kind` may be left out when one kind is declared. HQ refuses an
+   sends the gzipped tar to HQ with the command. `--kind` may be left out when one kind's runs keep no sockets.
+ HQ refuses an
    unknown kind and lists the kinds. It waits, so an agent starts it in the background. `--with <files>` adds files git
    ignores (a film's music, a clip: renders) to the bundle.
 2. Each kind's helper asks HQ for work every 10 s (`POST /api/helper/take`, with its kind, cores, memory, speed and
@@ -37,13 +50,13 @@ reads any other build context as a path or URL on the host. Example commands are
    work's first, then the oldest (see "Urgent work's checks go first" below), under an id
    new with each take (the take's attempt: the run's id and the take's number, `57-2`): the helper's later calls for the
    run name it and its log lines print it, so HQ refuses a call from an earlier take of the run, the same helper's
-   included. The helper fetches the bundle, unpacks it in a fresh workspace, and runs the command from the folder
-   `hq run` was started in, under the run's time limit. It beats every 10 s, with its load and the run's new output. HQ's
-   answer to a beat stops the run once its job stopped it, the job ended or another take has it.
+   included. The helper fetches the bundle into a file beside the workspace (never into its own memory), unpacks it in
+   a fresh workspace, and runs the command from the folder `hq run` was started in, under the run's time limit. It
+   beats every 10 s, with its load and the run's new output. HQ's answer to a beat stops the run once its job stopped
+   it, the job ended or another take has it.
 3. The helper sends the last MB of output (stderr in with stdout), the `--bring` files as a gzipped tar and the exit
    code. Then it kills every process of the runs' user and removes all it left (below). `hq run` prints the output,
    unpacks the files into the tree and exits with the run's code (124 past its limit).
-
 
 The immutable bundle download and the result uploads share the existing HQ recovery window. A broken connection,
 including a response cut off after its headers, repeats that transfer while the same attempt keeps beating. The
@@ -63,7 +76,6 @@ its kind unless a faster machine is free for it:
 
 A machine the board paused takes no run and counts for none of this. A run a machine lost goes to this server's helper
 (below).
-
 
 **This server's helpers.** The machines may be off, asleep or stuck, so our server runs the same helper.mjs for each
 kind, in a container of the kind's image (`run-helper-<kind>`, below: its key is the server's `RUNS_TOKEN`, made by
@@ -134,7 +146,8 @@ whose size isn't one with why:
   replaces its helpers once their runs end. Helpers of a kind HQ no longer has go, and so do helpers an old start
   command made by hand for the same HQ.
 - the helpers' code follows HQ: each fetches `GET /api/helper/code` as it starts, with no hash, since a helper reaches
-  nothing but HQ (below). The manager's follows HQ too, after the install command's hash check: its container fetches
+  nothing but HQ (below). The setup's answer carries the hash of that code (`{ helperCode }`), which is in each helper's container, so new helper code replaces the helpers as a changed kind does,
+  once their runs end. The manager's follows HQ too, after the install command's hash check: its container fetches
   `GET /api/helper/manager` as it starts, with no hash. Each setup call carries the hash of the code the manager runs
   (`{ code }`, with `{ follows: true }`), and HQ answers with the hash of the code it serves: on other code the manager
   ends, and Docker starts it again on HQ's. New code that changes the manager's own container (a new Node image) has a
@@ -192,13 +205,16 @@ connection (CONNECT) to HQ's host and the package registries only (`registry.npm
 resolves to. Every run is code from our own repo, but the sandbox
 assumes it could be hostile:
 
+
 - **No port or host workspace.** It publishes nothing (`-p` never appears). Its mounts are the helpers' Docker volume
-  (`/state`: the key) and two in-memory folders (`/tmp` for its code, `/work` for the runs). A kind with `gpus: true`
+  (`/state`: the key) and two in-memory folders (`/tmp` for its code, `/work` for the runs). On this server `/work`
+  is a Docker volume of the helper's own instead, on disk: a push's checkout, tools and packages take over 2 GB, which
+  in memory would leave its runs too little of the server helper's 3 GB. A kind with `gpus: true`
   also exposes GPU devices and host driver files through Docker's GPU runtime (`--gpus all`). Its runs share the GPUs
   with the machine's other programs. It mounts no personal folders or host workspace.
 - **No privileges.** `--cap-drop ALL` gives back only SETUID and SETGID, so the helper (root in the container, with no
   other capability) can start runs as another user. `no-new-privileges`, a read-only image, and caps on CPUs, memory,
-  `/work`'s size and the number of processes.
+  `/work`'s size (a lent machine's) and the number of processes.
 - **Runs as another user, with no network.** Every run's process belongs to uid 1000, so it can't signal, trace or read
   the helper or its key. Its environment holds `PATH`, `HOME`, `TMPDIR` and `LANG` only. A seccomp filter
   (`NONET` in helper.mjs, set with Perl's `syscall` before the command starts, kept across every exec and fork) refuses
@@ -279,7 +295,10 @@ harnesses stay on the worker). `kinds` maps each kind's name to its settings:
 - `gpus`: `true` gives its container the machine's GPUs;
 - `lentOnly`: `true` gives this server no helper of it: its runs wait for the lent machines alone;
 - `serverAfterLent`: `true` keeps its runs off this server until a lent machine has finished one (above);
-- `holdUntilLent`: org.yaml department ids whose work waits in the queue until then.
+- `holdUntilLent`: org.yaml department ids whose work waits in the queue until then;
+- `whenAway`: a line on what a job does instead while no helper that may take the kind is there. With it, a run of the
+  kind is refused at once with that line rather than waiting `takeMinutes`, and `hq run` and the lent checks say so
+  before they bundle one.
 
 A name is `a-z`, `0-9` and `-`, starting with a letter, at most 24 characters. An image is a plain Docker reference
 (`a-z`, `0-9` and `. _ / : @ -`, digests allowed), since its start command is pasted into PowerShell, cmd and sh

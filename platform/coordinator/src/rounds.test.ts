@@ -325,11 +325,21 @@ test('projected reviews, fixes and rulings carry explicit urgency through paced 
       ],
     },
   });
-  const input = snapshot([owner]);
+  // (each paced seat's one place is taken by a long run of the board's, beside a free engine slot)
+  const input = snapshot([
+    owner,
+    work(2, { status: 'running', seat: 'claude', board: 1, due: null }),
+    work(3, { status: 'running', seat: 'codex', engine: 'codex', board: 1, due: null }),
+  ]);
   input.now = 24 * 60 * minute;
   input.pacing = true;
+  input.slots = { claude: 2, codex: 2 };
   for (const seat of input.seats) Object.assign(seat, { week: 0.8, weekResets: input.now + 5 * 24 * 60 * minute });
-  const sizes = new Map([[1, { agent_ms: minute }]]);
+  const sizes = new Map([
+    [1, { agent_ms: minute }],
+    [2, { agent_ms: 120 * minute }],
+    [3, { agent_ms: 120 * minute }],
+  ]);
   for (const pace of ['usual', 'slow'] as const) {
     assert.equal(play(input, sizes, { pace }).get(1)!.merged, input.now + 4 * minute);
     const ordinary = structuredClone(input);
@@ -405,10 +415,15 @@ test('projected reviews inherit source urgency without marking sibling work urge
     reviewUrgent: true,
     reviewPlan: { panel: 'one', count: 1, terminal: 'read', stages: [stage('read', 'review', 'reader')] },
   });
-  const input = snapshot([owner]);
+  // (the paced seat's one place is taken by a long run of the board's, beside a free engine slot)
+  const input = snapshot([owner, work(2, { status: 'running', seat: 'claude', board: 1, due: null })]);
   input.pacing = true;
+  input.slots = { claude: 2, codex: 1 };
   Object.assign(input.seats[0], { week: 0.8, weekResets: 48 * 3_600_000 });
-  const sizes = new Map([[1, { agent_ms: 0 }]]);
+  const sizes = new Map([
+    [1, { agent_ms: 0 }],
+    [2, { agent_ms: 2 * 3_600_000 }],
+  ]);
   assert.equal(play(input, sizes).get(1)!.merged, 60_000);
   owner.reviewUrgent = false;
   assert.ok(play(input, sizes).get(1)!.merged! > 3_600_000);

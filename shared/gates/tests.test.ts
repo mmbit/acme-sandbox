@@ -1,7 +1,7 @@
 // node --test shared/gates/tests.test.ts
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -211,4 +211,32 @@ test('a passing shell suite changed to die by signal fails the push check', () =
   assert.equal(status, 1, out);
   assert.match(out, /Tests failed/);
   assert.match(out, /SIGTERM/);
+});
+
+test('what a test file started ends with its suite, when the file was killed before it could end it', () => {
+  const sleepers = join(mkdtempSync(join(tmpdir(), 'tests-sleepers-')), 'pids');
+  const { status, out } = tests(
+    { 'kits/strays/notes.md': 'none yet\n' },
+    {
+      'kits/strays/stray.test.mjs': `import { spawn } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { test } from 'node:test';
+test('leaves a sleeper and is killed', () => {
+  const sleeper = spawn('sleep', ['infinity'], { detached: true, stdio: 'ignore' });
+  appendFileSync(process.env.SLEEPERS, sleeper.pid + '\\n');
+  process.kill(process.pid, 'SIGKILL');
+});
+`,
+    },
+    { SLEEPERS: sleepers },
+  );
+  assert.equal(status, 1, out);
+  const pids = readFileSync(sleepers, 'utf8').trim().split('\n');
+  const running = (pid: string) =>
+    existsSync(`/proc/${pid}`) && !/\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8'));
+  try {
+    assert.deepEqual(pids.filter(running), []);
+  } finally {
+    for (const pid of pids.filter(running)) process.kill(Number(pid), 'SIGKILL');
+  }
 });

@@ -38,13 +38,13 @@ export function recordWindowObservations(seat: string, times: ObservationTimes =
 
 // A seat without a configured stop uses seats.ts STOP_DEFAULT. Credits bypass quota stops in playseats.ts.
 // Weekly pacing still applies, as in the worker. Each with the CLI it runs and the agents whose fallback runs on it, as
-// claim reads them (jobs.ts claimable).
+// claim reads them (jobs.ts claimable), and the end of a paced seat's rest (pace_rest: pace.ts pacedRest).
 export function observedSeats(now: number, stopDefault: number): SeatNow[] {
   const rows = db
     .prepare(
       `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.state, s.until, s.updated, s.util, s.resets, s.week,
       s.week_resets,
-      s.credits, l.stop from seats s left join seat_list l on l.id = s.id order by s.id`,
+      s.credits, s.pace_rest, l.stop from seats s left join seat_list l on l.id = s.id order by s.id`,
     )
     .all() as {
     id: string;
@@ -58,6 +58,7 @@ export function observedSeats(now: number, stopDefault: number): SeatNow[] {
     week: number | null;
     week_resets: number | null;
     credits: number | null;
+    pace_rest: number | null;
     stop: number | null;
   }[];
   return rows.map(s => {
@@ -77,6 +78,7 @@ export function observedSeats(now: number, stopDefault: number): SeatNow[] {
       stop: (s.stop ?? stopDefault) / 100,
       stopConfigured: s.stop !== null,
       credits: s.credits === 1,
+      paceRest: s.pace_rest,
     };
   });
 }

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
+import { seatStatusWords } from '../../worker/hq/seatwords.ts';
 import { SEAT_ID, SEAT_RULE } from '../../worker/src/seatid.ts';
 
 const h = await harness('seats', {
@@ -25,6 +26,80 @@ const settle = (id: number, status: string, words?: string) => worker('seat-acti
 const forSeat = (job: number) =>
   (h.db.prepare('select for_seat from jobs where id = ?').get(job) as any).for_seat as string | null;
 const openCards = async (id: string) => ((await board('/api/requests')).body as any[]).filter(c => c.seat === id);
+
+test('unavailable seats explain missing readings separately from a measured quota reset', async () => {
+  const reset = Date.now() + 3_600_000;
+  await worker('seat', { seat: 'codex-return', engine: 'codex', state: 'ready', week: 1, weekResets: reset });
+  const stopped = (await seat('codex-return')).status;
+  assert.equal(stopped.admission, 'unavailable');
+  assert.equal(stopped.reason, 'quota');
+  assert.equal(stopped.until, reset);
+  assert.match(seatStatusWords(stopped, String), new RegExp(`quota stop until ${reset}`));
+  await worker('seat', { seat: 'codex-return', engine: 'codex', state: 'ready' });
+  const unknown = (await seat('codex-return')).status;
+  assert.equal(unknown.admission, 'unavailable');
+  assert.equal(unknown.reason, 'usage');
+  assert.equal(unknown.until, null, 'a retained reset cannot confirm when an unread account returns');
+  assert.match(
+    seatStatusWords(unknown, String),
+    /Usage reading missing\. Return time unknown until the account is read/,
+  );
+  await worker('seat', { seat: 'codex-return', engine: 'codex', state: 'sleeping', until: reset });
+  const reported = (await seat('codex-return')).status;
+  assert.equal(reported.reason, 'provider');
+  assert.equal(reported.until, reset, 'a dated provider hold remains known without usage');
+  // held by its provider's refusal for days, with no full window in its reading: back at the hold's end, checked hourly
+  const check = Date.now() + 3_000_000,
+    end = Date.now() + 5 * 86_400_000;
+  await worker('seat', {
+    seat: 'codex-return',
+    engine: 'codex',
+    state: 'sleeping',
+    until: check,
+    heldUntil: end,
+    week: 0,
+    weekResets: end,
+  });
+  const held = (await seat('codex-return')).status;
+  assert.deepEqual([held.reason, held.until, held.nextCheck], ['provider', end, check], 'the hold ends at its end');
+  assert.match(
+    seatStatusWords(held, String),
+    new RegExp(`0 running\\. Held by its provider, back ${end}, checked again ${check}$`),
+  );
+  // a full five-hour window resetting before the provider's hold ends: back at the hold's end, checked between
+  const windowReset = Date.now() + 1_800_000;
+  await worker('seat', {
+    seat: 'codex-overlap',
+    engine: 'codex',
+    state: 'sleeping',
+    until: check,
+    heldUntil: end,
+    util: 1,
+    resets: windowReset,
+    week: 0,
+    weekResets: end,
+  });
+  const overlap = (await seat('codex-overlap')).status;
+  assert.deepEqual(
+    [overlap.reason, overlap.until, overlap.nextCheck],
+    ['provider', end, check],
+    'the later end wins, and names the cause',
+  );
+  assert.match(
+    seatStatusWords(overlap, String),
+    new RegExp(`0 running\\. Held by its provider, back ${end}, checked again ${check}$`),
+  );
+  await worker('seat', { seat: 'codex-overlap', engine: 'codex', state: 'closed' });
+  await worker('seat', { seat: 'codex-return', engine: 'codex', state: 'ready', week: 0, weekResets: reset });
+  assert.equal((await seat('codex-return')).status.admission, 'open');
+  await worker('seat', { seat: 'codex-return', engine: 'codex', state: 'closed' });
+  await worker('seat', { seat: 'codex-reset-unknown', engine: 'codex', state: 'draining', week: 1, until: reset });
+  const missingReset = (await seat('codex-reset-unknown')).status;
+  assert.equal(missingReset.reason, 'quota');
+  assert.equal(missingReset.until, null, 'a recheck time is not the missing quota reset');
+  assert.match(seatStatusWords(missingReset, String), /Reset time not reported/);
+  await worker('seat', { seat: 'codex-reset-unknown', engine: 'codex', state: 'closed' });
+});
 
 test('seat status separates active runs from the admission of non-urgent work', async () => {
   h.cancelQueued();
@@ -534,4 +609,56 @@ test('a seat pin holds only for a seat of its own engine that is there, and work
   } finally {
     h.cancelQueued();
   }
+});
+
+test('a paced seat takes ordinary work until its rate is occupied, then admits urgency and frees its place on completion', async () => {
+  h.cancelQueued();
+  const { seatReadyFor } = await import('./jobs.ts');
+  const id = 'claude-paced-rate';
+  const now = Date.now(),
+    reset = now + 5 * 86400_000;
+  await worker('seat', {
+    seat: id,
+    engine: 'claude',
+    state: 'ready',
+    util: 0.1,
+    week: 0.5,
+    weekResets: reset,
+    pace: true,
+    paceRuns: 1,
+  });
+  const first = h.queue({ agent: 'bolt', engine: 'claude', forSeat: id });
+  assert.equal(seatReadyFor(first), true, 'an idle paced seat takes ordinary work');
+  const running = (await h.claim('claude', { seat: id }))!;
+  assert.equal(running.id, first);
+  const next = h.queue({ agent: 'bolt', engine: 'claude', forSeat: id });
+  assert.equal(seatReadyFor(next), false, 'its single ordinary place is occupied');
+  const urgent = h.queue({ agent: 'bolt', engine: 'claude', forSeat: id });
+  const { setUrgent } = await import('./urgency.ts');
+  const { ceo } = await import('./company.ts');
+  assert.equal(typeof setUrgent('task', String(urgent), true, ceo()), 'object');
+  assert.equal(seatReadyFor(urgent), true);
+  const { seatStatuses } = await import('./seatstatus.ts');
+  const shown = seatStatuses(h.db).get(id)!;
+  assert.equal(shown.pace?.runs, 1);
+  assert.match(
+    seatStatusWords(shown, String),
+    /Paced until .+: 1 run at a time, [0-9.]+% of its week per hour available/,
+  );
+  await h.finish(running);
+  assert.equal(seatReadyFor(next), true, 'completion makes ordinary work eligible again');
+  // A run its allowance can't keep up with leaves the seat resting, with no ordinary place (pace.ts pacedRest).
+  const rest = { state: 'ready', util: 0.1, week: 0.5, weekResets: reset, pace: true };
+  await worker('seat', { seat: id, engine: 'claude', ...rest, paceRuns: 0, paceRest: now + 3600_000 });
+  assert.equal(seatReadyFor(next), false, 'a resting seat takes no ordinary work');
+  assert.equal(seatReadyFor(urgent), true, 'urgent work bypasses the rest');
+  assert.match(seatStatusWords(seatStatuses(h.db).get(id)!, String), /Paced until .+: resting until /);
+  await worker('seat', { seat: id, engine: 'claude', ...rest, paceRuns: 1 });
+  assert.equal(seatReadyFor(next), true, 'the rest over, ordinary work goes on');
+  await worker('seat', { seat: id, engine: 'claude', state: 'closed' });
+  // A worker that starts again takes the rest a listed seat last reported.
+  await worker('seat', { seat: 'codex-1', engine: 'codex', ...rest, paceRuns: 0, paceRest: now + 3600_000 });
+  assert.equal((await list()).seats.find(s => s.id === 'codex-1').paceRest, now + 3600_000);
+  await worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready' });
+  assert.equal((await list()).seats.find(s => s.id === 'codex-1').paceRest, undefined);
 });

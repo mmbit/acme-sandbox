@@ -169,16 +169,40 @@ export function drainOf<S extends Draining>(seat: S, seats: S[], running: Iterab
 // hour instead (readDue: codexLimits), and that read's windows and credits replace the log's. confirmed: the seat's
 // reading is that read's, which alone makes its hold the last word (a job's reading of credits and a full window
 // counts for one DRAIN_RECHECK at most).
-type Held = { engine: string; cli?: string; state: string; until: number; checked?: number; hasCredits?: boolean; credits?: boolean; confirmed?: boolean; drainAt?: number };
-export const readsAccount = (s: Held) => keepsToPlan(s) || hasConfiguredStop(s) && cliOf(s) === 'codex';
+type Held = {
+  engine: string;
+  cli?: string;
+  signIn?: string;
+  state: string;
+  until: number;
+  checked?: number;
+  measured?: number;
+  readFailed?: boolean;
+  hasCredits?: boolean;
+  credits?: boolean;
+  confirmed?: boolean;
+  drainAt?: number;
+};
+export const readsAccount = (s: Held) => keepsToPlan(s) || (hasConfiguredStop(s) && cliOf(s) === 'codex');
 const held = (s: Held, now: number) =>
-  s.engine === 'codex' && (s.state === 'draining' || s.state === 'sleeping') && s.until > now && !(readsAccount(s) && s.confirmed);
+  s.engine === 'codex' &&
+  (s.state === 'draining' || s.state === 'sleeping') &&
+  s.until > now &&
+  !(readsAccount(s) && s.confirmed);
 const due = (s: Held, now: number) => held(s, now) && (s.checked ?? 0) + DRAIN_RECHECK <= now;
 export const checkDue = (s: Held, now = Date.now()) => due(s, now) && !readsAccount(s);
-export const readDue = (s: Held, now = Date.now()) => due(s, now) && readsAccount(s);
+// A ready Codex subscription with no reading since the worker started, or whose last account read failed: read hourly
+// until a read succeeds, so HQ shows its usage and return time without waiting for a job to measure them.
+const unread = (s: Held, now: number) =>
+  cliOf(s) === 'codex' &&
+  s.signIn !== 'key' &&
+  s.state === 'ready' &&
+  (s.readFailed || s.measured === undefined) &&
+  (s.checked ?? 0) + DRAIN_RECHECK <= now;
+export const readDue = (s: Held, now = Date.now()) => (due(s, now) && readsAccount(s)) || unread(s, now);
 
 // The `until` the coordinator gets for a seat: a held Codex seat's next check, not the end of its hold (that goes in the
-// seat's note). The panel counts a Codex seat as out until its `until` (codexSeatOut in review.ts) and starts a normal
+// seat's note and heldUntil, the return time HQ's seat status gives). The panel counts a Codex seat as out until its `until` (codexSeatOut in review.ts) and starts a normal
 // round without a Codex reviewer meanwhile, so with the hold's end there a check would only ever come from Codex work or
 // a high-risk review, and one planted line could keep the panel short of Codex for days. Once the check is due, rounds
 // get their Codex reviewer again, and the first such job is the check (for a seat that keepsToPlan, the worker's read).

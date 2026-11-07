@@ -7,6 +7,7 @@ import { ORIGIN, PUBLIC_HOST } from './config.ts';
 import { names, cap } from './company.ts';
 import { SHOWN } from './shown.ts';
 import * as tips from './tips.ts';
+import * as board from './board.ts';
 
 // The CEO's emergency pings (hq ping) went on 18 October 2026 (the board: a card marked now rings, so that's one way to
 // ring, not two). Their log goes.
@@ -95,7 +96,27 @@ async function pushTo(s: Sub, m: Message, ttl: number) {
 }
 
 // Every device (or just one), best effort. Never throws: a failed push must not break what triggered it.
-export async function sendToBoard(m: Message, { endpoint, ttl = 6 * 3600 }: { endpoint?: string; ttl?: number } = {}) {
+// In the board's quiet hours (its profile, board.ts) a push waits until it's up (hold), unless it's something the board
+// asked for in their first minutes (asked). A test push to one device (endpoint) always goes: the board is there.
+// card: the card it rings for, so one answered or put away by the morning rings nothing then.
+type Sending = { endpoint?: string; ttl?: number; asked?: boolean; card?: number };
+type Sent = { sent: number; pruned: number; failed: number; held?: number };
+export async function sendToBoard(m: Message, { endpoint, ttl = 6 * 3600, asked = false, card }: Sending = {}): Promise<Sent> {
+  // (HQ checks the profile as it starts, server.ts. One broken since fails the push, as a failed send does.)
+  let quiet;
+  try {
+    quiet = endpoint ? null : board.quiet(Date.now(), asked);
+  } catch (err) {
+    console.error('Could not send a push:', (err as Error).message);
+    return { sent: 0, pruned: 0, failed: 1 };
+  }
+  if (quiet) {
+    hold(m, quiet.until, card);
+    return { sent: 0, pruned: 0, failed: 0, held: quiet.until };
+  }
+  return sendNow(m, endpoint, ttl);
+}
+async function sendNow(m: Message, endpoint: string | undefined, ttl: number) {
   const subs = (endpoint
     ? db.prepare('select * from push_subscriptions where endpoint = ?').all(endpoint)
     : db.prepare('select * from push_subscriptions').all()) as Sub[];
@@ -104,6 +125,29 @@ export async function sendToBoard(m: Message, { endpoint, ttl = 6 * 3600 }: { en
     err => { out.failed++; console.error('Could not send a push:', err.message); })));
   return out;
 }
+
+// A push held for the board's quiet hours: each card's ring, and otherwise the newest of its tag, as the push service
+// keeps only the newest of a Topic
+const hold = (m: Message, until: number, card = 0) =>
+  db.prepare(`insert into held_pushes (tag, card, message, until) values (?, ?, ?, ?)
+    on conflict(tag, card) do update set message = excluded.message, until = excluded.until`)
+    .run(m.tag ?? 'hq', card, JSON.stringify(m), until);
+// Every minute (server.ts): the held pushes whose board is up now go, a card's only while it still waits on the desk phone,
+// with the count of those waiting then. Returns the tags it sent.
+export async function releaseHeld(now = Date.now()) {
+  const due = db.prepare('delete from held_pushes where until <= ? returning tag, message, card').all(now) as
+    { tag: string; message: string; card: number }[];
+  const sent: string[] = [];
+  for (const h of due) {
+    if (h.card && !stillWaits(h.card)) continue;
+    const m = JSON.parse(h.message) as Message;
+    await sendNow(h.card ? { ...m, count: waitingCards() } : m, undefined, 6 * 3600);
+    sent.push(h.tag);
+  }
+  return sent;
+}
+const stillWaits = (card: number) =>
+  !!db.prepare(`select 1 from requests where id = ? and status = 'open' and ${SHOWN}`).get(card, new Date().toISOString());
 
 export const sendTest = (b: any) => sendToBoard({ title: `${cap(names().phone)} ☎`, body: 'Test call: notifications work on this device.',
   tag: 'hq-test', url: '/?open=phone' }, { endpoint: b?.endpoint || undefined, ttl: 300 });
@@ -117,8 +161,11 @@ export const waitingCards = () =>
 // The daily digest hooks in here too: requests that don't ring now simply stay open, and the digest (still to
 // build) will be a scheduled job that reads the open requests created since its last run and sends one
 // summary with sendToBoard({ title: 'Desk phone: today', body: '3 requests are waiting', tag: 'desk-digest' }).
-export function announceRequest(r: { id: number; kind: string; title: string; urgency?: string; grant?: string }) {
+// In the board's quiet hours the ring waits until it's up (sendToBoard), unless the card is about something it asked for
+// (asked) and quiet has only just started.
+export function announceRequest(r: { id: number; kind: string; title: string; urgency?: string; grant?: string; asked?: boolean }) {
   if (r.urgency !== 'now' && r.kind !== 'login') return;
-  sendToBoard({ title: `${cap(names().phone)} ☎`, body: [r.title.slice(0, 200), r.grant].filter(Boolean).join(' '), tag: 'desk-phone', url: '/?open=phone', count: waitingCards() })
+  sendToBoard({ title: `${cap(names().phone)} ☎`, body: [r.title.slice(0, 200), r.grant].filter(Boolean).join(' '), tag: 'desk-phone', url: '/?open=phone', count: waitingCards() },
+    { asked: r.asked, card: r.id })
     .catch(err => console.error('Could not announce the request:', err));
 }

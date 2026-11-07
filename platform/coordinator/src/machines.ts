@@ -46,6 +46,8 @@ export type KindHelper = {
   cpus: number | null;
   memory_gb: number | null;
   speed: number | null;
+  // its last ask said it keeps the base runs stand on (runs.ts thinBase).
+  keeps_base: number;
 };
 // A load reading, in percent
 type Reading = { at: number; cpu: number; mem: number; gpu?: number };
@@ -87,6 +89,8 @@ for (const column of [
   if (!columnsOf('machines').includes(column.split(' ')[0])) db.exec(`alter table machines add column ${column}`);
 db.exec(`create table if not exists machine_kinds (machine integer not null, kind text not null, asked text,
   seen text not null, cpus integer, memory_gb integer, speed integer, primary key (machine, kind))`);
+if (!columnsOf('machine_kinds').includes('keeps_base'))
+  db.exec('alter table machine_kinds add column keeps_base integer not null default 0');
 
 // A key still saved on a desk-phone card (one lent machine's, with no list of them) is the first machine's, named as
 // org.yaml's runs.helper names it, its key kept by its hash alone (runs.ts gives it the runs it had). Where each helper
@@ -195,7 +199,7 @@ export function heard(machine: number, kind: string, report: unknown, asked: boo
   const bench = typeof given.bench === 'number' && given.bench > 0 && given.bench < 1e6 ? given.bench : null;
   const now = new Date().toISOString();
   db.prepare(
-    `insert or replace into machine_kinds (machine, kind, asked, seen, cpus, memory_gb, speed) values (?, ?, ?, ?, ?, ?, ?)`,
+    `insert or replace into machine_kinds (machine, kind, asked, seen, cpus, memory_gb, speed, keeps_base) values (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     machine,
     kind,
@@ -204,6 +208,7 @@ export function heard(machine: number, kind: string, report: unknown, asked: boo
     cpus,
     whole(given.memoryGb) ?? before?.memory_gb ?? null,
     bench && cpus ? Math.round(bench * cpus) : (before?.speed ?? null),
+    asked ? Number(given.keepsBase === true) : (before?.keeps_base ?? 0),
   );
   const gpu = typeof given.gpu === 'string' ? given.gpu.replace(/\p{Cc}/gu, '').slice(0, 80) : null;
   if (machine !== SERVER)

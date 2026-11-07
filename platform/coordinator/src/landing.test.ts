@@ -1,10 +1,11 @@
 // node --test src/landing.test.ts   (uses a throwaway DATA_DIR): failed jobs replaced through hq job --lands.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, renameSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { harness } from './harness.ts';
 import { followthroughFixture } from './followthrough.fixture.ts';
+import { recordedDeploy } from './reviewfixture.ts';
 
 const h = await harness('landing', {
   before: repo => {
@@ -15,8 +16,6 @@ const h = await harness('landing', {
       `${repo}/company/org.yaml`,
       '\nengineOnly:\n  - { id: pixels, what: pixel work, engine: claude, model: claude-opus-test, paths: ["pixels/**"] }\n',
     );
-    process.env.WORK_MIRROR_DIR = `${repo}/mirror.git`;
-    execFileSync('git', ['init', '--bare', '-q', process.env.WORK_MIRROR_DIR]);
   },
 });
 const { db } = h;
@@ -535,4 +534,159 @@ test("the CEO gives a card's wait to a job of the agent who filed it; nobody els
     200,
   );
   assert.equal(await h.claimJob(plain), null, 'it waits for the card too');
+});
+
+// A deliverable's task whose push GitHub refused, its commits left only on the mirror's refs/outgoing/job/<n>, with
+// kit's work queued after it and on its deploy. `then` runs with the ref there, which goes after.
+async function refusedPush(then: (f: { thread: string; task: number; after: number; live: number }) => Promise<void>) {
+  reset();
+  db.exec('delete from wakes'); // (kept by the fixture's reset, and job numbers start again)
+  const wakes = await import('./wakes.ts');
+  const made = projects.createThread({ project: 'game', name: 'The log span', goal: 'Logs read a past hour' });
+  if (typeof made === 'string') throw new Error(made);
+  const task = await h.start({ agent: 'chime', title: 'Read a past hour', thread: made.id, queuedBy: 'bolt' });
+  const after = h.queue({ agent: 'kit', title: 'Build on it', after: task.id, queuedBy: 'bolt' });
+  const live = h.queue({ agent: 'kit', title: 'Read it live', queuedBy: 'bolt' });
+  wakes.hold(live, [{ kind: 'deployed', arg: String(task.id) }]);
+  const ref = `refs/outgoing/job/${task.id}`;
+  mirror('update-ref', ref, commit());
+  try {
+    await h.finish(task, {
+      status: 'failed',
+      branch: `job/${task.id}`,
+      result: 'Done.\n\nThe run ended with an error: the push failed: refusing to allow a token to update a workflow',
+    });
+    await then({ thread: made.id, task: task.id, after, live });
+  } finally {
+    mirror('update-ref', '-d', ref);
+  }
+}
+// Whether a queued job would start now, after the check every claim makes, and what its wake met
+const startsNow = async (id: number) => {
+  (await import('./wakes.ts')).check();
+  return !!h.job(id).ready;
+};
+const metOf = (id: number) => (db.prepare('select met from wakes where job = ?').get(id) as { met: string | null }).met;
+
+test("a failed push's saved work: HQ lands it, and the work after it and on its deploy waits for that landing", () =>
+  refusedPush(async ({ thread, task, after, live }) => {
+    const landing = h.jobs.replacementOf(task)!;
+    assert.ok(landing, 'HQ queued its landing');
+    const row = db.prepare('select agent, thread, step, prompt from jobs where id = ?').get(landing) as {
+      agent: string;
+      thread: string;
+      step: string;
+      prompt: string;
+    };
+    assert.deepEqual([row.agent, row.thread, row.step], ['chime', thread, 'Landing saved work']);
+    assert.match(row.prompt, new RegExp(`git fetch origin refs/outgoing/job/${task}\``));
+    assert.match(row.prompt, /refusing to allow a token to update a workflow/);
+    assert.equal(projects.findThread(thread)!.judge, null, "no judge: the deliverable's work isn't in");
+    assert.equal(h.job(after).after, landing, 'the work after it waits for the landing');
+    assert.equal(await startsNow(after), false);
+    assert.equal(await startsNow(live), false);
+    assert.equal(metOf(live), null, 'its deploy is still to come');
+    assert.equal(
+      db.prepare("select count(*) n from jobs where title like 'Job #% ended without merged work%'").get()!.n,
+      0,
+    );
+
+    const run = await h.claimJob(landing);
+    await h.finish(run, { status: 'done', pr: 71, branch: `job/${landing}` });
+    const merged = Date.now();
+    h.mergedPr(71, merged);
+    assert.equal(await startsNow(after), true, 'the landing merged: the work after it starts');
+    assert.equal(await startsNow(live), false, 'not deployed yet');
+    await recordedDeploy(h.dataDir, {
+      fetched: merged + 1_000,
+      finished: merged + 2_000,
+      sha: 'e'.repeat(40),
+      ok: true,
+      services: [],
+    });
+    assert.equal(await startsNow(live), true);
+    assert.match(metOf(live)!, new RegExp(`^#${task}'s work \\(pull request #71, merged .*\\) is deployed`));
+  }));
+
+test("HQ lands a failed push's work once: its landing failing the same way is left to its owner, not judged as in", () =>
+  refusedPush(async ({ thread, task, after, live }) => {
+    const landing = h.jobs.replacementOf(task)!;
+    const run = await h.claimJob(landing);
+    const ref = `refs/outgoing/job/${landing}`;
+    mirror('update-ref', ref, commit());
+    try {
+      await h.finish(run, { status: 'failed', branch: `job/${landing}`, result: 'the push failed: refused again' });
+    } finally {
+      mirror('update-ref', '-d', ref);
+    }
+    assert.equal(h.jobs.replacementOf(landing), null, 'no second landing');
+    assert.equal(projects.findThread(thread)!.judge, null, 'no judge while its work sits off its branch');
+    assert.equal(await startsNow(live), true, 'nothing of it can land now');
+    assert.match(
+      metOf(live)!,
+      new RegExp(`^#${task}'s work will never deploy: #${landing} ended \\(failed\\) without a pull request`),
+    );
+    assert.equal(await startsNow(after), true, 'the work after it hears of the failure');
+    const { note } = db.prepare('select note from jobs where id = ?').get(after) as { note: string };
+    assert.match(note, new RegExp(`Job #${landing} .*which this job waited for, failed`));
+  }));
+
+test("work queued after a failed push once its landing exists waits for the landing, and the landing's cancel wakes no judge", () =>
+  refusedPush(async ({ thread, task }) => {
+    const landing = h.jobs.replacementOf(task)!;
+    const later = h.queue({ agent: 'kit', title: 'Check it', after: task, queuedBy: 'bolt' });
+    assert.equal(h.job(later).after, landing, 'it waits for the job doing the work now');
+    assert.equal(await startsNow(later), false);
+    const held = h.queue({ agent: 'kit', title: 'Check it too', queuedBy: 'bolt' });
+    assert.deepEqual(h.jobs.addWait(held, task, 'bolt'), { ok: true }, 'hq waits add on the failed task is taken');
+    const wait = db.prepare('select on_job from waits where job = ?').get(held) as { on_job: number };
+    assert.equal(wait.on_job, landing, 'it waits for the landing');
+    const { cancelJob } = await import('./ledger.ts');
+    cancelJob(landing, 'Not now');
+    assert.equal(h.job(later).after, task, 'the cancel hands the wait back');
+    assert.equal(projects.findThread(thread)!.judge, null, 'no judge while its work sits off its branch');
+  }));
+
+test("a failed task's pushed work holds what waits on it while its deliverable is open, until a landing or the close", async () => {
+  reset();
+  db.exec('delete from wakes'); // (as refusedPush)
+  const wakes = await import('./wakes.ts');
+  const made = projects.createThread({ project: 'game', name: 'The shop sign', goal: 'The sign reads' });
+  if (typeof made === 'string') throw new Error(made);
+  const task = await h.start({ agent: 'chime', title: 'Paint the sign', thread: made.id, queuedBy: 'bolt' });
+  const after = h.queue({ agent: 'kit', title: 'Hang it', after: task.id, queuedBy: 'bolt' });
+  const live = h.queue({ agent: 'kit', title: 'Read it live', queuedBy: 'bolt' });
+  wakes.hold(live, [{ kind: 'deployed', arg: String(task.id) }]);
+  await h.finish(task, { status: 'failed', branch: `job/${task.id}`, sha: 'a'.repeat(40), result: 'It crashed' });
+  assert.equal(h.jobs.replacementOf(task.id), null);
+  assert.equal(await startsNow(after), false, 'its work is on its branch, to land');
+  assert.equal(await startsNow(live), false);
+  db.prepare("update threads set status = 'done' where id = ?").run(made.id);
+  assert.equal(await startsNow(after), true, 'its deliverable closed without it');
+  assert.equal(await startsNow(live), true);
+  assert.match(metOf(live)!, new RegExp(`will never deploy: #${task.id} ended \\(failed\\) without a pull request`));
+});
+
+test("a mirror that can't be read stops a failed push's run end, rather than reading as nothing saved", async () => {
+  reset();
+  const made = projects.createThread({ project: 'game', name: 'The shop bell', goal: 'The bell rings' });
+  if (typeof made === 'string') throw new Error(made);
+  const task = await h.start({ agent: 'chime', title: 'Hang the bell', thread: made.id, queuedBy: 'bolt' });
+  const ref = `refs/outgoing/job/${task.id}`,
+    dir = process.env.WORK_MIRROR_DIR!;
+  mirror('update-ref', ref, commit());
+  const end = { status: 'failed', branch: `job/${task.id}`, result: 'the push failed: refused' };
+  try {
+    renameSync(dir, `${dir}.away`);
+    try {
+      assert.equal((await h.finish(task, end)).status, 500);
+    } finally {
+      renameSync(`${dir}.away`, dir);
+    }
+    assert.equal(h.job(task.id).status, 'running', 'its end is not recorded: the worker sends it again');
+    assert.equal((await h.finish(task, end)).status, 200);
+    assert.ok(h.jobs.replacementOf(task.id), 'read again, its saved work is landed');
+  } finally {
+    mirror('update-ref', '-d', ref);
+  }
 });

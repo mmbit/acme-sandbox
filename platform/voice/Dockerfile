@@ -3,6 +3,10 @@
 # Dutch in, and a care call's voice per language thorsten or kerstin) for the agent's, and the Claude CLI for the agent's side of the call. Internal only; audio
 # is never stored. Every model is fetched at build time, so a call never waits for a download.
 FROM node:24.22.1-bookworm-slim
+# apt without retries: the base image's apt 2.6.1 can install an unverified package from a tampered download when it
+# retries one (CVE-2026-109518, DLA-4880-1), and a pruned build cache reruns this layer at any deploy. Drop it once the
+# `FROM` is a Node image built with bookworm's apt 2.6.2 or later.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/80-no-retries
 # (tzdata: the line says when a seat's limit ends on the company's clock, company.timeZone. git: the call agent's git
 # tool reads the worker's mirror, reads.py.)
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv curl bzip2 ca-certificates jq tzdata git \

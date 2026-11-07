@@ -9,7 +9,7 @@ import { taskUrgent } from './urgency.ts';
 import * as redraws from './redraws.ts';
 import { recordFor, sizesFor } from './predictions.ts';
 import { expand } from './rounds.ts';
-import { backward, compare, precedence, ready, spareOnly, type Timing } from './planner.ts';
+import { backward, compare, firstWait, precedence, ready, spareOnly, type Dependency, type Timing } from './planner.ts';
 import type { OrderingSnapshot, QueuedJob } from './eta.ts';
 import { placeholders } from './threadorder.ts';
 
@@ -60,7 +60,7 @@ const why = (reason: claimobservation.Reason) =>
     kept: 'the kept plan',
   })[reason];
 // A kept plan keeps its timings; its waits are read afresh on every read (eligibility).
-const read = (plan: Plan) => ({ timings: plan.timings, eligible: plan.eligibility() });
+const read = (plan: Plan) => ({ timings: plan.timings, ...plan.eligibility() });
 // The latest plan's timings, kept or not, never played for the asking: HQ's queue ranks (jobs.ts queuePlaces), as its
 // planned starts read the forecast's latest play. The workers' claims play it each second while anything changes, and a
 // play for a view would hold HQ for it (0.25 s at 26,000 jobs, a second live). Before start(), or before the first
@@ -194,22 +194,22 @@ function eligibility(rows: ReadonlyMap<number, QueuedJob>, now: number, deployLa
     }
     return ends.get(job);
   };
-  return (id: number) => {
-    const row = rows.get(id);
-    if (!row) return true;
-    return ready(
-      row,
-      now,
-      edge => {
-        const prior = endOf(edge.job);
-        // (none: work not queued yet, a thread's placeholder.)
-        if (!prior) return null;
-        return (edge.until === 'done' ? prior.status === 'done' : prior.merged) ? Date.parse(prior.finished!) : null;
-      },
-      deployLagMs,
-      'live',
-    );
+  const completed = (edge: Dependency) => {
+    const prior = endOf(edge.job);
+    // (none: work not queued yet, a thread's placeholder.)
+    if (!prior) return null;
+    return (edge.until === 'done' ? prior.status === 'done' : prior.merged) ? Date.parse(prior.finished!) : null;
   };
+  const eligible = (id: number) => {
+    const row = rows.get(id);
+    return !row || ready(row, now, completed, deployLagMs, 'live');
+  };
+  // What a job the claim can't start yet waits for first (an empty claim's record, emptyclaims.ts).
+  const waitOf = (id: number) => {
+    const row = rows.get(id);
+    return row && firstWait(row, now, completed, deployLagMs, 'live');
+  };
+  return { eligible, firstWait: waitOf };
 }
 // How long before its thread's deadline the pass has queued job `id` start: the deploy lag, its review rounds' runs and
 // its own, each with the heartbeat's pause (planner.ts backward), played with its thread's jobs due now: their latest

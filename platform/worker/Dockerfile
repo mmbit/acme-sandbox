@@ -4,6 +4,10 @@
 # digest). .github/workflows/tests-image.yml publishes each build of it, and the tests run on the same Node, tools and
 # Chromium as here only while each new build's digest goes into the company's org.yaml (runs.kinds.tests.image).
 FROM node:24.22.1-bookworm AS tests
+# apt without retries: the base image's apt 2.6.1 can install an unverified package from a tampered download when it
+# retries one (CVE-2026-109518, DLA-4880-1), and a pruned build cache reruns this layer at any deploy. Drop it once the
+# `FROM` is a Node image built with bookworm's apt 2.6.2 or later.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/80-no-retries
 # (python3-yaml: infra's tests, which the worker runs on every push: shared/gates/tests.ts)
 # APT_FRESH reruns this layer for a security fix; libbrotli1 comes with the base image, so it's named to take
 # bookworm-security's 1.0.9-2+deb12u1 (CVE-2026-111497, a Brotli decoder overflow behind curl and git, DLA-4855-1).

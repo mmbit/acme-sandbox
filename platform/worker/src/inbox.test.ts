@@ -81,7 +81,8 @@ async function run(script: Script, lostAcks = 0) {
   const as = process.getuid?.() === 0 ? { uid: 65534, gid: 65534 } : {};
   if (as.uid) for (const f of [home, `${home}/work`]) chownSync(f, as.uid, as.gid!);
   // As the worker starts a work job (runJobIn): the same --settings, the job's HQ_* env; the scripted model stands in for the seat.
-  const env = { PATH: process.env.PATH, HOME: home, CLAUDE_CONFIG_DIR: `${home}/.claude`, ANTHROPIC_BASE_URL: url, ANTHROPIC_API_KEY: 'sk-ant-test',
+  // the CLI's temp folder in the home: a helper's /tmp can be read-only, and the CLI reads no TMPDIR.
+  const env = { PATH: process.env.PATH, HOME: home, CLAUDE_CONFIG_DIR: `${home}/.claude`, CLAUDE_CODE_TMPDIR: home, ANTHROPIC_BASE_URL: url, ANTHROPIC_API_KEY: 'sk-ant-test',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', HQ_URL: url, HQ_TOKEN: TOKEN, HQ_AGENT: 'bolt', HQ_JOB: '934', HQ_JOB_DIR: `${home}/work/.hq` };
   const child = spawn('claude', ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions', '--model', 'sonnet',
     '--settings', inboxSettings(HQ)], { cwd: `${home}/work`, env, stdio: ['pipe', 'pipe', 'pipe'], ...as });

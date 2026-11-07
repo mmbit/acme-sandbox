@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 import { scenarioCleanup } from './reviewfixture.ts';
+import { withChart } from './fixture.ts';
 
 const h = await harness('panel', {
   before: repo => {
@@ -180,15 +181,14 @@ test('a concurrent seat starts a ruling beside work while a single-run seat wait
 
 test('a sole Codex author is excluded while another eligible Codex consolidator takes the round', async () => {
   await seats();
-  const file = `${h.repo}/company/org.yaml`,
-    before = readFileSync(file, 'utf8');
-  writeFileSync(file, before.replace('consolidator: [quill, nib]', 'consolidator: [quill, nib, flint]'));
-  try {
-    const work = h.ended({ agent: 'nib' });
-    h.storedPr(190, work, 'open', ['platform/coordinator/src/jobs.ts'], { round: 1 });
-    assert.ok(!panel.consolidators(190).includes('nib'));
-    for (const stage of ['triage', 'ruling']) assert.equal(panel.consolidator(190, stage), 'flint');
-  } finally {
-    writeFileSync(file, before);
-  }
+  await withChart(
+    h.repo,
+    chart => chart.replace('consolidator: [quill, nib]', 'consolidator: [quill, nib, flint]'),
+    () => {
+      const work = h.ended({ agent: 'nib' });
+      h.storedPr(190, work, 'open', ['platform/coordinator/src/jobs.ts'], { round: 1 });
+      assert.ok(!panel.consolidators(190).includes('nib'));
+      for (const stage of ['triage', 'ruling']) assert.equal(panel.consolidator(190, stage), 'flint');
+    },
+  );
 });

@@ -220,14 +220,15 @@ const pausedMark = pause =>
   pause && !pause.decision
     ? `<span class="pj-note pj-paused">${icon('pause')}<span>${esc(pausedWords(pause))}</span></span>`
     : '';
-// A pause in words, with what wakes its owner to judge it: its time (with its date), the work it waits for still to end
-// (by title: no numbers for the board), or, once that's met, that it's its owner's to decide. Nothing lifts it by
-// itself.
+// A pause in words, with what wakes its owner to judge it: its time (with its date), the milestones and deliverables it
+// waits for still to go live, the work it waits for still to end (by title: no numbers for the board), or, once that's
+// met, that it's its owner's to decide. Nothing lifts it by itself.
 export function pausedWords(pause) {
   if (pause.woken) return 'Paused until its owner decides what’s next';
   const until = (pause.until ?? []).filter(u => !u.ended);
   const work = until.length === 1 ? `“${until[0].title}” ends` : until.length ? `${until.length} tasks end` : '';
-  const when = [pause.untilTime && `it's ${dayTime(Date.parse(pause.untilTime))}`, work].filter(Boolean);
+  const live = (pause.untilWhole ?? []).filter(w => !w.live).map(w => `${w.name} is live`);
+  const when = [pause.untilTime && `it's ${dayTime(Date.parse(pause.untilTime))}`, ...live, work].filter(Boolean);
   return when.length ? `Paused, to be judged once ${when.join(' and ')}` : 'Paused';
 }
 // A head's key for the board's decision a project or thread waits on (the CEO names it): its card, which alone ends it.

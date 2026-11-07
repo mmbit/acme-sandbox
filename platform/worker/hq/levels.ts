@@ -6,6 +6,7 @@
 // Nothing imported but Node's: the coordinator reads it from here too.
 import { readFileSync } from 'node:fs';
 
+// (urgent work on its whole milestone)
 export const ONE_DEADLINE =
   'Each deliverable has one deadline, chosen by the board or the CEO from its word (hq window). File tasks under ' +
   'the open deliverable whose goal they serve, judged from its plan. A follow-up needed to meet the source ' +
@@ -22,10 +23,15 @@ export const ONE_DEADLINE =
   '(hq urgent <milestone> on|off, the whole milestone and all work filed under it later). The plan and pacing are ' +
   'algorithms.';
 
-// How related work is drawn, the planner's judgment and never a count or a refusal (board, call 152): the levels' deliverable line, the CEO's hourly check and a meeting's review of the plans
+// How related work is drawn, the planner's judgment and never a count or a refusal: the levels' deliverable line, the
+// CEO's hourly check and a meeting's review of the plans
+// The sweep-or-stages sentence.
 export const RELATED_WORK =
   'Related work is one deliverable, its tasks in turn with one review at its end: a somewhat bigger deliverable is ' +
   'better than splitting it, and nobody works out first what each piece touches: when in doubt, it is one. A ' +
+  'change across the whole codebase (a rename, a move of many files) lands in one short sweep, drawn last and run ' +
+  'with nothing else changing those files, or in stages that each merge on their own as a chain: never a long ' +
+  'branch that main keeps moving under. A ' +
   'feature whose pieces go live separately is a chain, each deliverable needing the one before, so one merges at a ' +
   'time, never drawn to run side by side. A later piece is drawn needing the one before (hq plan deliverable ' +
   '--needs) before any of its tasks is queued: a queued task can start at once. The limit is seats, not agents: ' +
@@ -34,14 +40,14 @@ export const RELATED_WORK =
   'both: it goes in the deliverable it belongs to, or one of its own. ' +
   ONE_DEADLINE;
 
-// What running deliverables side by side (hq plan unneed) is for, said wherever it's offered (board, call 165).
+// What running deliverables side by side (hq plan unneed) is for, said wherever it's offered
 export const SIDE_BY_SIDE =
   'Only work that changes other files runs beside it: work on the same files stays chained, as side by side it ' +
   'collides and is merged by hand.';
 
-// How work goes first, and what a pause is for, said wherever a window or a pause is offered (board, call 169).
+// How work goes first, and what a pause is for, said wherever a window or a pause is offered
 // Two copies keep their own words and change with these: hq pause's help column and its answer's window line
-// (worker/hq/pauses.ts), and the voice manage tool's description (platform/voice/hq_tools.py).
+// (worker/hq/pauses.ts), and the voice manage tool's description (platform/voice/hq_tools.py). Urgent work on its whole milestone.
 export const WINDOW_FIRST =
   'A window orders work within seat pacing. Only work the board marks urgent bypasses pacing ' +
   '(hq urgent <milestone> on|off, the whole milestone and all work filed under it later).';

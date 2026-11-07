@@ -211,29 +211,40 @@ test('a review on another seat does not occupy the bound review place or free it
 
 for (const engine of ['codex', 'claude'])
   for (const kind of ['review', 'consolidate'])
-    test(`slipping ${engine} work preempts a lower ${kind} and the paused session resumes`, async () => {
-      await h.capacity({ [engine]: 1 });
-      const bound = `capacity-${engine}`;
-      const active = await h.start({ agent: 'quill', engine, kind, forSeat: bound }, { seat: bound });
-      const waiting = h.queue({
-        agent: 'kit',
-        engine,
-        forSeat: bound,
-        thread: h.dueThread({ deadline: Date.now() + 60_000 }),
+    for (const paced of [false, true])
+      test(`slipping ${engine} work preempts a lower ${kind} and resumes at ${paced ? 'a paced' : 'an open'} rate`, async () => {
+        await h.capacity({ [engine]: 1 });
+        const bound = `capacity-${engine}`;
+        const active = await h.start({ agent: 'quill', engine, kind, forSeat: bound }, { seat: bound });
+        await h.worker('seat', {
+          seat: bound,
+          engine,
+          state: 'ready',
+          util: 0,
+          week: 0.6,
+          weekResets: Date.now() + 5 * 86400_000,
+          pace: paced,
+          paceRuns: paced ? 1 : undefined,
+        });
+        const waiting = h.queue({
+          agent: 'kit',
+          engine,
+          forSeat: bound,
+          thread: h.dueThread({ deadline: Date.now() + 60_000 }),
+        });
+        const answer = (await h.heartbeat(active, { capped: [bound] })).body;
+        assert.equal(answer.yield, 'waiting');
+        assert.equal(answer.immediate, true);
+        await h.finish(active, { status: 'yielded', session: 'kept-review' });
+        const next = (await h.claim(engine, { seat: bound, util: 0 }))!;
+        assert.equal(next.id, waiting);
+        await h.finish(next);
+        h.cancelJudges(); // (the deliverable's end woke its owner's judge)
+        const resumed = (await h.claim(engine, { seat: bound, util: 0 }))!;
+        assert.equal(resumed.id, active.id);
+        assert.equal(resumed.session, 'kept-review');
+        await h.finish(resumed);
       });
-      const answer = (await h.heartbeat(active, { capped: [bound] })).body;
-      assert.equal(answer.yield, 'waiting');
-      assert.equal(answer.immediate, true);
-      await h.finish(active, { status: 'yielded', session: 'kept-review' });
-      const next = (await h.claim(engine, { seat: bound, util: 0 }))!;
-      assert.equal(next.id, waiting);
-      await h.finish(next);
-      h.cancelJudges(); // (the deliverable's end woke its owner's judge)
-      const resumed = (await h.claim(engine, { seat: bound, util: 0 }))!;
-      assert.equal(resumed.id, active.id);
-      assert.equal(resumed.session, 'kept-review');
-      await h.finish(resumed);
-    });
 
 for (const kind of ['review', 'consolidate'])
   for (const measured of [false, true])

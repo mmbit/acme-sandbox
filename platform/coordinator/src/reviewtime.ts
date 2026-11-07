@@ -6,9 +6,12 @@ const MINUTE_MS = 60_000,
   WEEK_MS = 7 * 24 * 60 * MINUTE_MS;
 const iso = (ms: number) => new Date(ms).toISOString();
 
-// A review run's or check's time, by its kind, over the last week (those done: one cut by a limit isn't a review's
-// length): usual, the mean; slow, the time four in five fit in (as a work job's slow size: predictions.ts). A first guess
-// where its kind has none.
+// Two sizings of the week's review runs. loopSizes sizes the queue's own review jobs. measuredSizes sizes the stages
+// the review plan adds. Both take the mean as usual. Both take the time four in five fit in as slow (SLOW_SHARE). A
+// work job's slow size (predictions.ts) and the review plan's round counts (reviewplan.ts) use the same share.
+//
+// loopSizes groups the review and consolidation jobs by kind alone (predictions.ts sizesFor). It reads the done runs
+// that started in the week: one cut by a limit isn't a review's length. A kind with none gets a first guess.
 const LOOP_GUESS_MS = 15 * MINUTE_MS;
 export const SLOW_SHARE = 0.8;
 export function loopSizes(now: number) {
@@ -24,7 +27,9 @@ export function loopSizes(now: number) {
   );
   return (kind: string, pace: Pace) => sizes.get(kind)?.[pace] ?? LOOP_GUESS_MS;
 }
-// The review plan sizes triage, rulings and fixes separately for each engine, excluding unfinished runs.
+// measuredSizes sizes the review plan's stages before their jobs are queued (reviewplan.ts addStage). It groups the
+// done runs that ended in the week by stage (triage, ruling, fix) and by engine. Slow is never below usual. A stage
+// with none gets the plan's own guess.
 export function measuredSizes(now: number) {
   const measured = weekOfReviews(now).filter(job => !job.running);
   const groups = Map.groupBy(measured, run => `${run.measuredKind}:${run.engine}`);

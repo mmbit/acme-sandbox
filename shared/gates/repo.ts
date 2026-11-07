@@ -18,8 +18,9 @@ export function gitFiles(cwd: string, command: string, ...gitArgs: string[]) {
     .filter(Boolean);
 }
 
-// The tree of the repo's files as they are now, committed or not (except those git ignores), without changing its index.
-export function workingTree(root: string) {
+// The tree of the repo's files as they are now, committed or not (except those git ignores, unless carried), without
+// changing its index.
+export function workingTree(root: string, carried: string[] = []) {
   const dir = mkdtempSync(join(tmpdir(), 'tests-index-'));
   try {
     const index = join(dir, 'index');
@@ -39,6 +40,7 @@ export function workingTree(root: string) {
       });
     }
     execFileSync('git', ['add', '-A'], { cwd: root, env });
+    if (carried.length) execFileSync('git', ['add', '-f', '--', ...carried], { cwd: root, env });
     return execFileSync('git', ['write-tree'], { cwd: root, env, encoding: 'utf8' }).trim();
   } finally {
     rmSync(dir, { recursive: true, force: true });

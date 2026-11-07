@@ -39,12 +39,13 @@ const rounds = await import('./rounds.ts');
 const windows = await import('./windows.ts');
 const sizes = await import('./sizes.ts');
 const agenttime = await import('./agenttime.ts');
+const turnwords = await import('./turnwords.ts');
 
 beforeEach(async () => {
   h.cancelQueued();
   // Job IDs are reused here: their timing and saved estimates must leave with them.
   db.exec(`delete from runs; delete from usage; delete from sizes; delete from predictions; delete from jobs; delete from threads; delete from judgings; delete from thread_needs; delete from plan_changes; delete from prs;
-    delete from waits; delete from wakes; delete from meetings; delete from meeting_seats; delete from meeting_asks;
+    delete from waits; delete from wakes; delete from request_waits; delete from meetings; delete from meeting_seats; delete from meeting_asks;
     delete from review_fix_tasks; delete from review_inbox; delete from proposals; delete from review_waiting_pushes`);
 });
 
@@ -190,7 +191,8 @@ test('moving a task cannot close a loop through an empty thread and a deploy wai
   assert.equal(h.job(moved).thread, loose);
 });
 
-test('the October 21 move of a deployment waiter before its review fix is refused', async () => {
+// (a loop the commands refuse to make is a stored wait)
+test('the October 21 move of a deployment waiter before its review fix holds nothing: the fix goes first', async () => {
   const bubbles = thread('bubbles'),
     watching = thread('watching');
   const author = h.ended({ agent: 'bolt', thread: bubbles });
@@ -217,14 +219,19 @@ test('the October 21 move of a deployment waiter before its review fix is refuse
     findings: '12',
   });
   assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
-  const refused = await h.agent('jobs/move', owner.token, { id: waiter, thread: bubbles });
-  assert.equal(refused.status, 400, JSON.stringify(refused.body));
-  assert.match(refused.body.error, /cycle/);
-  assert.ok(refused.body.error.includes(`#${waiter}`));
-  assert.ok(refused.body.error.includes(`#${fixed.body.id}`));
-  assert.equal(h.job(waiter).thread, watching);
+  const movedIn = await h.agent('jobs/move', owner.token, { id: waiter, thread: bubbles });
+  assert.equal(movedIn.status, 200, JSON.stringify(movedIn.body));
+  assert.equal(h.job(waiter).thread, bubbles);
+  assert.deepEqual(
+    threadorder.turnOf(bubbles).turn.flatMap(t => (t.status === 'queued' ? [t.id] : [])),
+    [fixed.body.id, waiter],
+    'the waiter holds no task behind it',
+  );
+  assert.doesNotMatch(JSON.stringify(predictions.played().usual.get(fixed.body.id)!.waits), /cycle/);
 
+  // (a loop the commands refuse to make: the fix waits for the waiter's merge)
   h.storedTaskPlacement(waiter, bubbles);
+  h.storedWait(fixed.body.id, waiter);
   const unrelated = thread('independent'),
     destination = thread('destination'),
     needed = thread('needed');
@@ -271,10 +278,10 @@ test('the October 21 move of a deployment waiter before its review fix is refuse
   const secondFix = h.queue({ agent: 'bolt', branch: `job/${secondAuthor}`, pr: 9704, stage: 'fix' });
   wakes.hold(secondFix, [{ kind: 'deployed', arg: String(work) }]);
 
-  const repaired = await h.agent('plan/move', owner.token, { id: waiter, place: 2 });
+  const repaired = await h.agent('waits', owner.token, { id: fixed.body.id, from: waiter, why: 'not needed' });
   assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
-  const reversed = await h.agent('plan/move', owner.token, { id: waiter, place: 1 });
-  assert.equal(reversed.status, 400, JSON.stringify(reversed.body));
+  const reversed = await h.agent('waits', owner.token, { id: fixed.body.id, to: waiter });
+  assert.equal(reversed.status, 409, JSON.stringify(reversed.body));
   assert.match(reversed.body.error, /cycle/);
   const after = predictions.played().usual.get(fixed.body.id)!;
   assert.doesNotMatch(JSON.stringify(after.waits), /cycle/);
@@ -1347,14 +1354,14 @@ test('a plan change made in a meeting is its, and the live meeting lists the pro
   );
 });
 
-test('a wait drawn before thread planning holds both tasks when it conflicts with their order, and the plan still plays', async () => {
+// (the waiting task held, the one it waits for goes first)
+test('a wait drawn before thread planning on a task after it lets that task go first, and the plan still plays', async () => {
   const t = thread('loop');
   const [one, two] = [task(t), task(t)];
   h.storedWait(one, two);
-  assert.equal(await claim(), null);
-  const second = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === two)!;
-  assert.equal(second.follows, undefined);
-  assert.match(JSON.stringify(second.reasons), new RegExp(`it and #${one} wait for each other`));
+  assert.equal((await claim())?.id, two, 'the task waited for starts');
+  const queue = backlog.orderingSnapshot(Date.now()).jobs;
+  assert.doesNotMatch(JSON.stringify(queue), /wait for each other/);
   assert.ok(predictions.played(Date.now(), [], ['usual']).usual.has(one), 'no loop for the planner to throw on');
 });
 
@@ -1412,6 +1419,106 @@ test('a task waiting for a later time holds no ready task behind it, nor its pul
   assert.equal(next!.branch, `job/${ready}`, 'it runs on the branch the ready task pushed');
   assert.deepEqual((next as any).inThread.before, { id: ready, agent: 'moss', title: "moss's step" });
   assert.equal((await h.worker('thread-push', { job: timed })).body.opens, true, 'its push is the next round');
+});
+
+// (the three tests below)
+const card = () =>
+  (h.jobs.createRequest({ kind: 'decision', title: 'Which one?', body: 'x', agent: 'bolt' }) as { id: number }).id;
+
+test('a task that waits on nothing starts ahead of a task before it held by a card, which follows it once answered', async () => {
+  const t = thread('carded');
+  const [carded, free] = [task(t), task(t, 'moss')];
+  const asked = card();
+  h.jobs.holdForCard(carded, asked);
+  const words = turnwords.turnWords();
+  assert.match(words(free)!, new RegExp(`^It goes ahead of #${carded},`));
+  assert.equal(words(carded), null, 'its waits say what holds it');
+  const running = await claim();
+  assert.equal(running?.id, free, 'the free task starts now, not at the answer');
+  const queue = backlog.orderingSnapshot(Date.now());
+  assert.equal(queue.jobs.find(j => j.id === carded)!.follows, free, 'the play starts the held task after it');
+  assert.equal(queue.jobs.find(j => j.id === free)!.follows, undefined);
+  h.jobs.answerRequest(asked, 'This one');
+  assert.equal(await claim(), null, 'answered, it waits for the task that passed it');
+  await h.finish(running!, { pr: 9802, branch: `job/${free}`, files: ['platform/x.ts'], sha: sha('f') });
+  const next = await claim();
+  assert.equal(next?.id, carded);
+  assert.equal(next!.branch, `job/${free}`, 'on the branch the free task pushed');
+});
+
+test('a task that waits on nothing starts ahead of tasks before it held by other work or an event', async () => {
+  const other = thread('elsewhere');
+  const before = h.jobs.createJob({
+    agent: 'kit',
+    title: 'Other work',
+    prompt: 'x',
+    thread: other,
+    queuedBy: 'wren',
+  }).id;
+  const t = thread('waiting');
+  const [onWork, onDeploy, free] = [task(t), task(t), task(t, 'moss')];
+  h.storedWait(onWork, before);
+  wakes.hold(onDeploy, [{ kind: 'deploy', arg: '1' }]);
+  assert.deepEqual(
+    h.jobs.readyWork().filter(id => id !== before),
+    [free],
+  );
+  assert.equal((await claim())?.id, free);
+  assert.deepEqual(
+    threadorder.turnOf(t).turn.map(task => task.id),
+    [free, onWork, onDeploy],
+  );
+});
+
+test("a free task drawn after one waiting for its deliverable's merge runs on the deliverable's branch, in the claim and the play", async () => {
+  const t = thread('merging');
+  const [first, waiter, free] = [task(t), task(t), task(t, 'moss')];
+  h.storedWait(waiter, first);
+  const running = await claim();
+  assert.equal(running?.id, first);
+  await h.finish(running!, { pr: 9804, branch: `job/${first}`, files: ['platform/m.ts'], sha: sha('m') });
+  const row = h.db.prepare('select id, kind, pr, thread, branch, status from jobs where id = ?').get(free) as any;
+  const played = threadorder.placing([], [row]).place(row)!.branch;
+  const next = await claim();
+  assert.equal(next?.id, free, 'the free task goes before the one waiting for the merge');
+  assert.equal(next!.branch, `job/${first}`, "the claim runs it on the deliverable's branch");
+  assert.equal(played, next!.branch, 'the play gives it the same branch');
+});
+
+test('a task queued --after a held task in its deliverable needs its work and waits behind it, and hq says which is which', async () => {
+  const t = thread('needed');
+  const [carded, free] = [task(t), task(t, 'moss')];
+  const asked = card();
+  h.jobs.holdForCard(carded, asked);
+  const wren = await h.start({ agent: 'wren' });
+  const queued = await h.agent('job', wren.token, {
+    agent: 'kit',
+    title: 'Use its work',
+    prompt: 'x',
+    thread: t,
+    after: carded,
+  });
+  assert.equal(queued.status, 200, JSON.stringify(queued.body));
+  const step = Number(queued.body.id);
+  assert.equal(queued.body.turn, `It waits for #${carded} before it, whose work it needs (--after).`);
+  const planned = (await h.agent('plan?project=game', wren.token)).body;
+  const tasks = planned.threads.find((p: { id: string }) => p.id === t).tasks as { id: number; turn: string }[];
+  assert.match(tasks.find(j => j.id === free)!.turn, new RegExp(`goes ahead of #${carded},`), 'hq plan: the free one');
+  assert.match(tasks.find(j => j.id === step)!.turn, /whose work it needs/, 'hq plan: the one that needs it');
+  assert.deepEqual(
+    threadorder.turnOf(t).turn.map(task => task.id),
+    [free, carded, step],
+  );
+  assert.ok(!h.jobs.readyWork().includes(step), 'it waits behind the held task, card and all');
+  const running = await claim();
+  assert.equal(running?.id, free);
+  h.jobs.answerRequest(asked, 'This one');
+  await h.finish(running!, { pr: 9803, branch: `job/${free}`, files: ['platform/x.ts'], sha: sha('1') });
+  const held = await claim();
+  assert.equal(held?.id, carded, 'answered, the held task goes next');
+  assert.ok(!h.jobs.readyWork().includes(step), 'the step that needs its work waits for it');
+  await h.finish(held!, { pr: 9803, branch: `job/${free}`, files: ['platform/y.ts'], sha: sha('2') });
+  assert.ok(h.jobs.readyWork().includes(step));
 });
 
 test('a job queued --after a task whose push is held waits for the thread’s pull request like any in review', async () => {

@@ -148,8 +148,9 @@ async function signedIn(how: 'env' | 'pipe') {
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${(server.address() as any).port}`;
+  // the CLI's temp folder in the home: a helper's /tmp can be read-only, and the CLI reads no TMPDIR.
   const env = { ...agentEnv({ PATH: process.env.PATH }, { HOME: home, CLAUDE_CONFIG_DIR: `${home}/.claude`, ...(how === 'pipe' ? SIGN_IN.vars : {}) }),
-    ...(how === 'env' ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}), ANTHROPIC_BASE_URL: url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
+    ...(how === 'env' ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}), CLAUDE_CODE_TMPDIR: home, ANTHROPIC_BASE_URL: url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
   const child = spawn('claude', ['-p', '--output-format', 'json', '--permission-mode', 'bypassPermissions', '--model', 'sonnet'],
     { cwd: home, env, stdio: how === 'pipe' ? SIGN_IN.stdio : ['pipe', 'pipe', 'pipe'], ...as });
   pid = child.pid!;

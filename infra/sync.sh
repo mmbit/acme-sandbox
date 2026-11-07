@@ -194,6 +194,9 @@ fi
 # the knowledge base's notes) run nothing, and the coordinator reads them from this checkout: a commit that changes only
 # those since the last deploy is recorded as deployed, with no build, restart or report.
 # records_only <last> <commit> fails closed: a diff that fails or a grep that errs means a full deploy.
+# A service whose build failed in the last deploy (infra/builds.sh) is built again by the next code commit's deploy, not
+# here: voice's refused model archive (platform/voice/Dockerfile) would be fetched again, half a gigabyte, on every
+# commit of records. The deploy's wake names the services it kept back (wakes.ts describeDeploy).
 records_only() {
   local changed
   # the whole diff is read before grep sees it: grep exits at the first code file, which in a pipe would cut git off
@@ -238,8 +241,7 @@ export MEMORY_MODEL_TRY=$(cat "$tried" 2>/dev/null)
 # Without this every build gets a fresh provenance attestation, so unchanged images count as new
 # and containers (including a busy worker) are restarted on every deploy.
 export BUILDX_NO_DEFAULT_ATTESTATIONS=1
-# Retry once: containers releasing ports can race with new ones claiming them.
-up() { $compose up -d --no-deps "$@" || { sleep 5; $compose up -d --no-deps "$@"; }; }
+. infra/builds.sh
 # Each container's memory as compose.yaml declares it (mem_limit, memswap_limit), put on the running container as well:
 # the kernel held "max" for the worker's swap on both servers although its memswap_limit has always matched mem_limit.
 # Docker's cgroup is a systemd scope, and systemd writes its own value for swap (none set: "max") over Docker's whenever
@@ -271,6 +273,7 @@ keep_limits() {
 before=$(mktemp); $compose ps -a --format '{{.Service}} {{.ID}}' > "$before" 2>/dev/null || rm -f "$before"
 reloaded=
 bring_up() {
+  reset_builds
   # harden.sh can restart Docker (a daemon.json setting it adds), which cuts a
   # call too, so a call that started since the check above makes the deploy wait as well
   { ! on_call || { echo "a call started on the voice line: the deploy waits for it to end"; false; }; } &&
@@ -282,13 +285,13 @@ bring_up() {
     # so the deploy that brings a change to it (or the clock itself) has it before any product does. A checkout from
     # before has no clock.ts, and its products.py reads none.
     { [ -z "$HQ_DATA" ] || [ ! -f platform/coordinator/src/clock.ts ] ||
-      { $compose build coordinator && $compose run --rm --no-deps -T coordinator node src/clock.ts; }; } &&
+      { if build_service coordinator; then $compose run --rm --no-deps -T coordinator node src/clock.ts; fi; }; } &&
     python3 infra/products.py --build-shared &&   # with HQ_DATA (above).
     # a call that started during the build waits too (on_call, above)
-    $compose build &&
+    build_services &&
     { ! on_call || { echo "a call started on the voice line during the build: the deploy waits for it to end"; false; }; } &&
     # staged only now, so a worker restarting while the deploy waits keeps the code deployed with the coordinator
-    stage_worker_code && worker_was=$($compose ps -q worker) &&
+    { is_kept worker || stage_worker_code; } && worker_was=$($compose ps -q worker) &&
     # compose's up replaces every changed container before it starts any, so one slow stop (the worker's, up to 30 s)
     # keeps HQ and the shop down. The coordinator starts first, on its own, then the products, then the rest. Caddy holds
     # their requests meanwhile (infra/Caddyfile).
@@ -296,12 +299,12 @@ bring_up() {
     up coordinator && { [ -z "$products" ] || up $products; } && up --remove-orphans &&
     # A changed Caddyfile is a new file, which the container's single-file mount doesn't see: recreate Caddy
     # then. Otherwise reload it for new or changed product sites (its generated/ folder is mounted whole).
-    { $compose exec -T caddy cat /etc/caddy/Caddyfile | cmp -s - infra/Caddyfile || $compose up -d --force-recreate caddy; } &&
+    { $compose exec -T caddy cat /etc/caddy/Caddyfile | cmp -s - infra/Caddyfile || up --force-recreate caddy; } &&
     $compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile &&
-    { [ -n "$work" ] || { work=$(volume work) && stage_worker_code; }; } &&
+    { is_kept worker || [ -n "$work" ] || { work=$(volume work) && stage_worker_code; }; } &&
     # a worker whose container up kept (its image and settings the same) and whose code changed: its process reloads. A new
     # container started from the staged code already (and may not be listening for the signal yet).
-    { [ "$($compose ps -q worker)" != "$worker_was" ] || ! worker_behind ||
+    { is_kept worker || [ "$($compose ps -q worker)" != "$worker_was" ] || ! worker_behind ||
       { echo "worker: new code, reloading its process (its jobs go on)"; reloaded=worker; $compose kill -s SIGUSR2 worker; }; } &&
     keep_limits
 }
@@ -351,8 +354,8 @@ log=$(mktemp)
 deployed=$?
 # A deploy that didn't bring HQ up (infra/hq-up.sh: the coordinator crashed at its start, answers nothing, or its page
 # doesn't assemble) goes back to the last good deploy by itself, so a bad merge never keeps HQ down: that commit isn't
-# tried again (above), and the report says so. One that stopped before the coordinator changed (a build that failed, a
-# call that started) finds HQ up as it was, and is tried again at the next run, as before.
+# tried again (above), and the report says so. One stopped by a call that started finds HQ up as it was, and is tried
+# again at the next run. A service whose build failed keeps its container and image while the rest deploy (builds.sh).
 up=0; said=$(COMPOSE="$compose" ./infra/hq-up.sh 2>&1) || up=1; echo "$said" >> "$log"
 if [ "$up" != 0 ] && [ -n "$last" ] && [ "$last" != "$commit" ] && git cat-file -e "$last" 2>/dev/null; then
   echo "$commit" > "$failed"
@@ -372,7 +375,9 @@ if [ "$up" != 0 ] && [ -n "$last" ] && [ "$last" != "$commit" ] && git cat-file 
   fi
   rm -f "$log.revert.py"
   deployed=1
-elif [ "$deployed" = 0 ] && [ "$up" = 0 ]; then
+elif [ "$up" != 0 ]; then
+  deployed=1 # HQ that isn't up is a failed deploy, whatever bring_up returned
+elif [ "$deployed" = 0 ]; then
   echo "$commit" > "$state" && echo "$approvals" > "$approved"
   deployed=$?
 fi
@@ -387,7 +392,8 @@ echo "pruned after the deploy: old images $(docker image prune $oldImages 2>&1 |
 # HQ's record of the deploy, for the jobs that wait for one (hq job --when): after the report, so a job it starts finds
 # this deploy's in hq report.
 [ -z "$HQ_DATA" ] || $compose ps -a --format '{{.Service}} {{.ID}}' 2>/dev/null |
-  DEPLOY_BROKE="${rolling_back:+$said}" DEPLOY_REVERTED="${reverted:-}" \
+  DEPLOY_BROKE="${rolling_back:+$said}" DEPLOY_REVERTED="${reverted:-}" DEPLOY_KEPT="$kept" \
     python3 infra/deploys.py "$HQ_DATA/deploys" "$commit" "$fetched" "$deployed" "$before" $reloaded >/dev/null ||
   echo "deploys.py failed: HQ hasn't heard of the deploy of $commit" >&2
 rm -f "$before"
+rm -rf "$kept"

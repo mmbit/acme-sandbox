@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { clone } from './fixture.ts';
 import { SUITES } from './suites.ts';
 
 const concurrency = (serial?: boolean) =>
@@ -48,4 +49,18 @@ test('a test that hangs holding a lock is ended at its timeout, everything it st
   assert.ok(Date.now() - began < 20_000, `${Date.now() - began} ms`);
   assert.equal(existsSync(held), true);
   assert.equal(spawnSync('flock', ['--nonblock', lock, 'true']).status, 0);
+});
+
+test("a change to the run helper runs the coordinator's cases that start it, though its own area has no tests", () => {
+  const { out, status } = clone(
+    {
+      'platform/helper/helper.mjs': 'export {};\n',
+      'platform/coordinator/package.json': '{}\n',
+      'platform/coordinator/src/runs.test.ts': '',
+      'platform/coordinator/src/other.test.ts': '',
+    },
+    { 'platform/helper/helper.mjs': 'export const changed = true;\n' },
+  ).run({}, 'suites.ts');
+  assert.equal(status, 1, out);
+  assert.equal(out, 'platform/coordinator: node in platform/coordinator, 1 file\n');
 });

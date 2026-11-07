@@ -8,8 +8,8 @@
 // from it) are steps of it and carry its code (createJob codeFrom). A code is given once and never changes, a task moved
 // to another project included. Jobs done before codes meant something keep their made-up word (KOHOG): it has no dash,
 // so it never meets a new one.
-import { prepared } from './db.ts';
-import { projects } from './company.ts';
+import { db, planChange, prepared } from './db.ts';
+import { ceo, projects } from './company.ts';
 import { entries } from './schedulelist.ts'; // (the entries are read in schedulelist.ts)
 
 // A word: plain capitals, a real word or an obvious short form; a prefix: two or three
@@ -27,6 +27,30 @@ export function prefixOf(where: string | null | { project: string }) {
       : prepared('select code from projects where id = ?').get(where.project)
   ) as { code: string | null } | undefined;
   return row?.code ?? null;
+}
+// A project's prefix for its tasks' codes: two or three capitals, reserved for this project.
+// Given as the CEO makes the project, or once to one made before prefixes (hq project code), never changed: the codes
+// given carry it. (moved from plan.ts)
+export function codeRefusal(code: string) {
+  if (!PREFIX.test(code))
+    return `a project needs its code: --code and two or three capitals (SH, GM), the prefix of its tasks' codes`;
+  const holder = db.prepare('select id from projects where code = ?').get(code) as { id: string } | undefined;
+  if (holder) return `${code} is project ${holder.id}'s code: pick another`;
+  if (projects().groups.unsorted?.code === code) return `${code} is reserved for work without a project: pick another`;
+}
+export function setCode(id: string, given: unknown, agent: string) {
+  if (agent !== ceo()) return 'only the CEO gives a project its code';
+  const project = db.prepare('select code from projects where id = ?').get(id) as { code: string | null } | undefined;
+  if (!project) return `there's no project "${id}"`;
+  if (project.code) return `${id}'s code is ${project.code}, for good: its tasks' codes carry it`;
+  const code = String(given ?? '')
+      .trim()
+      .toUpperCase(),
+    refused = codeRefusal(code);
+  if (refused) return refused;
+  db.prepare('update projects set code = ? where id = ?').run(code, id);
+  planChange({ project: id, what: `its tasks' codes ${code}-…`, by: agent });
+  return { id, code };
 }
 export const codeIn = (where: string | null | { project: string }, word: string) => {
   const prefix = prefixOf(where);

@@ -248,7 +248,8 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 //
 // seats: each seat as the worker last reported it.
 // - util, week: windows used (0 to 1), with each reset time in resets and week_resets (ms).
-// - pace: 1 while its week runs ahead of its pace (only explicitly urgent work can start).
+// - pace: 1 while its week runs ahead of its pace. pace_runs caps concurrent ordinary runs: none while it rests after a
+//   run its allowance can't keep up with, until pace_rest (ms).
 // - credits: 1 while it may run on credits past its limits (the board's switch and its account's credits), not that it
 //   does: it runs on them only once a window is full (playseats.ts).
 //
@@ -349,7 +350,7 @@ db.exec(`
     incident integer not null default 0, urgent integer not null default 0);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
-    credits integer, cli text);
+    pace_runs integer, pace_rest integer, credits integer, cli text, held_until integer);
   create table if not exists requests (id integer primary key, created text not null, agent text, job integer,
     kind text not null, title text not null, body text not null, urgency text not null default 'today',
     status text not null default 'open', answer text, seat text, secrets text, approves text, pr integer, photos text,
@@ -368,6 +369,10 @@ db.exec(`
   create table if not exists settings (key text primary key, value text not null);
   create table if not exists push_subscriptions (endpoint text primary key, p256dh text not null, auth text not null,
     device text, created text not null);
+  -- a push waiting out the board's quiet hours: each card's, else the newest of its tag (push.ts hold; card 0: none).
+  --.
+  create table if not exists held_pushes (tag text not null, card integer not null, message text not null,
+    until integer not null, primary key (tag, card));
   create table if not exists calls (id integer primary key, ts text not null, agent text not null, request integer,
     lines text not null, job integer, status text not null default 'ended', processed_at text,
     attempts integer not null default 0, lines_at text, resumes text, reply text,
@@ -537,7 +542,7 @@ db.exec(`create table if not exists wakes (job integer not null, kind text not n
   met text, primary key (job, kind, arg))`);
 db.exec(`create table if not exists deploys (file text primary key, sha text not null, fetched text not null, finished text not null,
   ok integer not null, recreated text not null default '[]', reloaded text not null default '[]', services text not null default '[]',
-  broke text not null default '', reverted text not null default '')`);
+  broke text not null default '', reverted text not null default '', kept text not null default '{}')`);
 db.exec('create index if not exists deploys_finished on deploys (finished)');
 // The Codex seat each share went to (a job, or a normal review round's Codex review its seat was out for), so the next
 // goes to the seat with fewer (jobs.ts codexShare).
@@ -789,6 +794,9 @@ db.exec(`create table if not exists pauses (id integer primary key, project text
     primary key (pause, job));
   create table if not exists pause_wakes (job integer primary key, pause integer not null)`);
 redacted('pauses', 'why');
+// A whole milestone (a project's id) or deliverable (a thread's) whose going live wakes a pause's owner (pauses.ts
+// --until <project>, whole.ts wholeLive)
+db.exec('create table if not exists pause_until_whole (pause integer not null, whole text not null, primary key (pause, whole))');
 // A decision of the board's named ahead of its card (decisions.ts), which pauses wait for: request, the card that asks
 // it once there is one; answered, when the board answered that card (or the CEO settled it); released, when the board
 // let what it holds go in HQ instead; card_job, the card job a visual hold queued; settled, the board's item or card the
@@ -880,6 +888,8 @@ export function companyOnce(file = `${REPO_DIR}/company/migrations.sql`) {
 // (exported for inbox.ts)
 export const lacks = (table: string, column: string) =>
   !(db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).some(c => c.name === column);
+once('2026-11-07-seat-pace-runs', () => lacks('seats', 'pace_runs') && db.exec('alter table seats add column pace_runs integer'));
+once('2026-11-07-seat-pace-rest', () => lacks('seats', 'pace_rest') && db.exec('alter table seats add column pace_rest integer'));
 once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table jobs add column code text'));
 once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
 once('2026-10-27-jobs-carry', () => lacks('jobs', 'carry') && db.exec('alter table jobs add column carry text'));
@@ -890,6 +900,12 @@ db.exec('create table if not exists carry_commits (sha text primary key, code in
 once('2026-11-06-carry-scope', () =>
   lacks('carry_commits', 'scope') && db.exec('alter table carry_commits add column scope text'),
 );
+// Why a seat's claims come back empty (emptyclaims.ts), one row a seat while they do. check_name is the first check the
+// best job for it failed, and job is that job. What the check held it against is words (against), a time in ms (until)
+// or the plan's wait as JSON (wait, waits.ts). since is when that reason began, and seen is when a claim last met it,
+// to the minute.
+db.exec(`create table if not exists empty_claims (seat text primary key, check_name text not null, job integer,
+  against text, until integer, wait text, since integer not null, seen integer not null)`);
 // Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
 // job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
 // names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.
@@ -1133,6 +1149,10 @@ once('2026-11-06-events-job-from', () =>
 // A call on the phone line, which has no screen: the board's other HQ screens never show themselves on it (call.ts
 // liveNow).
 once('2026-11-06-calls-phone', () => lacks('calls', 'phone') && db.exec('alter table calls add column phone integer not null default 0'));
+// The services a deploy kept on their current image, each with why (infra/builds.sh, deploys.py).
+once('2026-11-07-deploys-kept', () => lacks('deploys', 'kept') && db.exec("alter table deploys add column kept text not null default '{}'"));
+// A held Codex seat's real hold end, beside its next check in until (jobs.ts setSeat, seatstatus.ts).
+once('2026-11-07-seats-held-until', () => lacks('seats', 'held_until') && db.exec('alter table seats add column held_until integer'));
 db.exec(`create index if not exists events_job on events (job, id) where job is not null;
   create index if not exists events_agent on events (agent, id);
   create index if not exists events_to on events ("to", id) where "to" is not null`);

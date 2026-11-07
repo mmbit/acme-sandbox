@@ -10,6 +10,9 @@ An AI-run company on the acme-foundation platform. Fill this in once the board h
 - `kits/`: the company's own libraries and tools, and the parts that plug into the platform (its own coordinator routes,
   HQ apps and `hq` commands): `kits/README.md` says how. `products/`: what it sells. `products/care/`: the support chat's
   plug-in; switching the chat on, the company's steps and the board's: `platform/care/docs/switch-on.md`.
+- `company/board.yaml`: the board's profile, the one person who runs the company: its day (when it's up, at work and
+  quiet), its work, its time and how it wants to hear from us. HQ reads it before anything reaches the board: nothing
+  rings its devices in its quiet hours but what it asked for. Fill it in from the board's first call.
 - `company/projects.yaml`: the board's projects, which HQ groups every job under (projects, their threads, their jobs).
   Starting with work already under way: `platform/coordinator/docs/projects.md`.
 - `platform/`, `shared/`, `infra/`: the foundation's files. Take updates with `git merge foundation/main`; change

@@ -33,7 +33,7 @@ import type { Span } from './playtime.ts';
 import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './threadgroups.ts';
 import { spellsOver, type Spells } from './startholds.ts';
 import { pauseCovers, pauseLets } from './jobs.ts';
-import { needSpansReader } from './threadneeds.ts';
+import { needSpansReader, without } from './threadneeds.ts';
 
 const PARTS = [
   'line',
@@ -200,23 +200,6 @@ function holdsOf(jobs: Job[], groups: Group[], merges: Map<string, Merge[]>, run
   const byId = new Map(jobs.map(j => [j.id, j]));
   const ids = JSON.stringify([...byId.keys()]);
   const wakes = wakesOf(ids);
-  // A thread's tasks take their turns as threadorder.ts inTurn has them, the tasks started ahead of those not started
-  // (even queued again): a task before it in its thread holds a task until it ends, but not while it waits for its time
-  // still to come (the turn puts it behind the tasks that can start), and not once the task itself has started; a task
-  // that started first holds a later one from that start; neither holds a task while it waits for its own time
-  const timeOf = new Map<number, number>();
-  for (const w of wakes.filter(w => w.kind === 'at')) timeOf.set(w.job, Math.max(timeOf.get(w.job) ?? 0, w.until));
-  const startOf = (j: Job) => runs.get(j.id)?.[0]?.start ?? Infinity;
-  for (const g of groups)
-    for (const t of g.tasks)
-      for (const other of g.tasks.filter(p => p !== t && t.thread !== null && p.thread === t.thread)) {
-        const ahead = before(other, t);
-        if (!ahead && !(startOf(other) < startOf(t))) continue;
-        const from = Math.max(t.created, timeOf.get(t.id) ?? 0, ahead ? (timeOf.get(other.id) ?? 0) : startOf(other));
-        // (a task before it holds it only until the task starts itself first)
-        const until = ahead && startOf(t) < startOf(other) ? startOf(t) : (other.finished ?? Infinity);
-        if (from < until) add(t.id, { part: 'order', from, until, on: other.id });
-      }
   for (const w of waitedOn(ids)) {
     const j = byId.get(w.job)!,
       own = w.branch === j.branch;
@@ -229,6 +212,28 @@ function holdsOf(jobs: Job[], groups: Group[], merges: Map<string, Merge[]>, run
   for (const w of wakes) add(w.job, { part: 'card_or_time', from: w.from ?? byId.get(w.job)!.created, until: w.until });
   for (const p of pausesOf(ids))
     add(p.job, { part: 'paused', from: Math.max(p.from, byId.get(p.job)!.created), until: p.until });
+  // A thread's tasks take their turns as threadorder.ts inTurn has them, the tasks started ahead of those not started
+  // (even queued again): a task before it in its thread holds a task until it ends, but not while it waits for a card,
+  // another job or a time or an event of its own (its holds above: the turn puts it behind the tasks that can start),
+  // and not once the task itself has started; a task that started first holds a later one from that start; neither
+  // holds a task while it waits for its own time. (a card, a job, an event)
+  const timeOf = new Map<number, number>();
+  for (const w of wakes.filter(w => w.kind === 'at')) timeOf.set(w.job, Math.max(timeOf.get(w.job) ?? 0, w.until));
+  const ownWaits = new Map(
+    jobs.map(j => [j.id, holds.get(j.id)!.filter(h => h.part === 'after' || h.part === 'card_or_time')]),
+  );
+  const startOf = (j: Job) => runs.get(j.id)?.[0]?.start ?? Infinity;
+  for (const g of groups)
+    for (const t of g.tasks)
+      for (const other of g.tasks.filter(p => p !== t && t.thread !== null && p.thread === t.thread)) {
+        const ahead = before(other, t);
+        if (!ahead && !(startOf(other) < startOf(t))) continue;
+        const from = Math.max(t.created, timeOf.get(t.id) ?? 0, ahead ? 0 : startOf(other));
+        // (a task before it holds it only until the task starts itself first)
+        const until = ahead && startOf(t) < startOf(other) ? startOf(t) : (other.finished ?? Infinity);
+        for (const spell of without([{ from, until }], ownWaits.get(other.id) ?? []))
+          add(t.id, { part: 'order', ...spell, on: other.id });
+      }
   const needs = needSpansReader((branch, at) => mergeAfter(merges, branch, at));
   for (const g of groups)
     for (const t of g.tasks) {

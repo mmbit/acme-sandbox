@@ -69,7 +69,7 @@ export function waiting(ids: number[], f: Forecast = forecast.current()) {
     )
     .all(...ids) as { id: number; job: number | null; routing: number; board_why: string | null }[];
   for (const r of rows) {
-    const hold = !r.routing && r.job ? holdOf(holder(r.job), f) : null;
+    const hold = !r.routing && r.job ? holdOf(jobs.standInFor(r.job), f) : null;
     if (r.routing && r.board_why) said.set(r.id, `${r.board_why}, so it's being routed to other work`);
     else if (hold) said.set(r.id, `The work it's in is held: ${boardHoldWords(hold)}`);
   }
@@ -77,7 +77,7 @@ export function waiting(ids: number[], f: Forecast = forecast.current()) {
 }
 
 // The notes in queued work, still open (none marked fixed or answered), each job's, for the play's after-hook
-// (feedback.ts sendBack): a note sent to a job that failed is the job's that took its place (holder).
+// (feedback.ts sendBack): a note sent to a job that failed is the job's that took its place (jobs.ts standInFor).
 // The open notes are read first, each followed down its job's replacements (jobs.ts lineageFrom), and the jobs they
 // reach are checked on db.ts jobs_state, so only a queued one's row is read (for its session).
 const OPEN_NOTES = `select n.id note, n.job from review_notes n where n.status = 'sent' and n.fixed is null
@@ -93,9 +93,3 @@ export const carried = () =>
       )
       .all() as { job: number; notes: string }[]
   ).map(c => ({ job: c.job, notes: JSON.parse(c.notes) as number[] }));
-// Whose a note sent to `job` is now: that job, else the job that took its place, the last of them (jobs.ts replacementOf).
-//
-export function holder(job: number) {
-  for (let next = jobs.replacementOf(job); next; next = jobs.replacementOf(job)) job = next;
-  return job;
-}

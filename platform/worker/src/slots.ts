@@ -73,6 +73,11 @@ export function rootDir(p: string, mode: number, gid = 0) {
   chmodSync(p, mode);
 }
 
+// Removed as root: GNU rm never follows a symlink inside the folder, and every folder above p is root's.
+export const remove = (p: string) => {
+  if (lstatSync(p, { throwIfNoEntry: false })) execFileSync('rm', ['-rf', '--', p]);
+};
+
 // Creates a job's folder for its slot: 0700, the slot's alone.
 export function makeDir(p: string, ids: Ids) {
   mkdirSync(p, { mode: 0o700 });

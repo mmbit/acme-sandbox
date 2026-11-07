@@ -28,6 +28,7 @@ server (`infra/shell.py`) that does one of five fixed actions and answers with w
 ```
 gh workflow run overseer.yml -f action=status
 gh workflow run overseer.yml -f action=logs -f service=coordinator -f lines=500
+gh workflow run overseer.yml -f action=logs -f service=worker -f lines=2000 -f since=2026-11-07T04:40:00Z -f until=2026-11-07T04:49:00Z
 gh workflow run overseer.yml -f action=restart -f service=worker
 gh workflow run overseer.yml -f action=deploy
 gh workflow run overseer.yml -f action=tests -f test=test_sync_rollback.py
@@ -39,6 +40,16 @@ Then `gh run list --workflow overseer.yml --limit 1` gives the run, `gh run watc
 - **status**: the containers, memory, disk, and the deploy service's last lines (`<SERVER_NAME>-sync`).
 - **logs**: a service's last lines, up to 2000. The services are those in `infra/compose.yaml`: `caddy`,
   `coordinator` (HQ's server and the job queue), `worker` (the agent seats), `voice` and `stt` (the board's calls).
+  They come from the host journal, which keeps every container compose has made for the service (`infra-<service>-<n>`),
+  the ones a deploy replaced too. Each line carries its container's name and id, so a replacement shows. `since` and
+  `until` (UTC, to the microsecond, `2026-11-07T04:40:00Z`, both included) read the last lines of an interval instead,
+  as far back as the journal keeps them (`infra/journald.conf`). The answer ends on what it covers,
+  `(covers: 2000 lines from <first> to <last>; ...)`, and whether the line cap, the 512 KiB cap or the 600 s cap cut
+  it. The line and byte caps leave out the earliest lines, so a cut read goes on with the next piece ending at its first
+  timestamp (`until=<first>`: that line comes again), until a piece says no cap cut it: the pieces together have every
+  line of the interval. A line missing from a cut read proves nothing about the log. The workflow's `since` and `until`
+  inputs come with `company/upstream/overseer-logs-interval.patch` (after `overseer-tests.patch`): our jobs can't push
+  workflows, so the Overseer, which has the workflow scope, applies both before its first interval read.
 - **restart**: one service.
 - **deploy**: deploys `main` now rather than within the minute, so a fix or a revert lands at once.
 - **tests**: one of infra's own test files (`infra/test_*.py` or `infra/test_*.sh`), run on the server from its

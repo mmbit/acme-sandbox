@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // HQ measured for fit where the board looks: in dev mode, in each look the company names (org.yaml review.screens.looks),
-// at each of the board's own screens (company/screens.json, its colour scheme too), on each of HQ's screens and the
-// notebook beside it at every width the board can drag it to. A finding is text running into another element, text cut
-// off with no ellipsis, a line of text under another part of its tile, text or a control past the screen's side or
-// under its safe areas (shared/browser/fit.mjs), text drawn far bigger or smaller on one screen than on the others, or a case that didn't
-// settle within its budget. Each comes with a crop round it in --out; the last line out is { cases, findings, seconds }
-// as JSON, and the check fails on any finding.
+// at each of the board's own screens (company/screens.json, its colour scheme too; without one, the generic set of
+// shared/browser/screens.mjs), on each of HQ's screens and the notebook beside it at every width the board can drag it
+// to. A finding is text running into another element, text cut off with no ellipsis, a line of text under another part
+// of its tile, text or a control past the screen's side or under its safe areas (shared/browser/fit.mjs), text drawn
+// far bigger or smaller on one screen than on the others, or a case that didn't settle within its budget. Each comes
+// with a crop round it in --out; the last line out is { cases, findings, seconds } as JSON, and the check fails on any
+// finding.
 //   node platform/hq/fit-check.mjs [--out <folder>] [--budget <s>] [--only <words in a case's name>] [--shots] [--again | --touched]
 //     [--browsers <n>]
 // --browsers: how many browsers measure cases side by side (3: the render helper's cores; 1 here on the worker)
@@ -21,6 +22,7 @@ import { casesOf, keep, keptFontsOf, runCase } from './fitcases.mjs';
 import { ROOT, mocks, serve, servedFiles } from './serve.mjs';
 import { playwright } from '../../shared/browser/browser.mjs';
 import { listTouched, recordIn, watch } from '../../shared/browser/touched.mjs';
+import { SCREENS_FILE, screensIn } from '../../shared/browser/screens.mjs';
 
 // A text drawn more than high times its usual size on a case, or less than low times it, is out of scale: its median
 // over every case of its look. The board's type steps from a phone to a desktop stay inside them (1.3x at most).
@@ -39,14 +41,15 @@ const OUT = option('--out', '/tmp/hq-fit'),
 const started = Date.now();
 const { parse } = await import('../coordinator/node_modules/yaml/dist/index.js');
 const looks = parse(readFileSync(join(ROOT, 'company/org.yaml'), 'utf8')).review?.screens?.looks ?? [];
-const { screens } = JSON.parse(readFileSync(join(ROOT, 'company/screens.json'), 'utf8'));
+const screens = screensIn(join(ROOT, SCREENS_FILE));
 if (!looks.length) throw new Error('company/org.yaml review.screens names no looks to measure HQ in');
 mkdirSync(OUT, { recursive: true });
 const fonts = keptFontsOf(join(ROOT, 'kits'), join(OUT, '.fonts'));
-// (what the check reads itself, the fonts it lays HQ out in among them, touches every case as its code does)
+// (what the check reads itself, the fonts it lays HQ out in among them, touches every case as its code does: the
+// screens file too when there's none, so adding one later touches them all)
 const record = recordIn(OUT, import.meta.url, [
   'company/org.yaml',
-  'company/screens.json',
+  SCREENS_FILE,
   ...[...fonts.kept.values()].map(file => relative(ROOT, file)),
 ]);
 // --touched: the recorded cases a change since touches, read here in a second, with no server or browser: none, and

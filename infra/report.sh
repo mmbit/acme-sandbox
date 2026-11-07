@@ -148,7 +148,17 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
       console.log('== waiting for events (hq job --when, still waited for: an at is in ms), then the last 5 deploys HQ has heard of');
       console.table(db.prepare(\"select w.job, j.agent, w.kind, w.arg, datetime(w.since / 1000, 'unixepoch') since, substr(j.title,1,70) title \"
         + \"from wakes w join jobs j on j.id = w.job where w.met is null and j.status = 'queued' order by w.job\").all());
-      console.table(db.prepare('select sha, fetched, finished, ok, recreated, reloaded from deploys order by finished desc limit 5').all());
+      // a kept coordinator, or a deploy gone back, still runs on a database without deploys.kept.
+      const hasKept = db.prepare('pragma table_info(deploys)').all().some(c => c.name === 'kept');
+      console.table(db.prepare('select sha, fetched, finished, ok, recreated, reloaded'
+        + (hasKept ? \", (select group_concat(key, ' ') from json_each(kept)) kept\" : '')
+        + ' from deploys order by finished desc limit 5').all());
+      // the table names them; the latest deploy's say why: the partner whose build failed, or the end of the build's output
+      const latest = hasKept && db.prepare('select kept from deploys order by finished desc limit 1').get();
+      for (const [service, why] of Object.entries(JSON.parse(latest?.kept ?? '{}'))) {
+        const [cause, ...output] = why.trimEnd().split('\\n');
+        console.log(service + ': kept on its current image, ' + cause + (output.length ? ' ' + output.join('\\n').slice(-300) : ''));
+      }
     } catch { /* no wakes table until the coordinator has started with wakes.ts */ }
     // the open threads' windows (windows.ts): the time the board was given for each thread's work, the time aimed for
     // and who gave it, so whether one was set can be checked.

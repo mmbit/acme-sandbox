@@ -97,6 +97,8 @@
 # (seatstatus.ts, goingon.ts).
 !platform/worker/src/seatstatus.ts
 !platform/worker/hq/seatwords.ts
+# and how hq counts a word, which its words share (output.ts plural).
+!platform/worker/hq/output.ts
 # a seat's name, which HQ's Seats checks as the worker does (seats.ts).
 !platform/worker/src/seatid.ts
 # the rude-word check, which the jobs' short codes skip words by (platform/coordinator/src/jobcodes.ts).

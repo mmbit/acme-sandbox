@@ -38,7 +38,7 @@ test('unset and configured stops give queued work their distinct pacing and rese
   input.pacing = true;
   const paced = play(input, sizes);
   assert.equal(paced.get(defaultJob)!.start, T0, 'the peer keeps the default reserve and releases its pacing');
-  assert.ok(paced.get(explicitJob)!.start! > T0, 'a configured stop paces its own week');
+  assert.equal(paced.get(explicitJob)!.start, T0, 'a paced configured seat retains one ordinary place');
   input.pacing = false;
   for (const seat of input.seats.filter(s => s.id !== 'claude-peer')) {
     seat.week = 0.95;
@@ -59,6 +59,9 @@ test('unset and configured stops give queued work their distinct pacing and rese
 
 test('a missing weekly reading retains the earlier measured paced usage with its original age', async () => {
   mock.timers.setTime(T0);
+  const { addSeat, stopSeat } = await import('./seats.ts');
+  addSeat({ id: 'claude-prior', provider: 'anthropic' });
+  stopSeat('claude-prior', 90);
   await report('claude-prior', { util: 0.2, resets: T0 + 5 * HOUR, week: 0.92, weekResets: T0 + 24 * HOUR });
   mock.timers.setTime(T0 + HOUR);
   await report('claude-prior', { util: 0.3, resets: T0 + 5 * HOUR, weekResets: T0 + 24 * HOUR });

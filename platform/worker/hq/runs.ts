@@ -7,9 +7,8 @@
 // the job itself.
 // Kinds with checkout enabled send the whole checkout when --paths is omitted.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as api from './api.ts';
 import { checkOnHelper } from './checks.ts';
 import { type Here, noTakerNow, runHere } from './here.ts';
@@ -110,17 +109,21 @@ export const run = {
 async function send(args: string[]) {
   const root = git(['rev-parse', '--show-toplevel']);
   const { spec, paths, carried, commit, fallback } = specOf(args, git(['rev-parse', '--show-prefix']));
-  const machine: Machine | undefined = !paths ? await api.getJson('runs/helper') : undefined;
-  const checkout = machine?.kinds.find(kind => kind.name === spec.kind && kind.checkout);
+  // (the kind as HQ takes it: the one named, or the one a run naming none is of)
+  const machine: Machine = await api.getJson('runs/helper');
+  spec.kind ||= machine.impliedKind ?? '';
+  const kind = machine.kinds.find(kind => kind.name === spec.kind);
+  const checkout = !paths && kind?.checkout ? kind : undefined;
+  if (checkout && fallback) stop('hq run: checks stay on the helper, leave out --fallback here');
+  if (kind?.unavailable && !fallback) stop(`hq run: ${kind.unavailable}`);
   if (checkout) {
-    if (fallback) stop('hq run: checks stay on the helper, leave out --fallback here');
-    return checkOnHelper(root, spec, commit || treeNow(root, ['.'], carried), checkout.browsers);
+    return checkOnHelper(root, spec, commit || (await treeNow(root, carried)), checkout);
   }
   const folders = runFolders(paths, spec.cwd);
   const here = fallback ? { root, spec } : null;
-  const none = here && (await noTakerNow(spec.kind));
+  const none = here && noTakerNow(machine.name, kind, spec.kind);
   if (none) return runHere(here, `hq run: ${none}`);
-  const bundle = bundleOf(root, folders, carried, commit);
+  const bundle = await bundleOf(root, folders, carried, commit);
   const answer = await api.call('runs', {
     bytes: bundle,
     headers: { 'content-type': 'application/gzip', 'x-run': Buffer.from(JSON.stringify(spec)).toString('base64url') },
@@ -178,26 +181,18 @@ function runFolders(paths: string[] | undefined, cwd: string) {
 }
 
 // The folders and carried files as a gzipped tar, at a commit or as the tree has them now
-function bundleOf(root: string, paths: string[], carried: string[], commit: string) {
-  const tree = commit ? git(['-C', root, 'rev-parse', `${commit}^{tree}`]) : treeNow(root, paths, carried);
+async function bundleOf(root: string, paths: string[], carried: string[], commit: string) {
+  const tree = commit ? git(['-C', root, 'rev-parse', `${commit}^{tree}`]) : await treeNow(root, carried);
   return execFileSync('git', ['-C', root, 'archive', '--format=tar.gz', tree, '--', ...paths, ...carried], {
     maxBuffer: 1024 * 2 ** 20,
   });
 }
 
-// Changes and new files included, through an index of its own, so the job's staging stays as it is. The carried files
-// go in even though git ignores them.
-function treeNow(root: string, paths: string[], carried: string[]) {
-  const scratch = mkdtempSync(`${tmpdir()}/hq-run-index-`);
-  const env = { ...process.env, GIT_INDEX_FILE: `${scratch}/index` };
-  try {
-    git(['-C', root, 'read-tree', 'HEAD'], env);
-    git(['-C', root, 'add', '-A', '--', ...paths], env);
-    if (carried.length) git(['-C', root, 'add', '-f', '--', ...carried], env);
-    return git(['-C', root, 'write-tree'], env);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
+// The tree as the job has it now, the carried files in though git ignores them: the gates' snapshot, from the job's own
+// checkout (the installed HQ holds only platform/worker), so the job's staging stays as it is.
+async function treeNow(root: string, carried: string[]): Promise<string> {
+  const { workingTree } = await import(pathToFileURL(join(root, 'shared/gates/repo.ts')).href);
+  return workingTree(root, carried);
 }
 
 // ---- waiting for it
@@ -332,8 +327,8 @@ async function stopRun(id: number) {
   print(`hq run #${id}: ${current.state}`);
 }
 
-function git(args: string[], env = process.env) {
-  return execFileSync('git', args, { encoding: 'utf8', env }).trim();
+function git(args: string[]) {
+  return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
 const shellQuoted = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`);

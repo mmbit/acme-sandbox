@@ -206,6 +206,39 @@ test('a task before in its thread that waits for its time holds no later task: t
   assert.equal(held, 0, 'B never waited for A');
 });
 
+test('a task before in its thread that waits for a card holds no later task: the turn puts it behind', () => {
+  const card = Number(
+    h.db
+      .prepare(
+        `insert into requests (created, agent, kind, title, body, status, changed, answered)
+        values (?, 'kit', 'question', 'Q', 'Q?', 'answered', ?, ?)`,
+      )
+      .run(at(0), at(60), at(60)).lastInsertRowid,
+  );
+  const a = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/carded',
+    seq: 1,
+    request: card,
+    created: X,
+    run: { started: X + 60 * MIN, ended: X + 70 * MIN },
+  });
+  const b = h.pastJob({
+    agent: 'ada',
+    thread: 'hq/carded',
+    seq: 2,
+    branch: `job/${a}`,
+    created: X,
+    run: { started: X + 10 * MIN, ended: X + 20 * MIN },
+  });
+  const { parts, held } = split([
+    { id: a, run: [60, 70] },
+    { id: b, run: [10, 20] },
+  ]);
+  assert.deepEqual(parts, { line: 10, card_or_time: 40, other: 50 });
+  assert.equal(held, 0, 'B never waited for A');
+});
+
 test("a parked job's card holds it until the card is answered, not its last edit", () => {
   const card = Number(
     h.db

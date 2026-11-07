@@ -1,7 +1,6 @@
 // hq run --fallback here: a run no helper may take runs in the job itself, as it would on the helper (runs.ts)
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import * as api from './api.ts';
 import { print } from './output.ts';
 import type { Machine } from './machines.ts';
 import type { Spec } from './runs.ts';
@@ -13,14 +12,11 @@ export type Here = { root: string; spec: Spec };
 
 // Why no helper may take a run of this kind now, or null when one may: the kind isn't declared, or neither a lent
 // machine's helper of it nor this server's (where it takes the kind) is asking for work
-export async function noTakerNow(kindName: string) {
-  const machine: Machine = await api.getJson('runs/helper');
-  const only = !kindName && machine.kinds.length === 1 ? machine.kinds[0] : undefined;
-  const kind = machine.kinds.find(one => one.name === kindName) ?? only;
+export function noTakerNow(machineName: string, kind: Machine['kinds'][number] | undefined, kindName: string) {
   // (several kinds and none named: HQ's refusal says which there are)
   if (!kind) return kindName ? `HQ declares no ${kindName} kind of run` : null;
   if (kind.present) return null;
-  return kind.serverTakes ? `no helper of ${kind.name} is asking for work` : `${machine.name} isn't asking for work`;
+  return kind.serverTakes ? `no helper of ${kind.name} is asking for work` : `${machineName} isn't asking for work`;
 }
 
 // The command in this job, from the folder the run would start in, its files written in the tree itself. --minutes is a

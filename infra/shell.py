@@ -3,7 +3,9 @@
 does one of a fixed set of actions for a GitHub Actions run of this repo's own .github/workflows/overseer.yml on main,
 and answers with what it saw. The actions, and nothing else (the board chose a fixed set over free commands):
   status            the containers, memory, disk and the deploy's latest runs
-  logs <service>    a service's last lines (lines: up to 2000)
+  logs <service>    a service's last lines from the host journal (lines: up to 2000), across the containers compose
+                    replaced, of an interval when it names one (since, until), and what they cover: the first and last
+                    timestamps and whether a cap cut it
   restart <service> one service restarted
   deploy            the deploy now (sync.sh), so a fix or a revert pushed to main lands at once
   tests <file>      one of infra's own test files (infra/test_*.py, *.sh) from the server's checkout, on the server's
@@ -15,6 +17,8 @@ Installed by harden.sh as a systemd service, listening on Docker's bridge only, 
 python3 infra/shell.py serve | python3 infra/test_shell.py
 """
 import base64
+import collections
+import datetime
 import json
 import os
 import re
@@ -37,6 +41,14 @@ BODY_MAX = 4 * 1024
 NOBODY = ['setpriv', '--reuid=65534', '--regid=65534', '--clear-groups', '--',
           'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'LANG=C.UTF-8']
 TESTS = re.compile(r'test_[a-z0-9_]+\.(py|sh)')
+# A logs interval's end, in UTC to the microsecond, the journal's own precision
+INSTANT = re.compile(r'(?P<second>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(?P<fraction>\d{1,6}))?Z')
+JOURNALCTL = ['journalctl']
+# Every container logs to the host journal under its name (compose.yaml): compose makes it <project>-<service>-<n>, the
+# project being compose.yaml's folder, and gives it again to the one that replaces it (as app_errors.py reads them)
+PROJECT = 'infra'
+# A logs read: its service, the lines asked, and its interval's ends in microseconds since the epoch (None: open)
+Logs = collections.namedtuple('Logs', 'service lines since until')
 COMPOSE = ['docker', 'compose', '-f', 'infra/compose.yaml', '-f', 'infra/generated/products.yaml']
 # Key-shaped words never leave in the output (it lands in the workflow's log)
 KEYS = re.compile(r'\b(sk|rk|pk)_(live|test)_[A-Za-z0-9]{8,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}'
@@ -210,7 +222,7 @@ def tests():
 
 
 def commands(request, known=None, files=None):
-    """The command lines of the action a request names, or why it isn't one of the fixed set."""
+    """The command lines of the action a request names (for logs, a Logs read), or why it isn't one of the fixed set."""
     action, service, server = request.get('action'), request.get('service'), os.environ.get('SERVER_NAME', '')
     known, files = known or services, files or tests
     if action == 'status':
@@ -227,7 +239,13 @@ def commands(request, known=None, files=None):
         lines = request.get('lines', 300)
         if not isinstance(lines, int) or not 0 < lines <= LINES_MAX:
             return f'lines: 1 to {LINES_MAX}'
-        return [[*COMPOSE, 'logs', '--no-color', '--timestamps', '--tail', str(lines), service]]
+        try:
+            ends = {name: micros(INSTANT.fullmatch(request[name])) for name in ('since', 'until') if name in request}
+        except (TypeError, ValueError):   # not a string, not one's shape, or a date the calendar hasn't
+            return 'since, until: UTC timestamps, 2026-11-07T04:40:00Z'
+        if len(ends) == 2 and ends['since'] >= ends['until']:
+            return 'since: before until'
+        return Logs(service, lines, ends.get('since'), ends.get('until'))
     if action == 'tests':
         name = request.get('test')
         name = name.removeprefix('infra/') if isinstance(name, str) else name
@@ -252,6 +270,79 @@ def run(lines):
     return KEYS.sub('[a key, cut]', out[-OUTPUT_MAX:].decode('utf-8', 'replace')), code
 
 
+def read_logs(logs):
+    """A logs read within its caps, key-shaped words cut, with a line on what it covers, and its exit code. journalctl
+    gives the interval's last lines in the journal's order, one more than asked so the read knows whether the line cap
+    cut it. Both caps keep the latest, journalctl's stderr counted in the byte cap: the next piece ends where this starts."""
+    out, err, code = journal(logs)
+    rows = []
+    for line in out.split(b'\n')[:-1]:   # [:-1]: a stopped read's unfinished entry
+        entry = json.loads(line)
+        at = int(entry['__REALTIME_TIMESTAMP'])
+        # With until but no since, journalctl doesn't check until: given fewer lines before it than asked, it reads on
+        if logs.until is None or at <= logs.until:
+            row = f'{entry["CONTAINER_NAME"]} {entry["CONTAINER_ID"]} | {stamp(at)} {text(entry["MESSAGE"])}\n'
+            rows.append((at, row.encode()))
+    cuts = []
+    if len(rows) > logs.lines:
+        cuts.append(f'the {logs.lines}-line cap left out earlier lines')
+        rows = rows[-logs.lines:]
+    diagnostics = KEYS.sub('[a key, cut]', err.decode('utf-8', 'replace')).encode()   # before the cap splits a key
+    if len(diagnostics) > OUTPUT_MAX:
+        cuts.append(f'the {OUTPUT_MAX // 1024} KiB cap left out earlier diagnostics')
+        diagnostics = diagnostics[-OUTPUT_MAX:]
+    size = len(diagnostics) + sum(len(row) for _, row in rows)
+    if size > OUTPUT_MAX:
+        cuts.append(f'the {OUTPUT_MAX // 1024} KiB cap left out earlier lines')
+        while size > OUTPUT_MAX:   # whole lines, so the first kept keeps its timestamp
+            size -= len(rows.pop(0)[1])
+    if code == 124:
+        cuts.append(f'the {ACTION_S} s cap may have left out later lines')
+    said = f'{len(rows)} lines from {stamp(rows[0][0])} to {stamp(rows[-1][0])}' if rows else 'no lines'
+    shown = (b''.join(row for _, row in rows) + diagnostics).decode('utf-8', 'replace')
+    return KEYS.sub('[a key, cut]', shown) + f'\n(covers: {said}; {", ".join(cuts) or "no cap cut it"})\n', code
+
+
+def journal(logs):
+    """The host journal's JSON entries for a logs read, its stderr and its exit code. The service's containers are every
+    <project>-<service>-<n> the journal still has, so a read reaches past the containers compose replaced."""
+    look = {'cwd': os.environ.get('SHELL_CWD', '/'), 'capture_output': True, 'stdin': subprocess.DEVNULL}
+    try:
+        known = subprocess.run([*JOURNALCTL, '--field=CONTAINER_NAME'], timeout=60, **look)
+    except subprocess.TimeoutExpired as e:
+        return b'', e.stderr or b'', 124
+    container = re.compile(rf'{PROJECT}-{re.escape(logs.service)}-\d+')
+    names = [name for name in known.stdout.decode().split() if container.fullmatch(name)]
+    if not names:
+        return b'', known.stderr, known.returncode
+    ends = [f'--{name}=@{at // 10**6}.{at % 10**6:06}' for name, at in (('since', logs.since), ('until', logs.until))
+            if at is not None]
+    try:
+        done = subprocess.run([*JOURNALCTL, '--output=json', '--output-fields=CONTAINER_NAME,CONTAINER_ID,MESSAGE',
+                               '--all', '--no-pager', '--quiet', f'--lines={logs.lines + 1}', *ends,
+                               *[f'CONTAINER_NAME={name}' for name in names]], timeout=ACTION_S, **look)
+    except subprocess.TimeoutExpired as e:   # the entries it had sent, the earliest of those asked
+        return e.stdout or b'', e.stderr or b'', 124
+    return done.stdout, done.stderr, done.returncode
+
+
+def micros(found):
+    """A matched UTC timestamp in microseconds since the epoch."""
+    second = datetime.datetime.fromisoformat(found['second']).replace(tzinfo=datetime.timezone.utc)
+    return int(second.timestamp()) * 10**6 + int((found['fraction'] or '0').ljust(6, '0'))
+
+
+def stamp(at):
+    """Microseconds since the epoch as a UTC timestamp, as since and until take it."""
+    second = datetime.datetime.fromtimestamp(at // 10**6, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+    return f'{second}.{at % 10**6:06}Z'
+
+
+def text(message):
+    """A journal message: journalctl's JSON gives one that isn't plain text as its bytes."""
+    return bytes(message).decode('utf-8', 'replace') if isinstance(message, list) else message
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
@@ -273,14 +364,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.answer(403, f'refused: {why}')
         try:
             request = json.loads(self.rfile.read(size))
-            lines = commands(request)
+            plan = commands(request)
         except Exception:
             return self.answer(400, 'send {"action": "status" | "logs" | "restart" | "deploy" | "tests", "service": "...",'
                                     ' "test": "..."}')
-        if isinstance(lines, str):
-            return self.answer(400, lines)
+        if isinstance(plan, str):
+            return self.answer(400, plan)
         started = time.time()
-        output, code = run(lines)
+        output, code = read_logs(plan) if isinstance(plan, Logs) else run(plan)
         print(f'run {claims.get("run_id")} by {claims.get("actor")}: {request.get("action")}'
               f' {request.get("test" if request.get("action") == "tests" else "service") or ""}'
               f' exit {code} after {time.time() - started:.0f} s', flush=True)

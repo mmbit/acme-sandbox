@@ -97,7 +97,10 @@ take turns in one (one branch, the gates, push tests, documents check and previe
 its end, reading the branch merged with main). A call's follow-up, the board's notes, a sort of the inbox or the CEO's
 hourly check adds new work to the open deliverable whose feature it serves before it draws a new one; a new one is
 for a feature no open deliverable makes. Related work is one deliverable, and a feature whose pieces go live separately
-is a chain, each piece drawn needing the one before (`hq plan deliverable --needs`), so one merges at a time. That is
+is a chain, each piece drawn needing the one before (`hq plan deliverable --needs`), so one merges at a time. A change
+across the whole codebase (a rename, a move of many files) lands in one short sweep, drawn last and run with nothing
+else changing those files, or in stages that each merge on their own as a chain: never a long branch that main keeps
+moving under. That is
 the planner's judgment, in the words of `levels.ts` `RELATED_WORK` (the levels' deliverable line, the CEO's hourly
 check and a meeting's review): nothing counts or refuses deliverables running at once. A company's own review numbers go in its `levels.json` `thread` line, which every drawing
 prompt shows as guidance, never a cap. For an ETA, a deliverable's review is about one round when it's small (under about 200
@@ -173,7 +176,8 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every delivera
   and `hq plan unneed <deliverable> <deliverable>` add or take back a need (a loop is refused at any depth, across projects);
   `hq plan move <job> <place>` puts a task still to start in its place (1: next; tasks added later still come last);
   `hq plan drop <job> "why"` cancels a task that never started; `hq plan done <deliverable>` closes a deliverable whose goal is
-  met with nothing to merge, or whose work merged. Its tasks are queued with `hq job --deliverable`, as before; `hq job --deliverable new:<project>
+  met with nothing to merge, or whose work merged, and never while one of its tasks is still queued or at work, the
+  caller's own included. Its tasks are queued with `hq job --deliverable`, as before; `hq job --deliverable new:<project>
   "name" "done when"` draws the deliverable the same way first, refused before anything is written for anyone but the
   project's owner and the CEO (`newthread.ts`). A drawn deliverable is read back as
   the board reads it: its product, project, name and "done when", then the names of the project's other open deliverables.
@@ -259,12 +263,16 @@ is brought up to date onto the work that went first. Explicit dependencies betwe
   two share files (`threadorder.ts needsOpen`, `mergeorder.ts`), and the stuck one goes to its author at the stuck sweep
   (`review.ts stuckToAuthor`, once for each state it's stuck in). A task before it that failed with nothing in its
   place holds it when it was drawn before that failure, counting on its work; one drawn since (the next step, or a failed
-  task's redo queued without `--lands`) is the owner's call, made knowing it failed, and goes on. A replacement takes the failed task's place: a job queued with `--lands`, or for a stopped task the one job its agent queued in the deliverable since it started, whether that job came before the stop or after it (`takeover.ts stopFor`, `placeQueued`). A replacement of a task still being stopped waits behind that task in the deliverable's order until its run ends. Where the agent queued several jobs there, `hq stop`'s and `hq job`'s answers name them, and `hq stop <task> "why" --for <job>` says which one takes the place. A failed task whose branch has an open pull
+  task's redo queued without `--lands`) is the owner's call, made knowing it failed, and goes on. A replacement takes the failed task's place: a job queued with `--lands`, or for a stopped task the one job its agent queued in the deliverable since it started, whether that job came before the stop or after it (`takeover.ts stopFor`, `placeQueued`). A replacement of a task still being stopped waits behind that task in the deliverable's order until its run ends. Where the agent queued several jobs there, `hq stop`'s and `hq job`'s answers name them, and `hq stop <task> "why" --for <job>` says which one takes the place. Jobs queued after the replaced task or on its deploy wait for its replacement instead (`jobs.ts standsIn`, `wakes.ts prOf`), and a cancelled replacement hands them back. A task whose push never reached its branch keeps its commits only on the mirror's `refs/outgoing/<branch>`: HQ queues its landing itself, once, and its deliverable isn't judged until that work is on a branch (`savedwork.ts landSaved`). A failed or stopped task with pushed work on its branch, unmerged, holds what waits on it while its deliverable is open. A failed task whose branch has an open pull
   request (open, stuck or with the board) holds nothing, since the deliverable's later tasks still push there (`jobs.ts`
   `failedAside`); once that pull request merges or closes, the failed task again holds the tasks drawn before it failed and the deliverable stays
-  open. A task waiting for a time still to come
-  (`hq job --when`) holds nothing: until then the tasks after it that haven't started go first, and once it's due it
-  follows those that did (`inTurn`). The claim and the play read both as edges of
+  open. A task held by a wait of its own (a time still to come with `hq job --when`, a card, another job, an event:
+  `jobs.ts OWN_WAIT`) holds nothing: until it's met the tasks after it that haven't started go first, and once it's met
+  it follows those that did (`inTurn`). Only a task that needs one before it keeps its place behind it: queued `--after`
+  that task (in its own deliverable, `--after` is the order, never a merge wait), it waits for it, and with it for
+  whatever holds it. `hq job`'s answer, `hq deliverable` and `hq plan` say a task's turn: what it follows or needs, and
+  the held tasks it goes ahead of (`turnwords.ts`). The claim and the
+  play read both as edges of
   `planner.ts` precedence (`follows`, until done; `needs`, until merged), which `backlog.ts` puts on the queue; a deliverable
   edge closing a loop with jobs' own waits is dropped and its task stalls saying so. A drawn deliverable with no task yet
   plays as one placeholder of its owner's, sized on its name and "done when" (`predictions.ts prepared`); while a window
@@ -297,7 +305,9 @@ is brought up to date onto the work that went first. Explicit dependencies betwe
   push opens the deliverable's next pull request.
 - **Its release.** A deliverable is one pull request, so no task in it waits for that pull request to merge
   (`threadrelease.ts`). `hq job --when deployed:` on the deliverable's own work (one of its tasks, the queuing one included,
-  or its pull request) puts the job in HQ's one-task wrapper in the same project, and the answer says so. A task that
+  or its pull request), or on the deliverable itself or its milestone (`deployed:<project>/<slug>`, `deployed:<project>`),
+  puts the job in HQ's one-task wrapper in the same project, and the answer says so. A job waiting for a whole milestone
+  or deliverable leaves its own deliverable out of it, or it would wait for itself. A task that
   gets into the deliverable waiting for its release anyway (moved or drawn in) runs after the merge, on a branch of its own.
 - **Profile lines** go to main at each task's end on `profile/<the task's id>`, a branch the worker makes from main with
   only the agent's own profile and archive lines, which merges unreviewed as records do. The branch on origin is what was
@@ -409,8 +419,8 @@ A hold on a line of work ("no game work until the projects view is back") is sta
 must wait on a condition (something from the board, a decision it has to make, a hold it asked for), never to put other
 work first: that is a window, and the scheduler makes room by itself (board, call 169). A hold is
 `hq project pause <project> "why"` or `hq deliverable pause <project>/<slug> "why"`, by the CEO or the project's owner, with
-what wakes them to judge it: `--until <job>` for each job it waits for, `--until-time <time>`, or `--by-hand` (nothing
-does). One naming none of them is refused. It lives in HQ's db (`pauses.ts`), not in `projects.yaml`, so it holds the
+what wakes them to judge it: `--until <project>` for a whole milestone it waits for (`<project>/<slug>` for one
+deliverable), `--until <job>` for one job, `--until-time <time>`, or `--by-hand` (nothing does). One naming none of them is refused. It lives in HQ's db (`pauses.ts`), not in `projects.yaml`, so it holds the
 moment it's made. While it stands, the claim starts nothing queued on the deliverable, or on any deliverable of the project: no
 work, and no review, ruling or fix of its pull requests, which wait in review until it lifts. Work already running yields at its next step,
 as it does to the scheduler's room, and goes on in its session once the pause lifts; the run that made the pause runs on
@@ -432,8 +442,9 @@ sort it never lets start. The play reads a job waiting for its sort as starting 
 refuses to move work off any pause.
 
 Nothing lifts a pause by itself (board, 25 Oct): what it waits for wakes its owner, who judges. Once its
-`--until-time` has come and every `--until` job has merged or ended (closed with its commits on main, closed unmerged,
-failed, cancelled, or done with nothing to merge), HQ queues its owner a job (the CEO for one carrying the board's
+`--until-time` has come, every `--until` job has merged or ended (closed with its commits on main, closed unmerged,
+failed, cancelled, or done with nothing to merge) and every `--until` milestone or deliverable is live, all at once,
+HQ queues its owner a job (the CEO for one carrying the board's
 item), `pausewake.ts`: the pause's why, what was met, and each job's report and whether its work is on main. That job
 is never held by a pause or the company's pause, and runs as soon as it can, which pacing lets through. The owner
 lifts it (`hq project resume` or `hq deliverable resume`), takes the results to the board, or keeps it on for what's still
@@ -442,13 +453,16 @@ conditions, and they wake the owner afresh. No pause holds the CEO's hourly chec
 `made.checks` draws it in a project a hold may pause: it is what judges the holds. The CEO's hourly check flags a pause whose waited-on work ended, or whose
 woken owner left it on with nothing to wake them again, as off track that hour. Only the CEO resumes a pause the CEO
 made or one carrying the board's item; a pause for the board's decision ends with the board's answer on its card. A pause can't wait for a job on what it pauses, or for one that needs work there first (its after,
-its waits, another pause's `--until`, at any depth), which it would hold for good. A later `hq waits` change that would
+its waits, another pause's `--until`, at any depth), which it would hold for good. The same goes for a milestone or
+deliverable: not one the pause holds, nor one whose open work needs work it holds. A deliverable's pause leaves that
+deliverable out of its milestone, as its own pause does, so it can wait for the rest of its milestone. A later `hq waits` change that would
 close such a loop is refused too. A job meant to end before a pause is judged goes in a deliverable outside it.
 
 A hold the board agrees on a call is recorded as the pause, and its item linked to it:
 `hq item link <item> pause:<project or deliverable>` (a decision already handled goes on it as it is). The follow-through
 read then shows the board's words beside the pause. A task or promise it carries stays on the hourly check while the
-pause holds, and after a resume by hand until the jobs the pause waited for are merged.
+pause holds, and after a resume by hand until the jobs the pause waited for are merged and the milestones and
+deliverables it waited for have nothing open.
 
 ## Urgent work
 
@@ -469,6 +483,8 @@ pause` comes before `hq deliverable pause`, whose answer counts the deliverables
 work is ready waits for the whole milestone with `hq ask --when deployed:<project>`: every deliverable of it open
 then or filed later is done and its last merge deployed, but one its own pause keeps out. A card held on jobs instead
 names the milestones whose later work doesn't hold it.
+A pause wakes its owner on the whole milestone the same way (`hq project pause ... --until <project>`), and a job
+starts once one is live with `hq job --when deployed:<project>` (`whole.ts`).
 The plan gives expedited work the finish it gets live: its work, which ends with its push's checks, then the deploy.
 Its review follows the merge, so no round stands before it. A push that went to review instead (its checks failed,
 or it changes its own checks or what HQ shows the board) has its round before its merge, as any other.

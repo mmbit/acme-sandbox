@@ -92,7 +92,12 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
 
   const accepted = await h.hq(wren, 'inbox', 'accept', id);
   assert.equal(accepted.code, 0, accepted.out);
-  const job = Number(/^Queued as job #(\d+) T[A-Z]+, in game\/levels\.$/m.exec(accepted.out)![1]);
+  // (in a deliverable of its own, never its proposer's job's game/levels)
+  const job = Number(
+    /^Queued as job #(\d+) T[A-Z]+, in a deliverable of its own, game\/job-\1, done when it's merged\.$/m.exec(
+      accepted.out,
+    )![1],
+  );
   const row = db.prepare('select agent, title, prompt, queued_by, thread from jobs where id = ?').get(job) as any;
   assert.deepEqual(
     { ...row, prompt: undefined },
@@ -101,7 +106,7 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
       title: 'A level select screen',
       prompt: undefined,
       queued_by: 'bolt',
-      thread: 'game/levels',
+      thread: `game/job-${job}`,
     },
   );
   assert.match(row.prompt, /\n\n\(Proposed by bolt, accepted by wren\.\)$/);
@@ -109,10 +114,7 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
   assert.deepEqual([saved.by, saved.agent_minutes], ['wren', 30]);
   assert.match((await h.hq(bolt, 'inbox')).out, new RegExp(`: accepted as job #${job}$`, 'm'));
   assert.equal((await h.hq(wren, 'inbox', 'accept', id)).code, 1, 'once');
-  const logged = db
-    .prepare("select what, by from plan_changes where thread = 'game/levels' order by id desc limit 1")
-    .get();
-  assert.deepEqual({ ...(logged as object) }, { what: `task #${job} added: A level select screen`, by: 'wren' });
+  assert.equal(projects.findThread(`game/job-${job}`)!.name, 'A level select screen');
   const drawn = await h.agent('proposals/accept', wren.token, {
     id: second.body.id,
     newThread: { project: 'game', name: 'Boss rush', goal: 'Every boss plays' },
@@ -126,6 +128,43 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
       ['deliverable drawn: Boss rush', 'wren'],
       ['needs game/levels', 'wren'],
       ['task #' + drawn.body.job + ' added: A boss rush', 'wren'],
+    ],
+  );
+});
+
+test("work proposed from a fix round on an open pull request gets a deliverable of its own once accepted, never that pull request's; one proposed into a deliverable goes there", async () => {
+  levels();
+  const world = await h.start({ agent: 'bolt', title: 'The first world', thread: 'game/levels' });
+  assert.equal((await h.finish(world, { status: 'done', pr: 500, branch: 'job/500', sha: 'abc' })).status, 200);
+  const fixing = await h.start({
+    agent: 'bolt',
+    title: 'Review follow-ups: the first world',
+    thread: 'game/levels',
+    branch: 'job/500',
+    pr: 500,
+  });
+  const beyond = await h.hq(fixing, 'propose', 'A level select screen', brief);
+  const into = await h.hq(fixing, 'propose', 'A world map', brief, '--deliverable', 'game/levels');
+  assert.equal(beyond.code + into.code, 0, beyond.out + into.out);
+  const [first, second] = (db.prepare('select id from proposals order by id').all() as { id: number }[]).map(p => p.id);
+  const wren = await h.start({ agent: 'wren', title: 'Your plan' });
+  const own = await h.hq(wren, 'inbox', 'accept', String(first));
+  assert.equal(own.code, 0, own.out);
+  const job = Number(/^Queued as job #(\d+) /.exec(own.out)![1]);
+  assert.match(own.out, new RegExp(`, in a deliverable of its own, game/job-${job}, done when it's merged\\.\n`));
+  const thread = projects.findThread(`game/job-${job}`)!;
+  assert.deepEqual([thread.status, thread.name, thread.branch ?? null], ['open', 'A level select screen', null]);
+  assert.deepEqual(projects.needsOf(thread.id), [], "it waits on no one's pull request");
+  const placed = await h.hq(wren, 'inbox', 'accept', String(second));
+  assert.equal(placed.code, 0, placed.out);
+  assert.match(placed.out, /, in game\/levels, the deliverable it was proposed into\.\n/);
+  assert.deepEqual(
+    queuedWork()
+      .filter(j => j.agent === 'bolt')
+      .map(j => [j.title, j.thread]),
+    [
+      ['A level select screen', `game/job-${job}`],
+      ['A world map', 'game/levels'],
     ],
   );
 });

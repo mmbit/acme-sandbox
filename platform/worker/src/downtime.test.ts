@@ -1,7 +1,7 @@
 // node --test src/downtime.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkDue, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, drainPauses, drainUntil, firstToWake, healthiest, heard, inTurn, limitsReading, lineSeat, readDue, reportedUntil, sleepUntil, DRAIN_RECHECK, type Asked } from './downtime.ts';
+import { checkDue, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, drainPauses, drainUntil, firstToWake, healthiest, heard, inTurn, limitsReading, lineSeat, readDue, reportedUntil, sleepUntil, takeRead, DRAIN_RECHECK, type Asked } from './downtime.ts';
 import { drainLevel, drainLifts, paceChange, pacedUntil, paceTo, reserveElsewhere, windowUsed } from './pace.ts';
 import { limitReset } from './outcome.ts';
 
@@ -338,6 +338,38 @@ sleep 60
     assert.equal(await codexLimits(who, 500), undefined, 'nor is no answer in time');
     assert.equal(await codexLimits({ env: { PATH: '/nonexistent' } }, 500), undefined, 'nor no codex');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a ready Codex seat recovers its missing reading without starting a job', () => {
+  const seat = {
+    engine: 'codex',
+    state: 'ready',
+    until: 0,
+    resets: 0,
+    weekResets: 0,
+    checked: 0,
+    measured: undefined as number | undefined,
+    readFailed: false,
+  };
+  assert.equal(readDue(seat, NOW), true);
+  seat.checked = NOW;
+  takeRead(seat, undefined);
+  assert.equal(readDue(seat, NOW + HOUR_MS - 1), false);
+  assert.equal(readDue(seat, NOW + HOUR_MS), true);
+  const reading = limitsReading(
+    {
+      rateLimits: {
+        primary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: (NOW + 24 * HOUR_MS) / 1000 },
+      },
+    },
+    NOW + HOUR_MS,
+  )!;
+  takeRead(seat, reading);
+  assert.equal(readDue(seat, NOW + 2 * HOUR_MS), false, 'a weekly-only plan is a complete reading');
+  assert.equal(readDue({ ...seat, measured: undefined, engine: 'claude' }, NOW + 2 * HOUR_MS), false);
+  assert.equal(readDue({ ...seat, measured: undefined, cli: 'vibe' }, NOW + 2 * HOUR_MS), false);
+  assert.equal(readDue({ ...seat, measured: undefined, signIn: 'key' }, NOW + 2 * HOUR_MS), false);
+  assert.equal(readDue({ ...seat, measured: undefined, state: 'login' }, NOW + 2 * HOUR_MS), false);
 });
 
 test("the account's read as a reading: its windows and credits as of now, as a session log's line gives them", () => {

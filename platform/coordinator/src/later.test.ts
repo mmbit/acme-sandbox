@@ -2,7 +2,7 @@
 // off the desk phone until a day, then it shows as a new card; the real hq)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { harness } from './harness.ts';
 import { parkedRequest } from '../../worker/src/outcome.ts';
@@ -256,9 +256,9 @@ test("a card from a call's work is held until that work is merged and deployed, 
 
   // lark's work merges, then deploys: its card shows, first and new. Moss's job ends with no pull request: its card shows.
   assert.deepEqual(later.sweep(), []);
-  const afterLark = merge(771, lark.id, 'lark');
+  const afterLark = h.merged(771, lark.id, 'lark');
   assert.deepEqual(later.sweep(), [], 'merged, not deployed yet');
-  deploy('lark', afterLark);
+  h.deployed('lark', afterLark);
   assert.deepEqual(later.sweep(), [plan]);
   assert.equal((await titles())[0], 'Plan: go?');
   assert.equal((await titles()).includes('Moss: which?'), false);
@@ -298,9 +298,9 @@ test("a follow-up's card about work it handed out (--when deployed:<job>) is hel
     (await h.hq(await running('juno'), 'requests', String(plan))).out,
     new RegExp(`held: off the desk phone until the work of #${restructure} is live`),
   );
-  const afterRestructure = merge(772, restructure, 'kit');
+  const afterRestructure = h.merged(772, restructure, 'kit');
   assert.deepEqual(later.sweep(), [], 'merged, not deployed yet');
-  deploy('restructure', afterRestructure);
+  h.deployed('restructure', afterRestructure);
   assert.deepEqual(later.sweep(), [plan]);
   assert.equal((await titles())[0], 'The plan: go?');
 });
@@ -331,7 +331,7 @@ test("a card held on a thread's first task stays held when that task ends, and g
   threadends.merged(773);
   const afterThread = new Date(merged + 1000).toISOString();
   assert.deepEqual(later.sweep(), [], 'merged, not deployed yet');
-  deploy('thread', afterThread);
+  h.deployed('thread', afterThread);
   assert.deepEqual(later.sweep(), [post]);
   assert.equal((await titles())[0], 'The post: go?');
 });
@@ -366,10 +366,10 @@ test('a card held for the whole milestone (--when deployed:<project>) waits for 
   );
 
   await h.finish(book, { status: 'done', branch: `job/${book.id}`, sha: 'd'.repeat(40) });
-  const afterBooks = merge(774, book.id, 'kit');
+  const afterBooks = h.merged(774, book.id, 'kit');
   threadends.close(projects.findThread(books)!);
   const fitted = draw('fitted', 'Fitted'); // filed after the card
-  deploy('books', afterBooks);
+  h.deployed('books', afterBooks);
   assert.deepEqual(later.sweep(), [booksCard], 'the piece is live; the milestone has work filed since');
   threadends.close(projects.findThread(fitted)!);
   assert.deepEqual(later.sweep(), [shelfCard], 'all of it is in and live but the paused tips');
@@ -441,25 +441,46 @@ test("a job's cards, and the one it's blocked on, say whether they're on the des
   assert.equal((await listed(lark.id)).request_shown, null, 'a job with no card of its own');
 });
 
-// After every deploy so far, as main only moves on: an earlier test's deploy, fetched a second ahead, never counts as
-// this merge going live
-function merge(pr: number, job: number, author: string) {
-  const last = (db.prepare('select max(fetched) at from deploys').get() as { at: string | null }).at;
-  const merged = new Date(Math.max(Date.now(), last ? Date.parse(last) + 1 : 0)).toISOString();
-  db.prepare("insert into prs (number, branch, author, status, merged_at) values (?, ?, ?, 'merged', ?)").run(
-    pr,
-    `job/${job}`,
-    author,
-    merged,
-  );
-  return new Date(Date.parse(merged) + 1000).toISOString();
-}
+test("a card held on two whole milestones goes only once both are live at once, and a kept-out deliverable's merge never holds it", async () => {
+  const projects = await import('./projects.ts');
+  const threadends = await import('./threadends.ts');
+  const juno = await running('juno');
+  for (const [id, name, code] of [
+    ['aisle', 'The aisle', 'AIS'],
+    ['bay', 'The bay', 'BAY'],
+  ]) {
+    const made = await h.hq(juno, 'project', 'new', id, name, '--code', code, '--owner', 'juno');
+    assert.equal(made.code, 0, made.out);
+  }
+  const draw = (project: string, slug: string) => {
+    assert.notEqual(typeof projects.createThread({ project, slug, name: slug, goal: 'It ships' }), 'string');
+    return `${project}/${slug}`;
+  };
+  const [rows, kept, docks] = [draw('aisle', 'rows'), draw('aisle', 'kept'), draw('bay', 'docks')];
+  const paused = await h.hq(juno, 'deliverable', 'pause', kept, 'The board wants it held', '--by-hand');
+  assert.equal(paused.code, 0, paused.out);
+  const wren = await running('wren');
+  const ask = async (title: string, ...when: string[]) => {
+    const asked = await h.hq(wren, 'ask', 'decision', 'today', title, body('Go?'), '--topic', 'aisle', ...when);
+    assert.equal(asked.code, 0, asked.out);
+    return (db.prepare('select id from requests where title = ?').get(title) as { id: number }).id;
+  };
+  const aisleCard = await ask('The aisle: ready?', '--when', 'deployed:aisle');
+  const bothCard = await ask('Both: ready?', '--when', 'deployed:aisle', '--when', 'deployed:bay');
+  const sweep = () => later.sweep().filter(id => [aisleCard, bothCard].includes(id)); // earlier tests' cards aside
 
-function deploy(name: string, fetched: string) {
-  const deploys = `${h.dataDir}/deploys`;
-  mkdirSync(deploys, { recursive: true });
-  writeFileSync(
-    `${deploys}/${name}.json`,
-    JSON.stringify({ sha: 'cccc777', fetched, finished: new Date().toISOString(), ok: true, services: [] }),
-  );
-}
+  const row = await h.start({ agent: 'kit', thread: rows });
+  await h.finish(row, { status: 'done', branch: `job/${row.id}`, sha: 'd'.repeat(40) });
+  const afterRows = h.merged(791, row.id, 'kit');
+  threadends.close(projects.findThread(rows)!);
+  h.deployed('rows', afterRows);
+  const keep = h.queue({ agent: 'kit', thread: kept }); // its pause holds it, merged or not
+  h.merged(792, keep, 'kit');
+  assert.deepEqual(sweep(), [aisleCard], "the aisle is live: the kept-out deliverable's later merge isn't its");
+
+  const more = draw('aisle', 'more'); // filed in the aisle after it was live
+  threadends.close(projects.findThread(docks)!);
+  assert.deepEqual(sweep(), [], 'the bay is live, but the aisle has open work again');
+  threadends.close(projects.findThread(more)!);
+  assert.deepEqual(sweep(), [bothCard], 'both are live at once');
+});

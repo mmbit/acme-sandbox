@@ -1849,8 +1849,6 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
 });
 
 test("a follow-up that isn't the CEO's links a timed promise to the call's work in no open thread by naming an open one", async () => {
-  const projects = await import('./projects.ts');
-  const plan = await import('./plan.ts');
   const threadOf = (job: number) => job && (db.prepare('select thread from jobs where id = ?').get(job) as any).thread;
   const timeOf = (thread: string) => ({ ...(db.prepare('select deadline, deadline_by from threads where id = ?').get(thread) as any) });
   const c = await aCall('kit', ['Board: Can you get the menu card made?', 'Kit: Bolt has it done by tonight.']);
@@ -1881,7 +1879,8 @@ test("a follow-up that isn't the CEO's links a timed promise to the call's work 
   // work on a thread that's done: moved to the open one named, the same job (nothing queued again), and the time goes there
   const old = h.dueThread();
   const left = jobs.createJob({ agent: 'bolt', title: 'The wine list', prompt: 'x', queuedBy: 'kit', thread: old }).id;
-  assert.deepEqual(plan.done(old, 'juno'), { ok: true });
+  // (closed by the fixture: plan.done waits for the job queued on it)
+  h.closedThreads(old);
   const wine = await promise('The wine list by tonight');
   assert.match((await agent('item-link', t, { id: wine, to: { job: left } })).body.error, new RegExp(`${old} is done`));
   const lists = h.dueThread();
@@ -1904,7 +1903,7 @@ test("a follow-up that isn't the CEO's links a timed promise to the call's work 
   const handed = await agent('job', t, { agent: 'bolt', title: 'The salads', prompt: 'Make it.', item: salads, thread: first });
   h.storedProjectOwner('due', 'juno');
   assert.equal(handed.status, 200, JSON.stringify(handed.body));
-  assert.deepEqual(plan.done(first, 'juno'), { ok: true });
+  h.closedThreads(first);
   const untimed = h.dueThread();
   const relinked = await agent('item-link', t, { id: salads, to: { job: handed.body.id }, thread: untimed });
   assert.equal(relinked.status, 200, JSON.stringify(relinked.body));

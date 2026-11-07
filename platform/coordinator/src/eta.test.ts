@@ -202,7 +202,7 @@ test('the play and claim put windowed work before older unwindowed work', async 
   clear();
 });
 
-test('deadline work waits for pacing in both the forecast and live claim until urgent or expedited', async () => {
+test('a paced seat forecasts ordinary work immediately while urgency bypasses occupied pacing places', async () => {
   const reset = T0 + 48 * HOUR;
   await seat({ week: 0.8, weekResets: reset, pace: true });
   const thread = h.dueThread({ deadline: T0 + 2 * HOUR });
@@ -216,7 +216,7 @@ test('deadline work waits for pacing in both the forecast and live claim until u
   });
   await reportCapacity();
   const start = predictions.outlook(T0).get(deadline)!.start!;
-  assert.ok(start > T0 + 24 * HOUR && start < reset, 'deadline and board origin do not bypass pacing');
+  assert.equal(start, T0, 'an idle paced seat admits deadline work at its lower rate');
   assert.equal(await h.claim('claude', { seat: 'claude-a', pacedUntil: reset }), null);
   // (expedited work counts as urgent: it starts on the paced seat, the board's call 118)
   const expedited = h.queue({ agent: 'kit', title: 'Expedited repair', engine: 'claude', expedite: true });

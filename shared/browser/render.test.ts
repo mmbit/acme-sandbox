@@ -7,13 +7,14 @@ import { dirname, join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { clone, playedHq } from '../gates/fixture.ts';
-import { supervise } from './supervise.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 // The browser slot these tests take, hold and wait for is a lock file of their own, never the machine's (supervise.ts):
-// one they left held blocks nothing but themselves. Every supervisor they start, in this process or a child, reads it.
+// one they left held blocks nothing but themselves. Every supervisor they start, in this process or a child, reads it,
+// so it is set before supervise.ts is imported.
 const slot = join(mkdtempSync(join(tmpdir(), 'render-slot-')), 'lock');
 process.env.HQ_RENDER_SLOT = slot;
+const { supervise } = await import('./supervise.ts');
 const noHelper = { HQ_URL: '', HQ_TOKEN: '', HQ_RENDER_CHILD: '' };
 const fixture = `
 import '../../platform/hq/harness.mjs';
@@ -92,32 +93,45 @@ test('independent harness runs use one worker render slot when the helper is abs
     assert.equal(JSON.parse(readFileSync(join(scratch, name, 'facts.json'), 'utf8')).kind, 'local');
 });
 
-test('a helper render gets the dirty snapshot and chosen base, returns binary files and provenance, and keeps its failure final', async () => {
+// (97 is also the exit of a repo the helper couldn't set up, which says so last: a render's own 97 stays its result.
+for (const exit of [7, 97])
+  test(`a helper render gets the dirty snapshot and chosen base, returns binary files and provenance, and keeps its failure (${exit}) final`, async () => {
+    const { dir } = repository();
+    writeFileSync(join(dir, 'subject.txt'), 'uncommitted');
+    const output = join(dir, 'pictures with spaces');
+    const env = await playedHq(
+      [
+        { state: 'waiting', machine: 'attic' },
+        { state: 'done', machine: 'attic' },
+      ],
+      {
+        HELPER_ENV: JSON.stringify({ RENDER_EXIT: String(exit) }),
+        HELPER_TAKE_MINUTES: '0',
+      },
+    );
+    const ran = await run(dir, ['--ref', 'main', '--record', 'record.md', '--out', output], env);
+    assert.equal(ran.code, exit, ran.output);
+    const facts = JSON.parse(readFileSync(join(output, 'facts.json'), 'utf8'));
+    assert.equal(facts.kind, 'render');
+    assert.equal(facts.text, 'uncommitted');
+    assert.equal(facts.base, 'base');
+    assert.equal(facts.source.branch, 'work');
+    assert.equal(facts.source.dirty, true);
+    assert.equal(facts.source.ref, 'main');
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'record.md'), 'utf8')), facts.source);
+    assert.deepEqual(readFileSync(join(output, 'shot.png')), Buffer.from([137, 80, 78, 71, 0, 255, 254]));
+    assert.doesNotMatch(ran.output, /queued on this worker/);
+  });
+
+test("a render whose repo the helper couldn't set up runs here", async () => {
   const { dir } = repository();
-  writeFileSync(join(dir, 'subject.txt'), 'uncommitted');
-  const output = join(dir, 'pictures with spaces');
-  const env = await playedHq(
-    [
-      { state: 'waiting', machine: 'attic' },
-      { state: 'done', machine: 'attic' },
-    ],
-    {
-      HELPER_ENV: JSON.stringify({ RENDER_EXIT: '7' }),
-      HELPER_TAKE_MINUTES: '0',
-    },
-  );
-  const ran = await run(dir, ['--ref', 'main', '--record', 'record.md', '--out', output], env);
-  assert.equal(ran.code, 7, ran.output);
-  const facts = JSON.parse(readFileSync(join(output, 'facts.json'), 'utf8'));
-  assert.equal(facts.kind, 'render');
-  assert.equal(facts.text, 'uncommitted');
-  assert.equal(facts.base, 'base');
-  assert.equal(facts.source.branch, 'work');
-  assert.equal(facts.source.dirty, true);
-  assert.equal(facts.source.ref, 'main');
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'record.md'), 'utf8')), facts.source);
-  assert.deepEqual(readFileSync(join(output, 'shot.png')), Buffer.from([137, 80, 78, 71, 0, 255, 254]));
-  assert.doesNotMatch(ran.output, /queued on this worker/);
+  const output = join(dir, 'pictures');
+  // (git on this helper can't read its configuration, so no repo is set up from the bundle)
+  const env = await playedHq(undefined, { HELPER_ENV: JSON.stringify({ GIT_CONFIG_PARAMETERS: 'bogus' }) });
+  const ran = await run(dir, ['--ref', 'main', '--out', output], env);
+  assert.equal(ran.code, 0, ran.output);
+  assert.match(ran.output, /its repo couldn't be set up on attic/);
+  assert.equal(JSON.parse(readFileSync(join(output, 'facts.json'), 'utf8')).kind, 'local');
 });
 
 test('an away helper goes straight to the worker queue', async () => {

@@ -130,8 +130,9 @@ async function onHelper(): Promise<number | undefined> {
     bring: [OUTCOMES_FILE],
     ...bundleFor(change.runs),
     limitIsResult: true,
-    // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not; with none
-    // there for the take window, they stop, and the worker runs them here.)
+    // (A helper of the kind that's there is waited for, busy with other pushes' tests or not. With none there they stop
+    // at once when the kind has a whenAway line, or once none is back within the take window. The worker then runs them
+    // here.)
     waitWhilePresent: true,
     fallback: false,
   });

@@ -78,7 +78,7 @@ export function expandRows<T extends OrderingSnapshot>(snapshot: T, keepLoops = 
       row.dependencies.push(
         ...dependencies
           .filter(job => job !== id)
-          .map(job => ({ job, until: 'done' as const, internal: true as const })),
+          .map(job => ({ job, until: 'done' as const, ownReview: true as const })),
       );
     }
     let endpoint = owner.reviewPlan.terminal ? stageIds.get(owner.reviewPlan.terminal)! : null;
@@ -118,12 +118,14 @@ function holdEndpoints(expansion: Expansion, nextId: number) {
 
 function mapTerminal(owner: QueuedJob, terminal: number, jobs: QueuedJob[], terminals: Map<number, number>) {
   terminals.set(owner.id, terminal);
-  const pr = owner.reviewPlan?.pr ?? owner.review?.pr ?? owner.pr;
+  const pr = pullRequestOf(owner);
   if (pr !== null)
-    for (const row of jobs)
-      if (row.kind === 'work' && (row.reviewPlan?.pr ?? row.review?.pr ?? row.pr) === pr)
-        terminals.set(row.id, terminal);
+    for (const row of jobs) if (row.kind === 'work' && pullRequestOf(row) === pr) terminals.set(row.id, terminal);
 }
+
+// The pull request a row merges through: its review plan's (its branch's, before it has pushed), else its review's,
+// else its own.
+const pullRequestOf = (job: QueuedJob) => job.reviewPlan?.pr ?? job.review?.pr ?? job.pr;
 
 function pendingResolution(owner: QueuedJob, id: number) {
   const stage: ReviewStage = {
@@ -137,9 +139,10 @@ function pendingResolution(owner: QueuedJob, id: number) {
   };
   const pending = synthetic(owner, stage, id);
   pending.kind = 'resolution';
-  pending.dependencies.push({ job: owner.id, until: 'done', internal: true });
+  pending.dependencies.push({ job: owner.id, until: 'done', ownReview: true });
   const { resolutionAt, resolutionAfter, waiting } = owner.reviewPlan!;
-  if (resolutionAfter !== undefined) pending.dependencies.push({ job: resolutionAfter, until: 'done' });
+  if (resolutionAfter !== undefined)
+    pending.dependencies.push({ job: resolutionAfter, until: 'done', ownReview: true });
   else if (resolutionAt !== undefined) pending.notBefore = resolutionAt;
   else pending.reasons.push({ on: 'stalled', why: waiting ?? 'Its pull request awaits resolution' });
   return pending;
@@ -160,7 +163,7 @@ function heldMerge(owner: QueuedJob, id: number, prior: number) {
     id,
   );
   pending.kind = 'resolution';
-  pending.dependencies.push({ job: prior, until: 'done', internal: true });
+  pending.dependencies.push({ job: prior, until: 'done', ownReview: true });
   const hold = owner.mergeHold!;
   if (hold.job !== null) {
     pending.dependencies.push({ job: hold.job, until: 'merged' });

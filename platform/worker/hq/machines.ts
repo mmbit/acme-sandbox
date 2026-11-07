@@ -44,13 +44,18 @@ export type Machine = {
     image: string;
     gpus: boolean;
     lentOnly: boolean;
+    // why no run of it is taken now, as no helper that may take it is there, and what to do instead
+    unavailable?: string;
     checkout: boolean;
     browsers: boolean;
+    tools: boolean;
     server: Presence;
     serverTakes: boolean;
     // the work this kind holds in the queue until a lent machine has finished a run of it, in a line ('' for none)
     holds: string;
   })[];
+  // the kind a run that names none is of (null: it must name one).
+  impliedKind?: string | null;
   leftOut: { name: string; why: string }[];
   // the install command (without a machine's key) and the one that takes it all away again
   install: string;
@@ -93,11 +98,7 @@ export async function showHelper() {
       ? [`A machine's runs hold ${machine.machineMemoryGb} GB at most together: one that would pass it waits.`]
       : []),
   );
-  for (const kind of machine.kinds)
-    print(
-      '',
-      `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''})`,
-    );
+  for (const kind of machine.kinds) print('', kindLine(kind));
   if (!machine.kinds.length) return;
   print(
     '',
@@ -119,6 +120,12 @@ function hostLine({ cores, threads, memoryGb }: NonNullable<Machine['machines'][
   const cpus =
     cores === threads ? `${cores} cores` : cores ? `${cores} cores, ${threads} threads` : `${threads} threads`;
   return `${cpus} and ${memoryGb} GB`;
+}
+
+// (tools)
+function kindLine(kind: Machine['kinds'][number]) {
+  const brings = `${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''}${kind.tools ? ", the worker's infrastructure tools" : ''}`;
+  return `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${brings})`;
 }
 
 function managerLine({ manager }: Machine['machines'][number]) {

@@ -27,6 +27,8 @@ assert.deepEqual(errors, []);
   opened and fails with an error whose `stalled` is true, so the next case can run.
 - `listenTo(page)` puts an analyser on the page's `window.sfx` output and returns `level()`, the loudest RMS over the
   next 400 ms in dBFS, to await beside what makes a sound: `const [, on] = await Promise.all([tap(page, s), level()])`.
+- `screensIn(file)` (`screens.mjs`) gives the screens a check measures on: the company's `company/screens.json`, or a
+  generic phone and tablet both ways, laptop and QHD monitor when it has none.
 
 `shared/demo/core.mjs` hands on the same `playwright()`.
 
@@ -86,8 +88,9 @@ shared `/run/lock` directory. Every job and checkout uses that same inode, acros
 lock until its render and all descendants have stopped. No lock file can go stale or be removed by job cleanup.
 Nothing but a render's supervisor takes it: a test gives the supervisor a lock file of its own in `HQ_RENDER_SLOT`
 (`render.test.ts`), so a test never holds the slot every job's renders wait for. Whatever holds it all the same, the
-worker ends once it has held it 40 minutes, well past a render's own bound, and the renders waiting for it go on; the
-worker's log warns what it ended, which HQ's report counts (`platform/worker/src/browserslot.ts`).
+worker ends once it has held it 40 minutes, well past a render's own bound: the process that took it, and any that
+inherited it, whether the one that took it is still running or not. The worker's log warns what it ended, which HQ's
+report counts (`platform/worker/src/browserslot.ts`).
 
 
 The supervisor's parent is a small reaper (`reaper.pl`), Linux's child subreaper for the render: detached Chromium

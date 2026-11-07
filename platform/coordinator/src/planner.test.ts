@@ -5,7 +5,6 @@ import { inspect, play, startPlan, type QueuedJob, type Snapshot } from './eta.t
 import { memoryReport } from './memory.fixture.ts';
 import { DEADLINE_PAUSE_MS, PAUSE_MS } from './planner.ts';
 import { extraClaude } from './seatcapacity.ts';
-import { paceChange, pacingLifts } from '../../worker/src/pace.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/plan-test-`);
@@ -663,114 +662,106 @@ test('remaining work at the snapshot is preserved across a future seat reset', (
   assert.equal(seen.left_ms, 40 * MINUTE);
 });
 
-test('only urgent work bypasses seat pacing, while deadline and board-origin work wait', () => {
-  const HOUR = 60 * MINUTE,
-    reset = 48 * HOUR;
-  const input = snapshot([work(1), work(2, { due: 2 * HOUR }), work(3, { urgent: true })]);
-  const seat = input.seats.find(s => s.id === 'codex')!;
-  Object.assign(seat, { fiveHour: 0.2, week: 0.8, weekResets: reset, stop: 0.9 });
-  input.pacing = true;
+test('paced work keeps running serially while urgency may use spare concurrent places', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1), work(2, { due: 2 * HOUR }), work(3, { urgent: true })], {
+    pacing: true,
+    slots: { codex: 4 },
+    seatRuns: { codex: 4 },
+    room: 4,
+  });
+  Object.assign(input.seats[0], { fiveHour: 0.2, week: 0.6, weekResets: 96 * HOUR, stop: 0.9 });
+  input.rates = { codex: { week: 0.01, five: { codex: 0 } } };
   const sized = sizes([
     [1, 10],
     [2, 10],
     [3, 10],
   ]);
-  const seen = play(input, sized),
-    lifts = paceChange({ week: 0.8, weekResets: reset, drainAt: 0.9 }, 0.9, 0)!;
+  const seen = play(input, sized);
   assert.equal(seen.get(3)!.start, 0);
-  assert.ok(Math.abs(seen.get(2)!.start! - lifts) <= 1000, 'a deadline waits for the pace');
-  assert.ok(lifts > 10 * MINUTE && lifts < reset, 'its pacing lifts before the reset');
-  // (to the second, as the worker's pacing lifts: pace.ts paceChange)
-  assert.ok(Math.abs(seen.get(1)!.start! - lifts - 10 * MINUTE) <= 1000, 'deadline work orders the paced queue');
-  assert.ok(seen.get(2)!.waits.some(w => w.on === 'seats' && Math.abs(w.until - lifts) <= 1000));
-  input.jobs[2] = work(3, { board: 1 });
-  assert.ok(play(input, sized).get(3)!.start! >= lifts - 1000, 'a board item alone is not urgent');
-  input.jobs[2] = work(3, { urgent: true });
+  // (each 10-minute run at 1% an hour takes about 34 minutes of its 0.29% an hour: it rests about 24 minutes after it)
+  const rested = seen.get(2)!.start! - 10 * MINUTE;
+  assert.ok(rested > 20 * MINUTE && rested < 30 * MINUTE, `the seat rests after the urgent run: ${rested / MINUTE}`);
+  assert.ok(seen.get(1)!.start! > seen.get(2)!.done! + 20 * MINUTE, 'and after each ordinary run');
   input.pacing = false;
-  assert.equal(play(input, sized).get(1)!.start, 20 * MINUTE, 'pacing off, it starts after the others');
-  Object.assign(input, { pacing: true, seats: [{ ...seat, credits: true }] });
-  // (a seat on credits is paced all the same: the board, 22 Oct.)
-  assert.ok(Math.abs(play(input, sized).get(2)!.start! - lifts) <= 1000, 'a seat on credits paces too');
+  assert.equal(play(input, sized).get(1)!.start, 0);
+  Object.assign(input, { pacing: true, seats: [{ ...input.seats[0], credits: true }] });
+  assert.equal(play(input, sized).get(1)!.start, seen.get(1)!.start, 'credits still respect pacing');
 });
 
-test('an idle paced seat lets undated work go once its week evens out, a day before its reset, not at it', () => {
-  const HOUR = 60 * MINUTE,
-    input = snapshot([work(1)]);
-  Object.assign(
-    input.seats.find(s => s.id === 'codex')!,
-    {
-      fiveHour: 0.1,
-      week: 0.5,
-      weekResets: 96 * HOUR,
-      stop: 0.9,
+test('a paced idle seat starts ordinary work immediately and keeps its configured stop beside a peer', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { for_seat: 'codex' })], { pacing: true });
+  Object.assign(input.seats[0], { week: 0.76, weekResets: 48 * HOUR, stop: 0.9 });
+  input.seats.push({ ...input.seats[0], id: 'codex-b', week: 0.95, weekResets: 24 * HOUR });
+  assert.equal(play(input, sizes([[1, 10]])).get(1)!.start, 0);
+});
+
+test('ordinary dependencies finish while three seats are paced and their peer is past its stop', () => {
+  const now = Date.parse('2026-11-04T11:00:00Z');
+  const rows = [
+    ['claude-1', 0.9, 0.8, '2026-11-05T16:00:00Z'],
+    ['claude-2', 0.68, 1, '2026-11-08T16:00:00Z'],
+    ['claude-3', 0.6, 1, '2026-11-09T06:00:00Z'],
+    ['claude-4', 0.58, 1, '2026-11-09T22:00:00Z'],
+  ] as const;
+  const input = snapshot(
+    [
+      ...rows.map(([id], i) => work(i + 1, { engine: 'claude', for_seat: id })),
+      work(5, { after: 2 }),
+      work(6, { engine: 'claude', for_seat: 'claude-3' }),
+    ],
+    { now, pacing: true, slots: { claude: 5, codex: 1 }, room: 6 },
+  );
+  input.seats = [
+    input.seats[0],
+    ...rows.map(([id, week, stop, resets]) => ({
+      id,
+      engine: 'claude',
+      state: 'ready',
+      until: null,
+      fiveHour: 0,
+      fiveHourResets: null,
+      week,
+      weekResets: Date.parse(resets),
+      stop,
+    })),
+  ];
+  input.rates = {
+    claude: {
+      week: {
+        'claude-1': 0.003504658589577705,
+        'claude-2': 0.0034812600751225704,
+        'claude-3': 0.007110083953136636,
+        'claude-4': 0.0073126198136988325,
+      },
+      five: {},
     },
-  );
-  input.pacing = true;
-  const start = play(input, sizes([[1, 10]])).get(1)!.start!;
-  assert.ok(start > 21 * HOUR && start < 22 * HOUR, `it starts when the worker's pacing lifts (${start / HOUR} h)`);
-});
-
-test('the week the play spends paces a seat as it goes: work after the spending waits for the pacing to lift', () => {
-  const HOUR = 60 * MINUTE,
-    input = snapshot([work(1), work(2)]);
-  Object.assign(
-    input.seats.find(s => s.id === 'codex')!,
-    { week: 0.35, weekResets: 96 * HOUR, stop: 0.9 },
-  );
-  input.pacing = true;
-  input.rates = { codex: { week: { codex: 0.05 }, five: { codex: 0 } } };
-  const seen = play(
-    input,
-    sizes([
-      [1, 120],
-      [2, 10],
-    ]),
-  );
-  assert.equal(seen.get(1)!.start, 0, 'on pace at first');
-  assert.ok(seen.get(2)!.start! > 2 * HOUR, 'the first job used enough of the week to pace it');
-  assert.ok(seen.get(2)!.waits.some(w => w.on === 'seats'));
-});
-
-test('a peer near reset cannot lift a seat past the pace of its configured stop', () => {
-  const HOUR = 60 * MINUTE,
-    input = snapshot([work(1, { for_seat: 'codex' })], { pacing: true });
-  const a = input.seats.find(s => s.id === 'codex')!;
-  Object.assign(a, { week: 0.76, weekResets: 48 * HOUR, stop: 0.9 });
-  input.seats.push({ ...a, id: 'codex-b', week: 0.95, weekResets: 24 * HOUR });
-  const start = play(input, sizes([[1, 10]])).get(1)!.start!;
-  assert.ok(
-    start > 22.5 * HOUR && start < 22.5 * HOUR + 1000,
-    `its own pacing lifts after 22.5 hours (${start / HOUR} h)`,
-  );
-});
-
-test('a seat keeps pacing toward its own stop while another seat fills to its stop', () => {
-  const HOUR = 60 * MINUTE,
-    resets = 96 * HOUR;
-  const input = snapshot([
-    work(1, { status: 'running', seat: 'codex-b', kind: 'review' }),
-    work(2, { for_seat: 'codex', notBefore: HOUR }),
+  };
+  const sized = sizes([
+    [1, 60],
+    [2, 60],
+    [3, 60],
+    [4, 60],
+    [5, 10],
+    [6, 60],
   ]);
-  const a = input.seats.find(s => s.id === 'codex')!;
-  Object.assign(a, { week: 0.4, weekResets: resets, stop: 0.9 });
-  input.seats.push({ ...a, id: 'codex-b', week: 0.89 });
-  Object.assign(input, {
-    pacing: true,
-    slots: { codex: 2, claude: 1 },
-    seatRuns: { codex: 1, claude: 1 },
-    rates: { codex: { week: { codex: 0.02, 'codex-b': 0.02 }, five: {} } },
-  });
-  const start = play(
-    input,
-    sizes([
-      [1, 30],
-      [2, 10],
-    ]),
-  ).get(2)!.start!;
-  // Each configured stop keeps its own pacing target, including while the peer fills.
-  const lifts = pacingLifts({ week: 0.4, weekResets: resets, drainAt: 0.9 }, 0.9, HOUR);
-  assert.ok(lifts > 2 * HOUR, 'aiming at its stop level, codex is paced when the work is ready');
-  assert.ok(Math.abs(start - lifts) <= 1000, `the work waits till that pacing lifts (${start / HOUR} h)`);
+  const seen = play(input, sized);
+  for (const id of [2, 3, 4]) {
+    assert.equal(seen.get(id)!.start, now);
+    assert.equal(seen.get(id)!.done, now + 60 * MINUTE);
+  }
+  assert.equal(seen.get(1)!.start, Date.parse(rows[0][3]), 'a past-stop seat keeps its reset hold');
+  assert.equal(seen.get(5)!.done, now + 70 * MINUTE, 'ordinary Claude work frees the dependent engine');
+  // (Claude 3's hour at 0.711% takes about 2.2 hours of its 0.327% an hour: it rests about 70 minutes after it)
+  const next = seen.get(6)!.start! - seen.get(3)!.done!;
+  assert.ok(next > 60 * MINUTE && next < 80 * MINUTE, `a seat over its allowance rests after a run: ${next / MINUTE}`);
+  input.seats.find(s => s.id === 'claude-3')!.paceRest = now + 30 * MINUTE;
+  assert.equal(
+    play(input, sized).get(3)!.start,
+    now + 30 * MINUTE,
+    'the play starts from the rest the worker reported',
+  );
 });
 
 test('the time split counts prerequisites as waiting and deployment separately from its own work', () => {
@@ -1483,6 +1474,28 @@ test('a task with only its own review ahead leaves older overdue independent wor
     sizes([
       [1, 1],
       [2, 1],
+    ]),
+  );
+  assert.ok(seen.get(1)!.start! < seen.get(2)!.start!);
+});
+
+test("a fix its own pull request's resolution waits for leaves older overdue independent work first", () => {
+  const input = snapshot([
+    work(1, { due: -120 * MINUTE }),
+    work(2, { due: -60 * MINUTE }),
+    work(3, {
+      status: 'done',
+      finished: 0,
+      pr: 50,
+      reviewPlan: { panel: 'review', count: 0, stages: [], terminal: null, unresolved: true, resolutionAfter: 2 },
+    }),
+  ]);
+  const seen = play(
+    input,
+    sizes([
+      [1, 1],
+      [2, 1],
+      [3, 1],
     ]),
   );
   assert.ok(seen.get(1)!.start! < seen.get(2)!.start!);

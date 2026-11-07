@@ -10,6 +10,7 @@ import { readyOn, findAgent, seatReadyFor, type ReadySeat } from './jobs.ts';
 import { ceo } from './company.ts';
 import * as jam from './jam.ts';
 import type { Memory } from './eta.ts';
+import { inChecks } from './playmemory.ts';
 import * as lowmemory from './lowmemory.ts';
 import * as meetingroom from './meetingroom.ts';
 import { roomReported, slotsReported } from './startholds.ts';
@@ -49,7 +50,7 @@ export type PlannerCapacity = {
 let capacity: { at: number; reading: PlannerCapacity } | undefined;
 export const plannerCapacity = (at = Date.now()) =>
   capacity && at - capacity.at <= STALE_MS ? capacity.reading : null;
-export const inPushChecks = (id: number, at = Date.now()) => plannerCapacity(at)?.memory?.checks?.includes(id) ?? false;
+export const inPushChecks = (id: number, at = Date.now()) => inChecks(plannerCapacity(at)?.memory, id);
 const capacities = (value: unknown): Record<string, number> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const entries = Object.entries(value);

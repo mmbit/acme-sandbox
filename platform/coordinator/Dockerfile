@@ -1,5 +1,9 @@
 # Debian slim, not Alpine: the search model runs on onnxruntime-node, whose prebuilt binary needs glibc (memory.ts).
 FROM node:24.22.1-slim
+# apt without retries: the base image's apt 2.6.1 can install an unverified package from a tampered download when it
+# retries one (CVE-2026-109518, DLA-4880-1), and a pruned build cache reruns this layer at any deploy. Drop it once the
+# `FROM` is a Node image built with bookworm's apt 2.6.2 or later.
+RUN echo 'Acquire::Retries "0";' > /etc/apt/apt.conf.d/80-no-retries
 # git, to read who committed the files a workflow writes for the server (src/committed.ts): the slim image has none.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 # Chromium, for print files a company's kit draws from a page of its own and for the watch-along's mirror, started

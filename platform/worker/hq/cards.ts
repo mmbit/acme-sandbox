@@ -7,6 +7,7 @@ import * as api from './api.ts';
 import { shootSpot } from './askspot.ts';
 import { MAX_FILE_BYTES, fileToSend, isFile, isReadable, privateFolder, readText, saveInFolder } from './files.ts';
 import { compareText, print, stop, text } from './output.ts';
+import { at } from './estimate.ts';
 
 // (--address)
 // (--product-shot)
@@ -41,7 +42,9 @@ export const ask = {
                                                      News that asks nothing of the board: kind notice. The
                                                      board closes it with Got it, a note optional (it reaches
                                                      you only if it types one); no keys, approval, fields or
-                                                     --decides on a notice.
+                                                     --decides on a notice. A new time on work is no notice: hq
+                                                     window <deliverable> <time> --tell "why" tells the board only
+                                                     of its own time, once.
                                                      For keys: kind credential and the names (e.g. STRIPE_TEST_SECRET_KEY);
                                                      the board types them into password fields and they reach later jobs
                                                      as environment variables. Never ask for keys in the body.
@@ -179,6 +182,7 @@ export const ask = {
   // (--at, --spot)
   // (--walk; --note, --page; Ink Studio's desk-only cards; --book)
   // (topics:, zips, --visible-from; --address; --questions; notice; --when)
+  // (a new time: hq window --tell)
   // (a pick-many, --file)
   // (Before and after; pictures in pairs on any card)
   // (--visible-from's 08:00)
@@ -214,10 +218,20 @@ export const ask = {
         ? `${reading[0]} Run: hq wait ${id}`
         : `Request #${id} is on the board's desk phone. Run: hq wait ${id}`,
       ...book,
+      ...quietLines(filed.quiet_until),
       `If only a later step needs the answer, queue that step instead: hq job --after request:${id} <agent> "title" <brief>`,
     );
   },
 };
+
+// A card filed in the board's quiet hours (its profile, the coordinator's board.ts): it rings nothing until the board is up,
+// so its answer comes after that.
+const quietLines = (until: unknown) =>
+  typeof until === 'number'
+    ? [
+        `The board is in its quiet hours until ${at(until)}: the card waits on its desk phone without a ring until then, and its answer comes after.`,
+      ]
+    : [];
 
 // A colleague's card waits for the card reader before the desk phone (the coordinator's cardread.ts)
 const readingLine = (id: string, reader: string) =>

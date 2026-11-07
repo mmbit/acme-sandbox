@@ -10,7 +10,8 @@ import { findThread, ownerOf, type Thread } from './projects.ts';
 // no stand-in for the one meant.
 // A job reaches that job's session alone. The job must be to's.
 // A deliverable reaches every session live on it, only to's if the message names to. With none live, it becomes a job
-// on the deliverable, for to or else the deliverable's owner.
+// on the deliverable, for to or else the deliverable's owner. It must be open, as hq job's must be (projects.ts
+// threadForJob).
 // An agent alone reaches their one live session, or every one when several run.
 // A live session is a running Claude work job other than the sender's: a review, or Codex, takes no message mid-run.
 // A refusal is [status, why].
@@ -27,7 +28,7 @@ export function sendAbout(
     return refusal('name one job by its number, or one deliverable, not both');
   if (deliverable !== undefined) {
     const thread = findThread(deliverable);
-    if (!thread) return refusal(`there's no deliverable ${deliverable}: hq projects lists them`);
+    if (thread?.status !== 'open') return refusal(`${deliverable} isn't an open deliverable (hq deliverable list)`);
     return toDeliverable(from, to, thread, text, needsAnswer);
   }
   if (to === undefined) return refusal('name the colleague, with the job the message is about');

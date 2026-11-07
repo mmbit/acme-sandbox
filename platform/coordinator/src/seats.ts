@@ -1,6 +1,7 @@
 // The board's seats: the subscription logins and keys the worker runs jobs on, and the provider behind each. The board
 // changes them in HQ's Settings › Seats, and the worker carries each change out and says how it went, so the board sees
 // the result on the seat's row. No agent and no card is in that loop.
+import { fillRates } from './headroom.ts';
 import { db, remember, setting } from './db.ts';
 import { yamlFile } from './company.ts';
 import { createRequest, endRequest, releaseSeat, setSeat } from './jobs.ts';
@@ -481,15 +482,19 @@ export function seedSeats(seats: unknown) {
 // What the worker runs: each seat with its provider's address and models, whether it's paused, its stop level (null: the
 // worker's own), whether it may spend credits past its plan, whether pacing is on, and the board's changes it hasn't taken up yet. Seats it no longer has leave HQ's
 // report.
-// The week a seat last reported, so a worker that starts again paces it from its first claim instead of waiting for its
-// next run's reading.
+// The week a seat last reported, and the rest it's on, so a worker that starts again paces it from its first claim
+// instead of waiting for its next run's reading.
 const lastWeek = (id: string) => {
-  const row = db.prepare('select week, week_resets from seats where id = ?').get(id) as
-    { week: number | null; week_resets: number | null } | undefined;
-  return row?.week != null && row.week_resets ? { week: row.week, weekResets: row.week_resets } : {};
+  const row = db.prepare('select week, week_resets, pace_rest from seats where id = ?').get(id) as
+    { week: number | null; week_resets: number | null; pace_rest: number | null } | undefined;
+  return {
+    ...(row?.week != null && row.week_resets ? { week: row.week, weekResets: row.week_resets } : {}),
+    ...(row?.pace_rest != null && row.pace_rest > Date.now() ? { paceRest: row.pace_rest } : {}),
+  };
 };
 export function workerSeats() {
   const seats = listed();
+  const rates = fillRates();
   const kept = JSON.stringify(seats.filter(s => !s.removing).map(s => s.id));
   // A seat's report that goes lets go of its jobs, as forget.
   const gone = db.prepare('delete from seats where id not in (select value from json_each(?)) returning id').all(kept);
@@ -515,6 +520,9 @@ export function workerSeats() {
             stop: seat.stop ?? null,
             use_credits: !!seat.use_credits,
             ...lastWeek(seat.id),
+            ...(rates.get(p.engine)?.week.get(seat.id) == null
+              ? {}
+              : { weekRate: rates.get(p.engine)!.week.get(seat.id) }),
           },
         ];
       }),

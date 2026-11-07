@@ -241,8 +241,8 @@ test('a wait on work that ends without merging holds until whoever queued the wa
   assert.equal(await claims(), false, 'the replacement merging alone releases nothing');
   const loop = queue('pylon', 'After the build', { after: next });
   for (const [token, body, why] of [
-    [quill, { id: next, from: prior, to: replacement }, /isn't a (?:queued or running|queued) job of yours, or one you queued, that waits for #/],
-    [lark, { id: next, from: replacement, to: prior }, /isn't a (?:queued or running|queued) job of yours, or one you queued, that waits for #/],
+    [quill, { id: next, from: prior, to: replacement }, /isn't a queued or running job of yours, or one you queued, that waits for #/],
+    [lark, { id: next, from: replacement, to: prior }, /isn't a queued or running job of yours, or one you queued, that waits for #/],
     [lark, { id: next, from: prior, to: prior }, /isn't work that can replace/],
     [lark, { id: next, from: prior, to: await ended('Failed', 'failed') }, /ended without work that merged or still can/],
     [lark, { id: next, from: prior, to: await ended('No pull request', 'done') }, /ended without work that merged or still can/],
@@ -298,7 +298,7 @@ test('hq waits add: a queued job of yours waits for several jobs, each of which 
   const made = queue('wren', 'A fix HQ made');
   const [lark, quill, wren] = await Promise.all(['lark', 'quill', 'wren'].map(async agent => (await h.start({ agent })).token));
   for (const [token, body, why] of [
-    [quill, { id: verdict, to: second.id }, /isn't a (?:queued or running|queued) job of yours, or one you queued$/],
+    [quill, { id: verdict, to: second.id }, /isn't a queued or running job of yours, or one you queued$/],
     [wren, { id: made, to: second.id }, /was made by HQ/],
     [lark, { id: verdict, to: await ended('Failed', 'failed') }, /ended without work that merged or still can/],
     [lark, { id: verdict, to: await ended('Closed', 'done', 'closed') }, /ended without work that merged or still can/],
@@ -345,9 +345,9 @@ test("the CEO and Process change any queued job's waits and card waits. Its agen
   const [bolt, quill] = await Promise.all(['bolt', 'quill'].map(async agent => (await h.start({ agent })).token));
   const card = (await h.agent('request', juno, { kind: 'decision', title: 'Which name?', body: 'x' })).body.id as number;
   for (const [token, body, why] of [
-    [quill, { id: next, from: second, to: null }, /isn't a (?:queued or running|queued) job of yours, or one you queued, that waits for #/],
-    [quill, { id: next, to: third }, /isn't a (?:queued or running|queued) job of yours, or one you queued$/],
-    [quill, { id: next, request: card }, /isn't a (?:queued or running|queued) job of yours, or one you queued$/],
+    [quill, { id: next, from: second, to: null }, /isn't a queued or running job of yours, or one you queued, that waits for #/],
+    [quill, { id: next, to: third }, /isn't a queued or running job of yours, or one you queued$/],
+    [quill, { id: next, request: card }, /isn't a queued job of yours, or one you queued$/],
     // --after isn't a wait hq waits changes
     [bolt, { id: next, from: first, to: null }, /that waits for #/],
     [juno, { id: made, to: third }, /was made by HQ/],

@@ -289,6 +289,7 @@ function pausesPart(open: OpenByID, reader: jobs.Reader) {
       `the board decides "${p.decision.name}" (${p.decision.card ? `card #${p.decision.card}` : 'no card yet'})`;
     const waits = [
       ...(p.untilTime ? [`${p.untilTime.slice(0, 16).replace('T', ' ')} UTC`] : []),
+      ...p.untilWhole.map(w => `${w.words} live${w.live ? ' (it is now)' : ''}`),
       ...(p.until.length
         ? [`${p.until.map(u => `#${u.id} (${u.agent}, ${u.state})`).join(' and ')} merged or ended`]
         : []),

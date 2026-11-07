@@ -94,8 +94,8 @@ function toMerge(thread: string, mergeAfter: (branch: string, at: number) => num
   );
 }
 
-// The spells less the holds over them
-function without(spells: Spell[], cuts: Spell[]) {
+// The spells less the holds over them (exported, threadwaits.ts holdsOf)
+export function without(spells: Spell[], cuts: Spell[]) {
   return cuts.reduce(
     (left, c) =>
       left.flatMap(s => [

@@ -38,8 +38,7 @@ export function holdFullRoom(
     const { seat, roomSeat } = choose(run.row, run.order);
     if ('id' in roomSeat) {
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : 'memory';
-      if (roomVictims(play, run, running, seats.now, resource, roomSeat, room, reservations).victims.length)
-        return false;
+      if (roomVictims(play, run, running, seats, resource, roomSeat, room, reservations).victims.length) return false;
       run.nextHold = run.queueWait;
     } else run.nextHold = roomSeat;
   }
@@ -61,13 +60,14 @@ export function makeRoom(
   play: Play,
   waiting: Run,
   running: Run[],
-  now: number,
+  moment: capacity.Moment,
   resource: 'memory' | 'engine' | capacity.Seat,
   seat: capacity.Seat,
   room: memory.Room,
   reservations: Map<Run, capacity.Seat>,
 ) {
-  const { victims, needsReview } = roomVictims(play, waiting, running, now, resource, seat, room, reservations);
+  const { now } = moment;
+  const { victims, needsReview } = roomVictims(play, waiting, running, moment, resource, seat, room, reservations);
   if (!victims.length) return false;
   const pauseMs = deadlinePressure(waiting.order, now) ? DEADLINE_PAUSE_MS : PAUSE_MS;
   for (const victim of victims) {
@@ -88,7 +88,7 @@ function roomVictims(
   play: Play,
   waiting: Run,
   running: Run[],
-  now: number,
+  moment: capacity.Moment,
   resource: 'memory' | 'engine' | capacity.Seat,
   seat: capacity.Seat,
   room: memory.Room,
@@ -96,7 +96,8 @@ function roomVictims(
 ) {
   const limits = play.snapshot.seatRuns ?? {};
   const configuredLimit = limits[seat.engine] ?? Infinity;
-  const admissionLimit = capacity.runLimit(seat, limits, now);
+  const { now } = moment;
+  const admissionLimit = capacity.runLimit(seat, limits, moment, !!waiting.order.urgent);
   const needsReview = reviewroom.needsRoom(waiting.standing, reviewOccupants(running, seat.id), configuredLimit);
   const candidates = running.filter(r => r.state === 'running');
   const seatFull = running.filter(r => r.seat?.id === seat.id).length >= admissionLimit;
@@ -118,7 +119,7 @@ function roomVictims(
       );
       return victim && play.runs.get(victim.id);
     },
-    selected => fitsAfterPauses(play, waiting, running, seat, room, selected, reservations, now),
+    selected => fitsAfterPauses(play, waiting, running, seat, room, selected, reservations, moment),
   );
   return { victims: victims.map(r => r.standing), needsReview };
 }
@@ -131,7 +132,7 @@ function fitsAfterPauses(
   room: memory.Room,
   selected: Run[],
   reservations: Map<Run, capacity.Seat>,
-  now: number,
+  moment: capacity.Moment,
 ) {
   const pausing = running.filter(r => r.state === 'pausing');
   const released = [...pausing, ...selected];
@@ -149,7 +150,7 @@ function fitsAfterPauses(
     if (reservedSeat.id === seat.id) onSeat++;
   }
   const engineSlots = play.snapshot.slots[waiting.row.engine] ?? 0;
-  const admissionLimit = capacity.runLimit(seat, play.snapshot.seatRuns ?? {}, now);
+  const admissionLimit = capacity.runLimit(seat, play.snapshot.seatRuns ?? {}, moment, !!waiting.order.urgent);
   return memory.canStart(available, waiting.row) && onEngine < engineSlots && onSeat < admissionLimit;
 }
 

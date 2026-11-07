@@ -4,13 +4,13 @@ import * as visual from './visual.ts';
 import type { Read } from './reviewtriage.ts';
 
 // The looker triage chose, or the seat its visual files moved to; undefined when it reads none of them
-export function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], consolidator: string | undefined) {
+export function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], suggested: string | undefined) {
   if (chosen === null) return null;
   const original = readers.find(reader => reader.agent === chosen);
   const retained = assigned.find(reader => reader.agent === chosen);
-  if (!original && !retained && chosen !== consolidator) return undefined;
-  if (!assigned.length) return consolidator ?? chosen;
-  if (!readers.length && chosen === consolidator) return chosen;
+  if (!original && !retained && chosen !== suggested) return undefined;
+  if (!assigned.length) return suggested ?? chosen;
+  if (!readers.length && chosen === suggested) return chosen;
   const scope = original?.files ?? assigned.flatMap(reader => reader.files);
   const shown = visual.visualFor(scope).flatMap(check => check.files);
   if (!shown.length && retained) return retained.agent;

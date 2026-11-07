@@ -471,7 +471,7 @@ test("the CEO's summary names a thread whose planned finish is past its deadline
   assert.match(boards, /, set by the board\. Held by: /);
   assert.match(
     boards,
-    /It's the board's own time: when nothing brings the finish back, tell it once, with the time live four in five/,
+    /It's the board's own time: when nothing brings the finish back, set the time live four in five \(hq deliverable\) as its window with hq window --tell/,
   );
   windows.set(windows.threadOf({ thread: due }) as any, { deadline: T + 10 * HOUR, aim: T + 10 * HOUR }, 'juno');
   assert.deepEqual(

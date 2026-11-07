@@ -124,7 +124,6 @@ for (const kind of ['review', 'work'] as const) {
     const seat = await paced();
     assert.equal(await h.claim('codex', seat), null);
     const giver = await h.start({ agent: 'juno', kind: 'chat' });
-    const pacedMerge = forecast.play().usual.get(author.id)!.merged!;
     for (const target of [{ thread: build }, { job: author.id }, { pr: kind === 'review' ? 903 : 905 }]) {
       const changed = await h.agent('window', giver.token, { ...target, deadline: '1m' });
       assert.equal(changed.status, 200, JSON.stringify(changed.body));
@@ -134,11 +133,10 @@ for (const kind of ['review', 'work'] as const) {
       );
     }
     assert.equal(await h.claim('codex', seat), null, 'a window orders work within the pace');
+    const merged = () => forecast.play().usual.get(author.id)!.merged!;
+    const ordinary = merged();
     urgent(build);
-    assert.ok(
-      forecast.play().usual.get(author.id)!.merged! < pacedMerge,
-      'urgent, the play no longer waits for the pace',
-    );
+    assert.ok(Math.abs(merged() - ordinary) < 1000, "the play takes it in the paced seat's free place, urgent or not");
     const claimed = await h.claim('codex', seat);
     assert.equal(claimed?.id, round);
     await h.finish(claimed!);
@@ -268,6 +266,10 @@ for (const kind of ['review', 'work'] as const)
     setWindow(older, 5 * HOUR);
     setWindow(build, HOUR);
     const ordinary = h.queue({ agent: 'moss', engine: 'codex', thread: older });
+    // Sized as queued, so the plan's starts never rest on moss's earlier runs in this file, which take no time
+    const { recordQueued } = await import('./sizes.ts');
+    for (const id of [round, ordinary])
+      recordQueued(id, 'juno', 'x', { agent_ms: HOUR / 2, refs: [], why: 'A round like the last' });
     const holder = await h.start({ agent: 'kit', thread: thread() });
     const waiters: Awaited<ReturnType<typeof h.start>>[] = [];
     for (let i = 0; i < 10; i++) {

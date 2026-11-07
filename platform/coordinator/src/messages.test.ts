@@ -16,6 +16,7 @@ const { status: agentStatus } = await import('./events.ts');
 const proposals = await import('./proposals.ts');
 const { ceo } = await import('./company.ts');
 const projects = await import('./projects.ts');
+const plan = await import('./plan.ts');
 
 const say = (j: Running, to: string, text: string, as?: string) => h.agent('message', j.token, { to, text, ...(as ? { as } : {}) });
 // hq sent: where the sender's message went (its job, offered, delivered, the job it became or joined, lapsed)
@@ -370,8 +371,9 @@ test('end to end: sent mid-run, in the model\'s next request, and hq sent says d
   // as nobody, in a home of nobody's
   const as = process.getuid?.() === 0 ? { uid: 65534, gid: 65534 } : {};
   if (as.uid) chownSync(home, as.uid, as.gid!);
+  // the CLI's temp folder in the home: a helper's /tmp can be read-only, and the CLI reads no TMPDIR.
   const c = spawn('claude', ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions', '--model', 'sonnet', '--settings', inboxSettings(HQ)],
-    { cwd: home, env: { PATH: process.env.PATH, HOME: home, CLAUDE_CONFIG_DIR: `${home}/.claude`, ANTHROPIC_BASE_URL: `http://127.0.0.1:${(model.address() as AddressInfo).port}`,
+    { cwd: home, env: { PATH: process.env.PATH, HOME: home, CLAUDE_CONFIG_DIR: `${home}/.claude`, CLAUDE_CODE_TMPDIR: home, ANTHROPIC_BASE_URL: `http://127.0.0.1:${(model.address() as AddressInfo).port}`,
       ANTHROPIC_API_KEY: 'sk-ant-test', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', HQ_URL: h.base, HQ_TOKEN: bolt.token, HQ_AGENT: 'bolt', HQ_JOB: String(bolt.id) }, ...as });
   c.stdin.end('Do the job.');
   assert.equal(await new Promise(r => c.on('close', r)), 0);
@@ -529,5 +531,11 @@ test('a deliverable nobody is live on: a job on it for the colleague named, neve
   const mine = await sent(bolt, owned.body.id);
   assert.deepEqual([mine.to, mine.became], [projects.ownerOf({ project: 'office' }), owned.body.job]);
   assert.equal(jobs.threadOf(owned.body.job), id);
+  // one that's done takes no job, as hq job refuses it; done waits for the two
+  // jobs just queued on it
+  h.cancelQueued();
+  assert.deepEqual(plan.done(id, projects.ownerOf({ project: 'office' })), { ok: true });
+  const done = await sayAbout(bolt, { to: 'moss', deliverable: id, text: 'Too late' });
+  assert.equal(done.status, 422); assert.match(done.body.error, /isn't an open deliverable/);
   for (const j of [bolt, busy]) await end(j);
 });

@@ -3,6 +3,7 @@
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
+import { wholeLive, wholeName, wholeWords } from './whole.ts';
 
 export type Row = {
   id: number;
@@ -21,8 +22,11 @@ export type Row = {
 };
 // A job a pause waits for, where it is in words (untilWords), and whether it has ended, merged or not (ended)
 export type Until = { id: number; agent: string; title: string; state: string; ended: boolean };
+// A milestone or deliverable a pause waits for to go live (--until <project>): its id, its name (whole.ts wholeName), in
+// words with what it covers, and whether it's live
+export type UntilWhole = { id: string; name: string; words: string; live: boolean };
 // An open pause as the follow-through read, hq and the projects view show it: what it pauses, why, by whom since when,
-// the time (ISO) and the jobs that wake its owner, the job that woke them once they're met (woken), the board's decision
+// the time (ISO), the jobs and the milestones or deliverables live that wake its owner, the job that woke them once they're met (woken), the board's decision
 // it waits for (with its card once there is one), the board's call item, and the work on it that's held or still running.
 export type Pause = {
   id: number;
@@ -34,6 +38,7 @@ export type Pause = {
   item: number | null;
   untilTime: string | null;
   until: Until[];
+  untilWhole: UntilWhole[];
   woken: number | null;
   decision: { id: number; name: string; card: number | null } | null;
   held: number;
@@ -86,6 +91,7 @@ export function described(p: Row, until = untilsOf([p.id]).get(p.id) ?? [], work
     item: p.item,
     untilTime: p.until_time,
     until,
+    untilWhole: untilWholeOf(p.id),
     woken: p.woken,
     decision: decisionOf(p),
     held: heldQueued,
@@ -124,6 +130,26 @@ export function untilsOf(pauses: number[]) {
     ]);
   return untils;
 }
+
+// The milestones and deliverables each of these pauses waits for to go live (their ids), by pause
+export function wholesOf(pauses: number[]) {
+  const rows = db
+    .prepare(
+      'select pause, whole from pause_until_whole where pause in (select value from json_each(?)) order by pause, rowid',
+    )
+    .all(JSON.stringify(pauses)) as { pause: number; whole: string }[];
+  const wholes = new Map<number, string[]>();
+  for (const r of rows) wholes.set(r.pause, [...(wholes.get(r.pause) ?? []), r.whole]);
+  return wholes;
+}
+// Those of one pause, each in words and whether it's live
+export const untilWholeOf = (pause: number): UntilWhole[] =>
+  (wholesOf([pause]).get(pause) ?? []).map(id => ({
+    id,
+    name: wholeName(id),
+    words: wholeWords(id),
+    live: wholeLive(id),
+  }));
 
 // Where a job a pause waits for is: under way, in review, merged, or ended without merging (which wakes its owner too),
 // and whether it has ended

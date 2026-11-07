@@ -4,8 +4,8 @@
 // does: first in the list, unread, and ringing if it's urgent (sweep). requests.hidden_until holds the time; jobs.ts
 // leaves a card out of the desk phone's list while it's ahead (SHOWN). A card can be held the same way until work it
 // waits for is live (holdsFor).
-import { db, workBranch } from './db.ts';
-import { pauseHolds } from './jobs.ts';
+import { db } from './db.ts';
+import { askedFor } from './jobs.ts';
 import { companyDay, companyMoment } from './company.ts';
 import { announceRequest } from './push.ts';
 import * as tips from './tips.ts';
@@ -13,6 +13,8 @@ import * as approvals from './approvals.ts';
 import { followsUp } from './ledger.ts';
 import * as wakes from './wakes.ts';
 import { HELD, SHOWN } from './shown.ts';
+import { threadOfWork } from './threadrelease.ts';
+import { isPiece, ofDeliverable, wholeLive, wholeWords } from './whole.ts';
 
 const DAY_MS = 24 * 3600_000;
 const AHEAD_MS = 366 * DAY_MS;
@@ -99,34 +101,17 @@ export function listLaterRequests() {
 // doing a call's work can't park on a card (hq request) either.
 
 // The work a card from `job` waits for (a milestone's or deliverable's id, or wake args: '<job>' or 'pr:<n>'), with hq
-// ask's --when, or why it can't
+// ask's --when, or why it can't (wakes.ts readWhen reads both)
 export function holdsFor(job: number | undefined, when: unknown): string[] | string {
-  const texts = (Array.isArray(when) ? when : when == null ? [] : [when]).map(String);
-  const whole = texts.map(wholeNamed);
-  const unknown = whole.find(w => w?.id === null);
-  if (unknown) return `there's no milestone (project) or deliverable ${unknown.named}: hq projects lists them`;
-  const named = wakes.readWhen(texts.filter((_, i) => !whole[i]));
+  const named = wakes.readWhen(when);
   if (typeof named === 'string') return named;
   if (named.some(w => w.kind !== 'deployed'))
     return `a card waits only for work going live: ${WHOLE_FORMS}, or one piece, deployed:<job> or deployed:pr:<n> (a day: --visible-from)`;
   const own = doesCallWork(job) ? [String(job)] : [];
-  return [...new Set([...own, ...whole.flatMap(w => (w?.id ? [w.id] : [])), ...named.map(w => w.arg)])];
+  return [...new Set([...own, ...named.map(w => w.arg)])];
 }
 const WHOLE_FORMS =
   '--when deployed:<project> (the whole milestone, work filed in it later too) or deployed:<project>/<slug> (one deliverable)';
-
-// --when deployed:<project> or deployed:<project>/<slug> as the milestone's or deliverable's id (a moved deliverable by
-// its old id too), id null for one HQ doesn't have; undefined for any other --when (wakes.ts reads those)
-function wholeNamed(given: string) {
-  const named = /^deployed:([a-z][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)?)$/i.exec(given.trim())?.[1];
-  if (named === undefined) return undefined;
-  const found = named.includes('/')
-    ? db
-        .prepare('select id from threads where id = coalesce((select id from thread_aliases where old = ?1), ?1)')
-        .get(named)
-    : db.prepare('select id from projects where id = ?').get(named);
-  return { named, id: (found as { id: string } | undefined)?.id ?? null };
-}
 
 // Why `job` can't park on a card (hq request), or null: its card would wait for the job's own merge
 export const parkProblem = (job: number) =>
@@ -155,58 +140,22 @@ export function heldFor(id: number) {
 // The milestones a card's piece-by-piece holds (a job's or pull request's work) are in that no hold of the whole
 // milestone covers, as hq ask's reply names them: work filed there later doesn't hold the card.
 export function leftOutOf(holds: string[]) {
-  const whole = new Set(holds.filter(w => isWhole(w) && !w.includes('/')));
+  const whole = new Set(holds.filter(w => isWhole(w) && !ofDeliverable(w)));
   const milestones = holds
-    .filter(w => /^(pr:)?\d+$/.test(w))
+    .filter(isPiece)
     .map(milestoneOf)
     .filter(m => m && !whole.has(m.id)) as Milestone[];
   return [...new Map(milestones.map(m => [m.id, m])).values()];
 }
 type Milestone = { id: string; name: string };
-const MILESTONE_OF = `select pr.id, pr.name from jobs j join threads t on t.id = j.thread join projects pr on pr.id = t.project
-  where j.kind = 'work' and`;
+// The milestone a piece's work is in, through its deliverable
 const milestoneOf = (work: string) =>
-  (work.startsWith('pr:')
-    ? db
-        .prepare(`${MILESTONE_OF} ${workBranch('j')} = (select branch from prs where number = ?) order by j.id limit 1`)
-        .get(Number(work.slice(3)))
-    : db.prepare(`${MILESTONE_OF} j.id = ?`).get(Number(work))) as Milestone | undefined;
+  db
+    .prepare('select pr.id, pr.name from threads t join projects pr on pr.id = t.project where t.id = ?')
+    .get(threadOfWork(work)) as Milestone | undefined;
 
 // A hold on a whole milestone or deliverable (its id), not one piece's work nor the card reader's read
-const isWhole = (work: string) => !/^(pr:)?\d+$/.test(work) && !work.startsWith(READ);
-// Whether a milestone (`id`, a project's) or a deliverable (a thread's) is live: nothing in it open but what a pause of
-// its own keeps out of a milestone, and its last merge deployed
-function wholeLive(id: string) {
-  if (db.prepare(`select 1 from threads t where ${IN_WHOLE} and t.status = 'open' and not ${KEPT_OUT}`).get({ id }))
-    return false;
-  const last = db
-    .prepare(
-      `select p.number from prs p where p.status = 'merged' and p.branch in (select ${workBranch('j')} from jobs j
-      join threads t on t.id = j.thread where j.kind = 'work' and ${IN_WHOLE}) order by p.merged_at desc limit 1`,
-    )
-    .get({ id }) as { number: number } | undefined;
-  return !last || wakes.deployed(`pr:${last.number}`) !== null;
-}
-// A thread (`t`) of the whole `$id`: the deliverable itself (moved, by its old id), or one of the milestone's
-const IN_WHOLE = '(t.id = coalesce((select id from thread_aliases where old = $id), $id) or t.project = $id)';
-// A milestone's deliverable (`t`) that a pause of its own keeps out of it
-const KEPT_OUT = `(t.project = $id and exists (select 1 from pauses p where p.thread = t.id and ${pauseHolds('p')}))`;
-// A whole hold in words: a milestone's with what it covers and keeps out now, or a deliverable's name
-function wholeWords(id: string) {
-  if (id.includes('/')) {
-    const thread = db.prepare(`select t.name from threads t where ${IN_WHOLE}`).get({ id }) as { name: string };
-    return `the deliverable "${thread.name}"`;
-  }
-  const { name } = db.prepare('select name from projects where id = ?').get(id) as { name: string };
-  const open = db
-    .prepare(`select t.name, ${KEPT_OUT} kept from threads t where ${IN_WHOLE} and t.status = 'open' order by t.id`)
-    .all({ id }) as { name: string; kept: number }[];
-  const covered = open.filter(t => !t.kept).length;
-  const kept = open.filter(t => t.kept).map(t => `"${t.name}"`);
-  return `${name}'s whole milestone (${covered} open deliverable${covered === 1 ? '' : 's'} and any filed in it later${
-    kept.length ? `, not ${kept.join(', ')}, kept out by ${kept.length === 1 ? 'its' : 'their'} own pause` : ''
-  })`;
-}
+const isWhole = (work: string) => !isPiece(work) && !work.startsWith(READ);
 
 // The hold of a card waiting for the card reader before the board's desk phone (cardread.ts): 'read:<the reader's job>',
 // which only the reader's pass or answer lifts
@@ -247,7 +196,9 @@ export function sweep() {
 }
 
 // The held cards whose work is all live, or will never be, let go: each shows as a new card and rings as one would
-// (unless it's also for later: then it rings when its time comes). Returns those it let go.
+// (unless it's also for later: then it rings when its time comes). A piece's hold goes once it's met, as its deploy
+// stays. A whole one is met only for now, as work filed in it later opens it again: it goes only with the card's last
+// hold, the card reader's read aside. Returns those it let go.
 function release(now: string) {
   const holds = db
     .prepare(
@@ -256,14 +207,16 @@ function release(now: string) {
     .all(`${READ}%`) as { request: number; work: string }[];
   if (!holds.length) return [];
   wakes.readDeploys();
-  const met = holds.filter(h => (isWhole(h.work) ? wholeLive(h.work) : wakes.deployed(h.work) !== null));
-  return [...new Set(met.map(h => h.request))].filter(id =>
-    unhold(
+  const met = new Set(holds.filter(h => (isWhole(h.work) ? wholeLive(h.work) : wakes.deployed(h.work) !== null)));
+  return [...new Set([...met].map(h => h.request))].filter(id => {
+    const own = holds.filter(h => h.request === id);
+    const last = own.every(h => met.has(h)) && !awaitsRead(id);
+    return unhold(
       id,
-      met.filter(h => h.request === id).map(h => h.work),
+      own.filter(h => met.has(h) && (last || !isWhole(h.work))).map(h => h.work),
       now,
-    ),
-  );
+    );
+  });
 }
 
 // The card lets go of those holds, and with none left it shows as a new card and rings as one would (unless it's also for
@@ -281,12 +234,13 @@ type Ringing = {
   id: number;
   kind: string;
   agent: string | null;
+  job: number | null;
   title: string;
   urgency: string;
   approves: string | null;
   hidden_until: string | null;
 };
-const RINGING = 'id, kind, agent, title, urgency, approves, hidden_until';
+const RINGING = 'id, kind, agent, job, title, urgency, approves, hidden_until';
 function ring(r: Ringing) {
   announceRequest({
     id: r.id,
@@ -294,6 +248,7 @@ function ring(r: Ringing) {
     title: r.title,
     urgency: r.urgency,
     grant: r.approves ? approvals.describe(r.approves) : undefined,
+    asked: askedFor(r.job),
   });
   tips.cardShows(r);
 }

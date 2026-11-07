@@ -55,9 +55,24 @@ function nowWords(status, state) {
   const admits = {
     open: 'takes new work',
     paced: `urgent only${until}`,
-    unavailable: status.until ? `new work from ${clockWhen(status.until)}` : 'no new work',
+    unavailable: outWords(status),
   }[status.admission];
   return `${running} · ${admits}`;
+}
+// Why a seat takes no new work and when it's back, by the status's reason:
+// - 'usage': no usage read since the worker started, so no return time is known yet
+// - 'quota': at its stop level until its window resets
+// - 'provider': held by its provider until the hold ends
+// - 'drained': held at its stop until the hold the worker reported ends
+// A held Codex seat is checked again before then, at its nextCheck.
+function outWords(status) {
+  const from = status.until ? `new work from ${clockWhen(status.until)}` : '';
+  const check = status.nextCheck ? `, checked again ${clockWhen(status.nextCheck)}` : '';
+  if (status.reason === 'usage') return 'no new work until its usage is read';
+  if (status.reason === 'quota') return `at its stop, ${from || 'reset not reported'}${check}`;
+  const held = { provider: 'held by its provider', drained: 'held at its stop' }[status.reason];
+  if (held) return `${held}, ${from || 'return time not reported'}${check}`;
+  return from || 'no new work';
 }
 // A paced seat's tooltip: what it still takes, and when its pace lets the rest start, at its use so far (more use moves
 // that later)

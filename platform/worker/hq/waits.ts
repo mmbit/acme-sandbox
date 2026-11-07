@@ -3,13 +3,14 @@
 // The board (a card, answered about `at`, or the company paused), the seats out until a time, work queued ahead for the
 // same slots, a job it waits for, a deploy, nothing that will come by itself (stalled: with the thread or project whose
 // pause holds it, when one does, or the job no seat takes), or past the horizon. The coordinator's play writes these
-// (playtypes.ts).
+// (playtypes.ts). A job's own deploy, and a time it's set to start at, are the claim's (planner.ts firstWait).
 export type Wait =
   | { on: 'board'; request?: number; at?: number; paused?: true }
   | { on: 'seats'; engine: string; until: number; from?: number; reason?: 'pacing' | 'unavailable' }
   | { on: 'queue'; engine: string; minutes: number; pausing?: true }
   | { on: 'job'; job: number }
-  | { on: 'deploy' }
+  | { on: 'deploy'; job?: number }
+  | { on: 'time'; until: number }
   | { on: 'stalled'; why: string; pause?: string; job?: number } // (pause; job: playseats.ts choices)
   | { on: 'horizon'; days: number };
 
@@ -29,7 +30,8 @@ export function waitWords(w: Wait, at: (ms: number) => string) {
   if (w.on === 'queue')
     return `work queued ahead on the ${w.engine} seats${w.minutes ? ` (${duration(w.minutes)})` : ''}`;
   if (w.on === 'job') return `job #${w.job}`;
-  if (w.on === 'deploy') return 'a deploy';
+  if (w.on === 'deploy') return w.job ? `job #${w.job}'s deploy` : 'a deploy';
+  if (w.on === 'time') return `its start time, ${at(w.until)}`;
   if (w.on === 'stalled') return w.why;
   return `nothing that ends within ${w.days} days`;
 }

@@ -14,6 +14,7 @@ import type { Planned } from './eta.ts';
 import { mergeBoundaries } from './threadboundary.ts';
 import { needsReader } from './threadneedsopen.ts';
 import { waitsUntil } from './wakes.ts';
+import * as redraws from './redraws.ts';
 
 // Threads with every thread they need (in the list) before them, otherwise in their order
 export function inNeedsOrder(threads: Thread[]) {
@@ -34,11 +35,11 @@ export type Job = { id: number; kind: string; pr: number | null; thread: string 
 export const answersRound = (j: { stage: string | null; round: number | null }) =>
   j.stage === 'feedback' || (j.stage === 'fix' && j.round !== null);
 export const isTask = (j: Job): j is Job & { thread: string } => j.kind === 'work' && j.pr === null && !!j.thread;
-// An --after (`job`'s, on `prior`, SQL row aliases) on a task before it in its own thread: the thread's order holds it
-// already (follows: until that task is done), and the thread's one pull request merges only with the waiting task's own
-// work, so as a merge wait it would wait for itself. hq job refuses one (jobRefusal); one queued before its thread was
-// drawn is read as the order, by the claim (jobs.ts READY) and the play (placing's inOrder). A wait (hq waits) on such a
-// task stays a merge: the waiting task starts a branch of its own (threadboundary.ts).
+// An --after (`job`'s, on `prior`, SQL row aliases) on a task before it in its own thread: the waiting task needs its
+// work, so the thread's order holds it behind that task (follows: until it's done, inTurn), and the thread's one pull
+// request merges only with the waiting task's own work, so as a merge wait it would wait for itself. The claim (jobs.ts
+// READY) and the play (placing's inOrder) read it as the order. A wait (hq waits) on such a task stays a merge: the
+// waiting task starts a branch of its own (threadboundary.ts). (needs its work)
 export function afterInOrder(job: string, prior: string) {
   return `(${prior}.thread = ${job}.thread and ${prior}.kind = 'work' and ${prior}.pr is null and ${job}.kind = 'work'
     and ${job}.pr is null and (coalesce(${prior}.seq, ${prior}.id), ${prior}.id) < (coalesce(${job}.seq, ${job}.id), ${job}.id))`;
@@ -52,6 +53,7 @@ export type Task = jobs.Named & {
   started: string | null;
   created: string;
   finished: string | null;
+  after: number | null;
   until: number; // (the time it waits for, hq job --when, while it waits)
 };
 const OPEN = ['queued', 'running', 'blocked'];
@@ -62,24 +64,40 @@ const OPEN = ['queued', 'running', 'blocked'];
 export const tasksOf = (thread: string) => {
   return prepared(
     `select j.id, j.agent, j.title, j.step, j.round, j.status, j.branch, j.session, j.started, j.created, j.finished,
-      max(0, ${waitsUntil('j.id')}) until
+      j.after, max(0, ${waitsUntil('j.id')}) until
       from jobs j where j.thread = ? and j.kind = 'work' and j.pr is null and j.status != 'cancelled' and not ${jobs.failedAside('j')}
       order by coalesce(j.seq, j.id), j.id`,
   ).all(thread) as Task[];
 };
 
 // The thread's tasks in the order they take their turns: those started, as they started; then those not started in the
-// thread's order, but one waiting for a time still to come (hq job --when) behind them, so a clock holds no task that
-// can start before it. Its time come, it takes its place again before the tasks that haven't started. The order as drawn
-// (tasksOf) stays for the rest.
-export function inTurn(tasks: Task[], now = Date.now()) {
+// thread's order, but one held by a wait of its own (a time still to come, a card, a job, an event: `held`, heldTasks) or
+// queued --after a task before it that's held (it needs that task's work) behind them, so no wait holds a task that can
+// start before it. Its wait met, it takes its place again before the tasks that haven't started. The order as drawn
+// (tasksOf) stays for the rest. (waits besides a time, and --after)
+export function inTurn(tasks: Task[], held: ReadonlySet<number>, now = Date.now()) {
   const started = (t: Task) => t.status !== 'queued' || !!t.started;
-  const timed = (t: Task) => t.until > now;
+  const waiting = new Set<number>();
+  for (const t of tasks)
+    if (!started(t) && (t.until > now || held.has(t.id) || (t.after !== null && waiting.has(t.after))))
+      waiting.add(t.id);
   const begun = tasks.filter(started).sort((a, b) => compareTimestamps(a.started ?? '', b.started ?? ''));
-  const waiting = tasks.filter(t => !started(t) && !timed(t)),
-    later = tasks.filter(t => !started(t) && timed(t));
-  return { turn: [...begun, ...waiting, ...later], timedFrom: begun.length + waiting.length };
+  const ready = tasks.filter(t => !started(t) && !waiting.has(t.id)),
+    later = tasks.filter(t => waiting.has(t.id));
+  return { turn: [...begun, ...ready, ...later], heldFrom: begun.length + ready.length };
 }
+// The queued tasks not started held by a wait of their own but a time (jobs.ts OWN_WAIT), in every thread, or in one.
+// Read from the open tasks' index (db.ts jobs_open_tasks), never every job's row.
+export function heldTasks(thread?: string) {
+  const rows = prepared(
+    redraws.query(`select j.id from jobs j indexed by jobs_open_tasks where j.kind = 'work' and j.pr is null
+      and j.status in ('queued', 'running', 'blocked') and j.status = 'queued' and j.started is null
+      and ($thread is null and j.thread is not null or j.thread = $thread) and ${jobs.OWN_WAIT}`),
+  ).all({ thread: thread ?? null }) as { id: number }[];
+  return new Set(rows.map(row => row.id));
+}
+// A thread's tasks in their turns (inTurn)
+export const turnOf = (thread: string) => inTurn(tasksOf(thread), heldTasks(thread));
 const compareTimestamps = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 // What holds a task in its thread's order: the task before it still to end (follows: until it's done, pushed with its
@@ -97,7 +115,7 @@ export type Waits = {
 type ThreadReading = {
   tasks: Task[];
   turn: Task[];
-  timedFrom: number;
+  heldFrom: number;
   first: number | null;
   branch: string | null;
   status: Thread['status'] | undefined;
@@ -117,16 +135,18 @@ function failedBefore(before: Task[], drawnAt: string | null) {
 export function reader() {
   const threads = new Map<string, ThreadReading>();
   const openNeeds = needsReader(thread => failedHold(thread));
+  let heldNow: Set<number> | undefined;
+  const held = () => (heldNow ??= heldTasks());
   const of = (thread: string) => {
     if (!threads.has(thread)) {
       const tasks = tasksOf(thread),
-        { turn, timedFrom } = inTurn(tasks);
+        { turn, heldFrom } = inTurn(tasks, held());
       const current = findThread(thread);
       const branch = current?.branch ?? null;
       threads.set(thread, {
         tasks,
         turn,
-        timedFrom,
+        heldFrom,
         first: turn.find(t => OPEN.includes(t.status))?.id ?? null,
         branch,
         status: current?.status,
@@ -143,10 +163,10 @@ export function reader() {
     return at < 0 ? null : failedBefore(turn.slice(0, at), turn[at].created);
   };
   const waits = (id: number, thread: string): Waits => {
-    const { turn, timedFrom, round } = of(thread),
+    const { turn, heldFrom, round } = of(thread),
       at = turn.findIndex(t => t.id === id);
-    // (work not in the thread yet, hq when's: at its end, before the tasks waiting for a time)
-    const before = at < 0 ? turn.slice(0, timedFrom) : turn.slice(0, at);
+    // (work not in the thread yet, hq when's: at its end, before the tasks held by a wait of their own)
+    const before = at < 0 ? turn.slice(0, heldFrom) : turn.slice(0, at);
     const next = !before.some(t => OPEN.includes(t.status));
     return {
       follows: before.findLast(t => OPEN.includes(t.status))?.id ?? null,
@@ -204,9 +224,10 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
     if (!isTask(row) || !OPEN.includes(row.status)) return undefined;
     const w = read.waits(row.id, row.thread);
     const needs = w.needs.map(n => ({ ...n, task: n.task ?? standIn.get(n.thread) ?? null }));
-    const { tasks, first, branch: threadBranch } = read.of(row.thread);
-    // A task waiting for an earlier task's merge starts a fresh branch after that merge clears the thread's branch.
-    if (!boundaries.has(row.thread)) boundaries.set(row.thread, mergeBoundaries(tasks, waits));
+    const { turn, first, branch: threadBranch } = read.of(row.thread);
+    // A task waiting for an earlier task's merge starts a fresh branch after that merge clears the thread's branch, and
+    // so do the tasks after it in the thread's turn (inTurn). (the turn)
+    if (!boundaries.has(row.thread)) boundaries.set(row.thread, mergeBoundaries(turn, waits));
     const boundary = boundaries.get(row.thread)!.get(row.id);
     const branch = row.branch ?? (boundary ? `job/${boundary}` : (threadBranch ?? `job/${first ?? row.id}`));
     const follows = w.follows ?? w.round;
@@ -291,7 +312,7 @@ export function claimed(job: Job) {
     db.prepare('update jobs set branch = ? where id = ?').run(thread.branch, job.id);
     job.branch = thread.branch;
   }
-  const tasks = inTurn(tasksOf(thread.id)).turn,
+  const tasks = turnOf(thread.id).turn,
     at = tasks.findIndex(t => t.id === job.id);
   const before = at > 0 ? tasks[at - 1] : undefined;
   return {
@@ -306,12 +327,12 @@ export { pushed, pullOf } from './threadpush.ts';
 // nothing to wait for but a seat (jobs.ts readyWork). Its push waits for it (review.ts heldForThread). Undefined for a
 // next task that waits for a time, a card or another thread's merge, and for a fix of a review's findings or the
 // board's notes (a task drawn from the inbox, reviewinbox.ts accept): its push answers the round, so it goes to review
-// at once. (PR #3264's fix waited hours for a next task still queued.)
+// at once rather than wait on a later task.
 export function nextReady(id: number) {
   const job = db.prepare('select id, kind, pr, thread, branch, stage, round from jobs where id = ?').get(id) as
     (Job & { stage: string | null; round: number | null }) | undefined;
   if (!job || !isTask(job) || answersRound(job)) return undefined;
-  const { turn } = inTurn(tasksOf(job.thread)),
+  const { turn } = turnOf(job.thread),
     at = turn.findIndex(t => t.id === id);
   const next = at < 0 ? undefined : turn.slice(at + 1).find(t => OPEN.includes(t.status));
   const starts = next?.status === 'running' || (next?.status === 'queued' && jobs.readyWork().includes(next.id));
@@ -336,17 +357,16 @@ export function refusal(project: Project, agent: string, card?: number) {
 
 // hq job from a running job (server.ts): only the project's owner or the CEO adds
 // a task to a thread (anyone else proposes it), and no job waits --after a job in another thread (a need, the owner's to
-// draw) or in its own (its tasks run in order). card: the card it waits for (refusal).
+// draw). One --after a task in its own thread needs that task's work: it keeps its turn behind it (inTurn). card: the
+// card it waits for (refusal). (--after in its own thread)
 export function jobRefusal(agent: string, thread: string | null, after?: number, card?: number) {
   if (!thread) return undefined;
   const project = findProject(thread.split('/')[0]);
   const notYours = project && refusal(project, agent, card);
   if (notYours) return `${thread}'s tasks are drawn by its owner: ${notYours}`;
   const theirs = after ? jobs.threadOf(after) : null;
-  if (!theirs) return undefined;
-  return theirs === thread
-    ? `#${after} is in ${thread} too, whose tasks run one after another already: leave out --after (hq plan move reorders them)`
-    : `#${after} is in ${theirs}: a wait between deliverables is a need, drawn by ${thread}'s owner: hq plan need ${thread} ${theirs}`;
+  if (!theirs || theirs === thread) return undefined;
+  return `#${after} is in ${theirs}: a wait between deliverables is a need, drawn by ${thread}'s owner: hq plan need ${thread} ${theirs}`;
 }
 
 // ---- in words (hq jobs, HQ's line: jobs.ts jobRows) and for checks that read the queue without the plan

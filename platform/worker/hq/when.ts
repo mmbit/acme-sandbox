@@ -8,7 +8,7 @@ import type { TokenBudget } from '../../coordinator/src/tokenbudget.ts';
 import * as seatreplay from './seatreplay.ts';
 import * as api from './api.ts';
 import { deadlineLines, type Deadline } from './deadlines.ts';
-import { at, comparedWords, duration, waitWords, type Basis, type Wait } from './estimate.ts';
+import { at, comparedWords, duration, toldTime, waitWords, type Basis, type Wait } from './estimate.ts';
 import { plural, print, stop, text } from './output.ts';
 
 type PlayTime = { work_ms: number; review_ms: number; waiting_ms: number; deploy_ms: number; total_ms: number };
@@ -50,6 +50,7 @@ type Answer = {
   };
   // live four times in five with the answer's window: the time to tell the board
   safe: number | null;
+  safe_up?: number | null; // (in the board's quiet hours: the time it's up, told instead)
   horizon_days: number;
   played: { plays: number; ms: number };
 };
@@ -114,14 +115,15 @@ const past = ({ finish, at: by }: NonNullable<Answer['by']>) =>
 // The time to tell the board, never the "done about" above: that's as likely late as early. Its one time, never an
 // "at the latest" beside another.
 // None while the slow play doesn't finish it within the horizon.
-const safeLines = ({ safe, horizon_days }: Answer) =>
+// One in its quiet hours is told as the time it's up: "by the time you're up".
+const safeLines = ({ safe, safe_up, horizon_days }: Answer) =>
   safe === null
     ? [
         `No time to tell the board: nothing finishes it four times in five within the next ${horizon_days} days. ` +
           'Give it no time from this, never a "done about".',
       ]
     : [
-        `The time to tell the board: live ${at(safe)}, four times in five. ` +
+        `The time to tell the board: ${toldTime(safe, safe_up)}. ` +
           'It is the one time it hears: never a "done about" or a later "at the latest" beside it, nor a margin of ' +
           'your own; a window you set for it is ours to plan with.',
       ];

@@ -14,9 +14,9 @@ import { boardHold, drawnWords } from './boardheld.ts';
 import { checkThreadName, noProject, placeOf, projectClash, taskClash, threadClash } from './names.ts';
 import { newId } from './regroup.ts';
 import { needDropped } from './threadneeds.ts';
-import { DESK, OPEN_JOBS, OPEN_PRS, nameOf, type Named } from './jobs.ts';
+import { DESK, OPEN_JOBS, OPEN_PRS, isOpenJob, nameOf, statusWord, type Named } from './jobs.ts';
 // (who may change a plan: threadorder.ts, which the claim's refusals read too.)
-import { refusal, inNeedsOrder } from './threadorder.ts';
+import { refusal, inNeedsOrder, tasksOf } from './threadorder.ts';
 import * as ledger from './ledger.ts';
 import { ownerChanged, untold } from './proposals.ts';
 import { oneLine } from './agreements.ts';
@@ -24,7 +24,7 @@ import { SIDE_BY_SIDE } from '../../worker/hq/levels.ts';
 import { outlookOf } from './outlooks.ts';
 import type { Forecast } from './forecast.ts';
 import { levelsOf, splitMarks } from './levels.ts';
-import { PREFIX } from './jobcodes.ts';
+import { codeRefusal } from './jobcodes.ts';
 import { pendingReview } from './threadends.ts';
 
 const NAME_MAX = 80,
@@ -174,11 +174,21 @@ export function drop(job: number, why: unknown, agent: string) {
   return { ok: true as const };
 }
 
-// hq plan done: a thread whose goal is met with nothing to merge. One with a branch ends by merging it.
+// hq plan done: a deliverable whose goal is met with nothing to merge and none of its tasks queued or at work. One with a
+// branch ends by merging it.
 export function done(id: string, agent: string) {
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
   if (own.thread.status === 'done') return `${id} is done already`;
+  // A deliverable with a task queued or at work, the caller's own job too, can't be closed by hand yet. Closed, it would
+  // take no branch from that task's push (threadpush.ts pushed). Nor would that task's end wake anyone (threadends.ts
+  // runEnded). A task's latest review still open holds it too.
+  const working = tasksOf(own.thread.id).find(isOpenJob);
+  const task = working && `${id} still has task #${working.id} (${working.agent}: ${nameOf(working)})`;
+  if (working?.status === 'queued')
+    return `${task} queued: drop it (hq plan drop ${working.id} "why") if it isn't needed, else its end wakes you to close the deliverable`;
+  if (working)
+    return `${task} ${statusWord(working.status)}: its merge, or its end with nothing to push, wakes the owner to judge it`;
   const pending = pendingReview(own.thread.id);
   if (pending)
     return `${id} still has PR #${pending.number} waiting to merge: finish its review before marking it done`;
@@ -225,30 +235,8 @@ export function newProject(
   planChange({ project: id, what: `project made: ${name}, owned by ${owner}`, by: agent });
   return findProject(id)!;
 }
-// A project's prefix for its tasks' codes (jobcodes.ts): two or three capitals, reserved for this project.
-// Given as the CEO makes the project, or once to one made before prefixes (hq project code), never changed: the codes
-// given carry it.
-function codeRefusal(code: string) {
-  if (!PREFIX.test(code))
-    return `a project needs its code: --code and two or three capitals (SH, GM), the prefix of its tasks' codes`;
-  const holder = db.prepare('select id from projects where code = ?').get(code) as { id: string } | undefined;
-  if (holder) return `${code} is project ${holder.id}'s code: pick another`;
-  if (projects().groups.unsorted?.code === code) return `${code} is reserved for work without a project: pick another`;
-}
-export function setCode(id: string, given: unknown, agent: string) {
-  if (agent !== ceo()) return 'only the CEO gives a project its code';
-  const project = db.prepare('select code from projects where id = ?').get(id) as { code: string | null } | undefined;
-  if (!project) return `there's no project "${id}"`;
-  if (project.code) return `${id}'s code is ${project.code}, for good: its tasks' codes carry it`;
-  const code = String(given ?? '')
-      .trim()
-      .toUpperCase(),
-    refused = codeRefusal(code);
-  if (refused) return refused;
-  db.prepare('update projects set code = ? where id = ?').run(code, id);
-  planChange({ project: id, what: `its tasks' codes ${code}-…`, by: agent });
-  return { id, code };
-}
+// hq project code (jobcodes.ts setCode).
+export { setCode } from './jobcodes.ts';
 // (by: the CEO's job, which tells the new owner of the project's open proposals: proposals.ts ownerChanged)
 export function setOwner(
   id: string,

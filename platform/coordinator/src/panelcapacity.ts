@@ -13,23 +13,27 @@ const WEEK_MS = 7 * 24 * 3_600_000;
 export function brief(pr: number, candidates: string[]) {
   const ruling = choices(pr, candidates, 'ruling');
   const selected = choose(ruling);
-  const preferred = reviewSettings().consolidatorEngine;
-  const eligible = ruling.filter(choice => !preferred || choice.engine === selected.engine).map(choice => choice.agent);
-  return `Projected ruling starts (epoch milliseconds, ready means the run can start now): ${JSON.stringify(ruling.map(({ agent, engine, start, ready }) => ({ agent, engine, start, ready })))}.
-HQ's projected ruling engine: ${selected.engine}. ${preferred ? 'Eligible candidates on it' : 'Eligible suggestions'}: ${JSON.stringify(eligible)}.
-You may suggest one of these agents. HQ checks starts again when it queues the ruling.`;
+  const consolidatorEngine = reviewSettings().consolidatorEngine;
+  const eligible = ruling
+    .filter(choice => !consolidatorEngine || choice.engine === selected.engine)
+    .map(choice => choice.agent);
+  const projectedStarts = ruling.map(({ agent, engine, start, ready }) => ({ agent, engine, start, ready }));
+  return `Projected ruling starts (epoch milliseconds, ready means the run can start now): ${JSON.stringify(projectedStarts)}.
+HQ's projected ruling engine: ${selected.engine}. ${consolidatorEngine ? 'Eligible candidates on it' : 'Eligible suggestions across all engines'}: ${JSON.stringify(eligible)}.
+You may suggest one of these agents. ${consolidatorEngine ? 'HQ checks starts again when it queues the ruling.' : 'HQ keeps an eligible suggestion for the ruling.'}`;
 }
 
-// Immediate starts share one admission point. Otherwise the preferred engine must start at least as soon.
-// Stable sorting preserves the suggested agent within the chosen engine.
+// The configured consolidatorEngine wins when both runs can start now or their projected starts tie.
+// Otherwise the earlier start wins. With no engine preference, equal starts favor more weekly allowance
+// relative to time until reset. Equal comparisons preserve candidate order, including a triage suggestion.
 export function choose(choices: Choice[]) {
-  const preferred = reviewSettings().consolidatorEngine;
+  const consolidatorEngine = reviewSettings().consolidatorEngine;
   return choices.toSorted((a, b) => {
-    const favored = Number(b.engine === preferred) - Number(a.engine === preferred);
-    if (a.ready && b.ready && preferred) return favored;
+    const favored = Number(b.engine === consolidatorEngine) - Number(a.engine === consolidatorEngine);
+    if (a.ready && b.ready && consolidatorEngine) return favored;
     const sooner = (a.start ?? Infinity) - (b.start ?? Infinity);
     const roomier = a.weekLeft === null || b.weekLeft === null ? 0 : b.weekLeft - a.weekLeft;
-    return sooner || (preferred ? favored : roomier);
+    return sooner || (consolidatorEngine ? favored : roomier);
   })[0];
 }
 

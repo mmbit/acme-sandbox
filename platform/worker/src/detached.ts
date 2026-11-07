@@ -243,20 +243,30 @@ export function sweepRuns(runs: string, keep: RunRecord[]) {
       rmSync(`${runs}/${n}`, { force: true, recursive: true });
 }
 
-// Every live process of these uids, as procStat has it
-export function processesOfUids(uids: Set<number>) {
+// Every live process of a uid `wanted` takes (any, by default), as procStat has it
+export function processes(wanted: (uid: number) => boolean = () => true) {
   const found: (ProcStat & { pid: number; uid: number })[] = [];
   for (const n of readdirSync('/proc')) {
     if (!/^\d+$/.test(n)) continue;
     try {
       const uid = statSync(`/proc/${n}`).uid,
-        s = uids.has(uid) ? procStat(Number(n)) : undefined;
+        s = wanted(uid) ? procStat(Number(n)) : undefined;
       if (s && s.state !== 'Z') found.push({ ...s, pid: Number(n), uid });
     } catch {
       /* gone meanwhile */
     }
   }
   return found;
+}
+export const processesOfUids = (uids: Set<number>) => processes(uid => uids.has(uid));
+
+// A process's command line, redacted (it can hold a token): empty once it has ended
+export function commandLine(pid: number) {
+  try {
+    return redact(readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' '));
+  } catch {
+    return '';
+  }
 }
 
 // The CLIs' own programs as /proc names them (its comm: at most 15 characters): a launch's native agent and helpers
@@ -267,12 +277,8 @@ export const WRAPPERS = new Set(['sh', 'bash', 'dash', 'zsh', ...CLI_PROGRAMS]);
 export function processesOf(uid: number, cli: number, max = 10) {
   const ps = new Map<number, ProcStat & { args: string }>();
   for (const p of processesOfUids(new Set([uid]))) {
-    try {
-      const args = redact(readFileSync(`/proc/${p.pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ')); // (a command line can hold a token)
-      if (args) ps.set(p.pid, { ...p, args });
-    } catch {
-      /* gone meanwhile */
-    }
+    const args = commandLine(p.pid);
+    if (args) ps.set(p.pid, { ...p, args });
   }
   const wrapper = (pid: number) => pid === cli || WRAPPERS.has(ps.get(pid)!.comm);
   // (looked for below the CLI only: what started the CLI is no command of the run)

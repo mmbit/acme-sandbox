@@ -1,5 +1,7 @@
 // Worker memory admission with each modeled run's demand returned when it leaves.
 import type { Memory, QueuedJob, Snapshot } from './eta.ts';
+// A run in its push checks: its session ended, so it holds no slot or seat place (the worker's memory report `checks`).
+export const inChecks = (memory: Memory | null | undefined, id: number) => memory?.checks?.includes(id) ?? false;
 const budgets = new WeakMap<Snapshot, { recoverableMb: number; externalSlots: number }>();
 
 // The room's use at one moment of the play (simulation.ts start): its runs' slots and memory, summed once and added to
@@ -7,7 +9,7 @@ const budgets = new WeakMap<Snapshot, { recoverableMb: number; externalSlots: nu
 export type Room = { snapshot: Snapshot; slots: number; occupiedMb: number; startingMb: number };
 export function room(snapshot: Snapshot, running: QueuedJob[], now: number): Room {
   const memory = snapshot.memory;
-  running = running.filter(row => !memory?.checks?.includes(row.id));
+  running = running.filter(row => !inChecks(memory, row.id));
   return {
     snapshot,
     slots: running.length,
