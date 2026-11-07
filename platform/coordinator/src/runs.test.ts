@@ -27,22 +27,11 @@ const RUNS_TOKEN = 'runs-secret';
 const CARD_KEY = `helper_${'c'.repeat(43)}`;
 const h = await harness('runs', {
   env: { RUNS_TOKEN },
-  before: repo => {
+  before: () => {
     mkdirSync(process.env.SECRETS_DIR!, { recursive: true });
     writeFileSync(`${process.env.SECRETS_DIR}/RUN_HELPER_KEY`, `${CARD_KEY}\n`);
-    // HQ's checkout, two commits, the runs' bundles stand on the later
-    const git = (...args: string[]) =>
-      execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
-    git('init', '-q');
-    git('add', '-A');
-    git('commit', '-qm', 'first');
-    writeFileSync(`${repo}/later.txt`, 'later\n');
-    git('add', 'later.txt');
-    git('commit', '-qm', 'later');
   },
 });
-const checkout = (...args: string[]) =>
-  execFileSync('git', ['-C', process.env.REPO_DIR!, ...args], { encoding: 'utf8' }).trim();
 const secrets = await import('./secrets.ts');
 const runs = await import('./runs.ts');
 const storage = await import('./storage.ts');
@@ -136,7 +125,6 @@ async function startHelper(
   how: ({ server: true } | { bootstrap: string; keyCommand?: string; state?: string }) & {
     kind?: string;
     tools?: string;
-    cache?: true;
     locked?: boolean;
   },
   hqUrl = h.base,
@@ -146,9 +134,6 @@ async function startHelper(
   chmodSync(machine, 0o755);
   mkdirSync(`${machine}/work`, { mode: 0o1777 });
   chmodSync(`${machine}/work`, 0o1777);
-  // (a kind with sockets has one, manager.mjs: open to the runs, as /work)
-  if (how.cache) mkdirSync(`${machine}/cache`, { mode: 0o1777 });
-  if (how.cache) chmodSync(`${machine}/cache`, 0o1777);
   const keyFile = `${'state' in how && how.state ? how.state : machine}/key`;
   if ('server' in how) writeFileSync(keyFile, `${RUNS_TOKEN}\n`, { mode: 0o600 });
   else if (how.keyCommand) saveKey(how.keyCommand, keyFile);
@@ -161,7 +146,6 @@ async function startHelper(
       TMPDIR: machine,
       KEY_FILE: keyFile,
       WORK_DIR: `${machine}/work`,
-      CACHE_DIR: `${machine}/cache`,
       NONET_FILE: `${machine}/nonet.pl`,
       TASK_UID: String(uid),
       TASK_GID: String(uid === process.getuid!() ? process.getgid!() : uid),
@@ -871,77 +855,6 @@ const TWO_KINDS = `
     bad-memory: { memoryGb: 40.5 }
     bad-disk: { diskGb: null }
 `;
-
-// A run's output as its job reads it
-const outputOf = async (id: number, token: string) =>
-  (await h.send(`/api/agent/runs/${id}/output`, { authorization: `Bearer ${token}` })).text;
-// A bundle's refs, and the commits it needs the repo to have already (each "-<commit> <subject>"), from its header
-const headsOf = (bundle: string) => bundle.slice(0, bundle.indexOf('\n\n')).split('\n').slice(1);
-
-test("a run's bundle may stand on HQ's own commit: HQ names it, the helper hears it with the run, and HQ gives it what it lacks of it", async () => {
-  await lendOne();
-  const job = await h.start({ agent: 'bolt' });
-  const [head, first] = [checkout('rev-parse', 'HEAD'), checkout('rev-parse', 'HEAD~1')];
-  assert.deepEqual((await h.agent('runs/base', job.token)).body, { commit: head });
-  assert.equal((await sendRun(job.token, { command: 'true', base: 'HEAD' })).status, 400, 'a commit by its full name');
-  const plain = await sendRun(job.token, { command: 'true' });
-  const plainTake = (await asHelper('/api/helper/take', {})).json;
-  assert.equal(plainTake.base, undefined, 'a whole bundle stands on nothing');
-  assert.equal((await asHelper(`/api/helper/runs/${plainTake.id}/base`)).status, 404);
-  await h.agent(`runs/${plain.json.id}/stop`, job.token, {});
-
-  await sendRun(job.token, { command: 'true', base: head });
-  const take = (await asHelper('/api/helper/take', {})).json;
-  assert.equal(take.base, head);
-  const whole = await asHelper(`/api/helper/runs/${take.id}/base`);
-  assert.equal(whole.status, 200);
-  assert.deepEqual(headsOf(whole.text), [`${head} HEAD`], 'all of it, for a helper that has none');
-  const unknown = await asHelper(`/api/helper/runs/${take.id}/base?have=${'f'.repeat(40)}`);
-  assert.deepEqual(headsOf(unknown.text), [`${head} HEAD`], 'a commit HQ has never had is no help');
-  const since = await asHelper(`/api/helper/runs/${take.id}/base?have=${first}`);
-  assert.deepEqual(headsOf(since.text), [`-${first} first`, `${head} HEAD`], 'only what came after what it has');
-  assert.equal((await asHelper(`/api/helper/runs/${take.id}/base?have=${head}`)).status, 404, 'nothing new to give');
-  assert.equal((await asKey(RUNS_TOKEN, `/api/helper/runs/${take.id}/base`)).status, 404, "another helper's take");
-  await h.finish(job);
-});
-
-test("the helper keeps the base its runs stand on, fetched from HQ once, and lends its objects to each run's own repo", async t => {
-  await lendNone();
-  const job = await h.start({ agent: 'bolt' });
-  const machine = await startHelper(t, { server: true, cache: true });
-  const head = checkout('rev-parse', 'HEAD');
-  const kept = `${machine}/cache/base.git`;
-  const ran = async (command: string) => {
-    const { id } = (await sendRun(job.token, { command, base: head })).json;
-    await until(async () => (await h.agent(`runs/${id}`, job.token)).body.state === 'done', 'the run ended', 15_000);
-    return { ...(await h.agent(`runs/${id}`, job.token)).body, output: await outputOf(id, job.token) };
-  };
-  const borrowed =
-    'git init -q r && echo "$PWD/../base.git/objects" > r/.git/objects/info/alternates && git -C r log --format=%s ';
-  const first = await ran(`${borrowed}${head}`);
-  assert.equal(first.exitCode, 0, first.output);
-  assert.equal(first.output, 'later\nfirst\n');
-  assert.equal(execFileSync('git', ['-C', kept, 'rev-parse', 'refs/kept/HEAD'], { encoding: 'utf8' }).trim(), head);
-  const packs = readdirSync(`${kept}/objects/pack`);
-  const again = await ran(`${borrowed}${head} && (touch ../base.git/HEAD 2>/dev/null && echo changed || echo kept)`);
-  assert.equal(again.exitCode, 0, again.output);
-  if (ROOT) assert.match(again.output, /kept$/, "a run can't change it for the next");
-  assert.deepEqual(readdirSync(`${kept}/objects/pack`), packs, 'nothing fetched again');
-  await leftNothing(machine);
-  await h.finish(job);
-});
-
-test("a run whose base the helper can't keep ends at once, saying so, its command never run", async t => {
-  await lendNone();
-  const job = await h.start({ agent: 'bolt' });
-  await startHelper(t, { server: true });
-  const { id } = (await sendRun(job.token, { command: 'echo ran', base: checkout('rev-parse', 'HEAD') })).json;
-  await until(async () => (await h.agent(`runs/${id}`, job.token)).body.state === 'done', 'the run ended', 15_000);
-  assert.equal((await h.agent(`runs/${id}`, job.token)).body.exitCode, 2);
-  const output = await outputOf(id, job.token);
-  assert.equal(output, "The run's base isn't on the helper: this helper has no cache to keep it in\n");
-  await h.finish(job);
-});
 
 test("with two kinds declared, each kind's helper takes only its kind's runs, and a run whose kind has no helper there goes to this server's helper of its kind at once", async t => {
   h.declareKinds(t, TWO_KINDS);

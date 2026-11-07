@@ -4,7 +4,7 @@
 // taking only that kind's runs. Each says, as it asks or beats, its machine's speed and load, and the run's newest output.
 // README.md says how they're started and what they can reach.
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { availableParallelism, totalmem } from 'node:os';
 
 const HQ_URL = process.env.HQ_URL ?? '';
@@ -15,9 +15,8 @@ const RUN_KIND = process.env.RUN_KIND || undefined;
 // sets both): only then may a kind's runs keep their sockets, as they reach no further than this helper does
 const SLOT = Number(process.env.HELPER_SLOT) || undefined;
 const LOCKED = process.env.HELPER_LOCKED === '1';
-// A run with sockets reaches the package registries through the manager's proxy, and keeps their downloads here. The
-// helper keeps its runs' base here too (keptBase).
-const CACHE_DIR = process.env.CACHE_DIR ?? '/cache';
+// A run with sockets reaches the package registries through the manager's proxy, and keeps their downloads here
+const CACHE_DIR = '/cache';
 const WORK_DIR = process.env.WORK_DIR ?? '/work';
 const NONET_FILE = process.env.NONET_FILE ?? '/tmp/nonet.pl';
 // The user every run's processes belong to: never the helper's own in the container, so a run can't signal, trace or
@@ -205,77 +204,24 @@ async function carryOut(run) {
     );
     if (unpacked.code !== 0) throw new Error(`the bundle didn't unpack: ${unpacked.errors.toString().slice(-500)}`);
     if (command.stopped) return;
-    const lacking = run.base
-      ? await keptBase(run, workspace).then(
-          () => '',
-          error => error.message,
-        )
-      : '';
-    if (lacking) return await report(run, Buffer.from(`The run's base isn't on the helper: ${lacking}\n`), 2);
-    if (command.stopped) return;
     const ended = await runCommand(run, workspace, command);
     if (command.stopped) return;
     const files = run.bring.length ? await packFiles(run, workspace) : { output: Buffer.alloc(0), problem: '' };
     const output = Buffer.concat([ended.output, Buffer.from(files.problem)]);
-    await report(run, output, ended.exitCode, files.output, ended.timedOut);
+    await transfer('POST', `/api/helper/runs/${run.id}/output`, { body: output });
+    await transfer('POST', `/api/helper/runs/${run.id}/finish`, {
+      body: files.output,
+      headers: {
+        'x-run-exit': String(ended.exitCode),
+        'x-run-timed-out': ended.timedOut ? '1' : '0',
+      },
+    });
+    console.log(`Run ${run.id}: ended with ${ended.exitCode}`);
   } finally {
     clearInterval(beat);
     lifetime.abort();
     await Promise.all(beats);
   }
-}
-
-// A run's output, files and exit code to HQ, which ends it
-async function report(run, output, exitCode, files = Buffer.alloc(0), timedOut = false) {
-  await transfer('POST', `/api/helper/runs/${run.id}/output`, { body: output });
-  await transfer('POST', `/api/helper/runs/${run.id}/finish`, {
-    body: files,
-    headers: { 'x-run-exit': String(exitCode), 'x-run-timed-out': timedOut ? '1' : '0' },
-  });
-  console.log(`Run ${run.id}: ended with ${exitCode}`);
-}
-
-// A run whose bundle stands on a base (a commit of HQ's checkout, the bundle carrying only what came after it:
-// shared/gates/lent.ts) finds it in the repo the helper keeps in its cache, fetched from HQ when it lacks it (only
-// what's new since the commits it has). It's the helper's own, so a run reads it (tree/base.git, the objects its own
-// repo borrows) but can't change it for the next.
-async function keptBase(run, workspace) {
-  if (!existsSync(CACHE_DIR)) throw new Error('this helper has no cache to keep it in');
-  const kept = `${CACHE_DIR}/base.git`;
-  const own = lstatSync(kept, { throwIfNoEntry: false });
-  if (!own?.isDirectory() || own.uid !== process.getuid()) {
-    rmSync(kept, { recursive: true, force: true });
-    await git('init', '-q', '--bare', kept);
-  }
-  const has = () =>
-    git('-C', kept, 'cat-file', '-e', `${run.base}^{commit}`).then(
-      () => true,
-      () => false,
-    );
-  if (!(await has())) {
-    const have = (await git('-C', kept, 'for-each-ref', '--format=%(objectname)', 'refs/kept')).split('\n');
-    const bundle = await transfer('GET', `/api/helper/runs/${run.id}/base?have=${have.filter(Boolean).join(',')}`);
-    // (in the kept repo: the helper's root has no right to write in the run's workspace, the runs' user's)
-    const file = `${kept}/base.bundle`;
-    writeFileSync(file, bundle.body);
-    try {
-      await git('-C', kept, 'fetch', '-q', file, '+HEAD:refs/kept/HEAD', '+refs/*:refs/kept/*');
-    } finally {
-      rmSync(file, { force: true });
-    }
-    if (!(await has())) throw new Error(`HQ's bundle lacks ${run.base}`);
-  }
-  const linked = await asTask(['ln', '-s', kept, 'base.git'], { cwd: `${workspace}/tree` });
-  if (linked.code !== 0) throw new Error(`base.git wasn't linked: ${linked.errors.toString().slice(-300)}`);
-}
-
-// (a declaration: the helper's loop runs before the module's later consts are set)
-function git(...args) {
-  return new Promise((resolve, reject) =>
-    execFile('git', args, { encoding: 'utf8' }, (error, out, err) =>
-      error ? reject(new Error(err.trim().slice(-300) || error.message)) : resolve(out),
-    ),
-  );
 }
 
 // The beat: the machine's load and the run's output since the last beat, up to its last whole line

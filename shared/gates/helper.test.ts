@@ -28,49 +28,6 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
   assert.deepEqual(passed('lent.json'), { passed: 1 });
 });
 
-test("a run stands on HQ's commit when the repo has it, its bundle carrying only what came after, on nothing when not, and fails when HQ can't say", async () => {
-  const kits = {
-    'kits/adds/sum.ts': sum('a + b'),
-    'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
-    'shared/gates/tests-on-helper.sh': ON_HELPER,
-  };
-  const { dir, run } = clone(kits, { 'kits/adds/notes.md': 'touched\n' });
-  const main = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
-  const seen = join(mkdtempSync(join(tmpdir(), 'tests-seen-')), 'seen.jsonl');
-  const runs = () =>
-    readFileSync(seen, 'utf8')
-      .trim()
-      .split('\n')
-      .map(line => JSON.parse(line));
-  const played = await playedHq(undefined, {
-    PLAYED_BASE: main,
-    PLAYED_BASE_GIT: join(dir, '.git'),
-    PLAYED_SEEN: seen,
-  });
-  const thin = run(played, 'tests.ts', ['--helper']);
-  assert.equal(thin.status, 0, thin.out);
-  assert.match(thin.out, /^- kits\/adds \(node --test, 1 file\): 1 passed/m);
-  assert.match(thin.out, /bundle [\d.]+ MB, made in/);
-  const [{ base, heads }] = runs();
-  assert.equal(base, main);
-  assert.equal(heads[0].split(' ')[0], `-${main}`, "the bundle needs HQ's commit, and carries none of it");
-  const unknown = run(await playedHq(undefined, { PLAYED_BASE: 'f'.repeat(40), PLAYED_SEEN: seen }), 'tests.ts', [
-    '--helper',
-  ]);
-  assert.equal(unknown.status, 0, unknown.out);
-  assert.match(unknown.out, /, the whole repo, made in/);
-  assert.deepEqual(runs()[1].base, null, 'a commit this repo has never fetched: the whole repo goes');
-  const none = run(await playedHq(undefined, { PLAYED_SEEN: seen }), 'tests.ts', ['--helper']);
-  assert.equal(none.status, 0, none.out);
-  assert.deepEqual(runs()[2].base, null, 'HQ names none: the whole repo goes');
-  const failed = run(await playedHq(undefined, { PLAYED_BASE_STATUS: '500', PLAYED_SEEN: seen }), 'tests.ts', [
-    '--helper',
-  ]);
-  assert.equal(failed.status, 2, failed.out);
-  assert.match(failed.out, /HQ named no base for the run \(HTTP 500\)/);
-  assert.equal(runs().length, 3, "HQ failing to name one sends no run, the whole repo's least of all");
-});
-
 test('a push whose tests helper is briefly absent, within the take window, waits on and runs there, never here', async () => {
   const { run } = absentHelperCase();
   const env = await playedHq(

@@ -46,7 +46,6 @@ export type Machine = {
     lentOnly: boolean;
     checkout: boolean;
     browsers: boolean;
-    tools: boolean;
     server: Presence;
     serverTakes: boolean;
     // the work this kind holds in the queue until a lent machine has finished a run of it, in a line ('' for none)
@@ -97,7 +96,7 @@ export async function showHelper() {
   for (const kind of machine.kinds)
     print(
       '',
-      `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''}${kind.tools ? ", the worker's infrastructure tools" : ''})`,
+      `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''})`,
     );
   if (!machine.kinds.length) return;
   print(
