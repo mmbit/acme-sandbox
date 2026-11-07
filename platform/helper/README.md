@@ -12,29 +12,18 @@ the machine's GPUs. Each lent machine and our server run one helper per kind, ea
 image, and each takes only its own kind's runs. A machine may leave a kind out (a laptop with no graphics card runs no
 render helper). A new kind is a few lines of settings, never new code, and nobody at the machines.
 
+
 Kinds with `checkout: true` carry a git snapshot of the checkout, its comparison base and pinned dependencies with
 `hq run --kind <kind> -- <command>`. `hq run helper` lists a company's kinds and their checkout and browser support.
 `--bring <folder>` returns screenshots and reports even when the command fails. A kind with `browsers: true` receives
-the worker's Chromium and its libraries. Otherwise its image supplies the browsers. A kind with `tools: true` receives
-the worker's infrastructure tools too (age, versitygw, caddy, docker-compose, jq: 202 MB), for infra's tests; others go
-without. Setup lives in `shared/gates` in the checkout, so older jobs rebase on main first. Checkout checks use
-`sockets: true` for loopback page servers and package installation and return the command's exit code. Socket kinds
-default to lent machines alone. A kind with `lentOnly: false` also runs on this server's locked helper, through the
-same registry proxy. `serverImage` optionally builds its server helper from one of this server's compose services
-(`service:<name>`, such as `service:worker`, the worker's build) instead of pulling the lent machine's private image.
-Nothing else is taken: compose reads any other build context as a path or URL on the host. Example commands are in
+the worker's Chromium and its libraries. Otherwise its image supplies the browsers. Setup lives in `shared/gates` in
+the checkout, so older jobs rebase on main first. Checkout checks use `sockets: true` for loopback page servers and
+package installation and return the command's exit code. Socket kinds default to lent machines alone. A kind with
+`lentOnly: false` also runs on this server's locked helper, through the same registry proxy.
+`serverImage` optionally builds its server helper from one of this server's compose services (`service:<name>`, such as
+`service:worker`, the worker's build) instead of pulling the lent machine's private image. Nothing else is taken: compose
+reads any other build context as a path or URL on the host. Example commands are in
 `shared/browser/README.md`.
-
-**A checkout stands on HQ's commit**. The whole repo is a 314 MB bundle, and
-sending it (made, sent to HQ, fetched by the helper, unpacked) was 87 of the 106 s before a render's check started.
-So `hq run` asks HQ for its checkout's commit (`GET /api/agent/runs/base`) and, when the job's repo has it, sends only
-what came after it: the job's base and tree as commits on top of it, a few MB. The helper keeps the repo the runs
-stand on in its cache (`/cache/base.git`, the helper's own, so a run reads it but can't change it for the next). A
-run on a commit it lacks fetches from HQ only what's new since the commits it has (`GET /api/helper/runs/<attempt>/base
-?have=…`: HQ's checkout's HEAD and its fetched main), once per helper and HQ deploy. The run's own repo borrows the
-kept objects (`base.git` in its tree, git's alternates). A helper with no cache ends such a run at once, exit 2,
-saying so. HQ on a shallow checkout names no commit, and the whole repo goes, as it does when the job's repo hasn't
-fetched HQ's commit.
 
 ## The flow
 
@@ -54,6 +43,7 @@ fetched HQ's commit.
 3. The helper sends the last MB of output (stderr in with stdout), the `--bring` files as a gzipped tar and the exit
    code. Then it kills every process of the runs' user and removes all it left (below). `hq run` prints the output,
    unpacks the files into the tree and exits with the run's code (124 past its limit).
+
 
 The immutable bundle download and the result uploads share the existing HQ recovery window. A broken connection,
 including a response cut off after its headers, repeats that transfer while the same attempt keeps beating. The

@@ -6,14 +6,7 @@ import { unpackInto } from './unpack.ts';
 import { print, stop, warn } from './output.ts';
 import type { Spec } from './runs.ts';
 
-// The kind's settings say what goes with the checkout: the worker's Chromium (browsers) and its infrastructure tools
-// (tools).
-export async function checkOnHelper(
-  root: string,
-  spec: Spec,
-  tree: string,
-  kind: { browsers: boolean; tools: boolean },
-) {
+export async function checkOnHelper(root: string, spec: Spec, tree: string, includeBrowsers: boolean) {
   // The installed HQ contains only platform/worker. Check tooling belongs to the agent's checkout.
   const load = (name: string) => import(pathToFileURL(join(root, 'shared/gates', `${name}.ts`)).href);
   const { onLent } = await load('lent');
@@ -30,7 +23,7 @@ export async function checkOnHelper(
     minutes: spec.minutes,
     bring: [],
     binary: ['check-files.tar.gz'],
-    ...helperBundle({ tools: kind.tools, browsers: kind.browsers ? 'all' : 'none' }),
+    ...helperBundle({ tools: true, browsers: includeBrowsers ? 'all' : 'none' }),
     inputs: {
       'check-request.json': JSON.stringify(spec),
       'check-command.ts': readFileSync(new URL('./checkcommand.ts', import.meta.url), 'utf8'),

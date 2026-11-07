@@ -18,7 +18,12 @@ RUN python3 -m venv /venv && /venv/bin/pip install --no-cache-dir --require-hash
 ENV PATH=/venv/bin:$PATH HF_HOME=/models/hf
 WORKDIR /models
 ARG SHERPA_MODELS=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
-ARG PARAKEET_SHA256=5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf
+# Parakeet by its files, not its tarball: the release re-packs the tarball now and then (7 Nov 2026, the same model
+# files as the Hugging Face copy, csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8), so its contents are checked
+ARG PARAKEET_ENCODER_SHA256=1afbe69c1ffdabee94755f42e4daf1d93549131a3da11356bda84fcef0f2c479
+ARG PARAKEET_DECODER_SHA256=0222a86147299d4dee90edf95b6d13827edb42ad8b7c9cf0b2582f030937c0b5
+ARG PARAKEET_JOINER_SHA256=cbd02f3696e9944970111fb439d9c3fd365a80374565f13f2b9c7007d253fc98
+ARG PARAKEET_TOKENS_SHA256=d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d
 ARG SILERO_SHA256=9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
 ARG PIPER_VOICES=https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/nl/nl_NL/alex/medium
 ARG PIPER_SHA256=22f0497c4d895a09fbc6a469459aa8954ea0955d3c6e19dbcc2e23acbb93e30b
@@ -38,12 +43,15 @@ RUN curl -fsSL -o parakeet.tar.bz2 "$SHERPA_MODELS/sherpa-onnx-nemo-parakeet-tdt
     && curl -fsSL -o de_DE-thorsten-medium.onnx.json "$PIPER_DE/de_DE-thorsten-medium.onnx.json" \
     && curl -fsSL -o de_DE-kerstin-low.onnx "$PIPER_DE_F/de_DE-kerstin-low.onnx" \
     && curl -fsSL -o de_DE-kerstin-low.onnx.json "$PIPER_DE_F/de_DE-kerstin-low.onnx.json" \
-    && printf '%s  %s\n' "$PARAKEET_SHA256" parakeet.tar.bz2 "$SILERO_SHA256" silero_vad.onnx \
+    && printf '%s  %s\n' "$SILERO_SHA256" silero_vad.onnx \
          "$PIPER_SHA256" nl_NL-alex-medium.onnx "$PIPER_JSON_SHA256" nl_NL-alex-medium.onnx.json \
          "$PIPER_DE_SHA256" de_DE-thorsten-medium.onnx "$PIPER_DE_JSON_SHA256" de_DE-thorsten-medium.onnx.json \
          "$PIPER_DE_F_SHA256" de_DE-kerstin-low.onnx "$PIPER_DE_F_JSON_SHA256" de_DE-kerstin-low.onnx.json | sha256sum -c - \
     && tar xjf parakeet.tar.bz2 && rm parakeet.tar.bz2 \
-    && mv sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 parakeet && rm -rf parakeet/test_wavs
+    && mv sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 parakeet && rm -rf parakeet/test_wavs \
+    && printf '%s  %s\n' "$PARAKEET_ENCODER_SHA256" parakeet/encoder.int8.onnx "$PARAKEET_DECODER_SHA256" \
+         parakeet/decoder.int8.onnx "$PARAKEET_JOINER_SHA256" parakeet/joiner.int8.onnx "$PARAKEET_TOKENS_SHA256" \
+         parakeet/tokens.txt | sha256sum -c -
 # (pocket-tts 3.3.0 names the commits: each language's model and tokenizer, and the voices' embeddings; bill_boerst: a
 # third man's voice for org.yaml; caro_davy to daan: org.yaml's bigger pool,
 # Dutch and German: Their configs try a gated repository first, then fall back to these files.)

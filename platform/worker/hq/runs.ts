@@ -114,7 +114,7 @@ async function send(args: string[]) {
   const checkout = machine?.kinds.find(kind => kind.name === spec.kind && kind.checkout);
   if (checkout) {
     if (fallback) stop('hq run: checks stay on the helper, leave out --fallback here');
-    return checkOnHelper(root, spec, commit || treeNow(root, ['.'], carried), checkout);
+    return checkOnHelper(root, spec, commit || treeNow(root, ['.'], carried), checkout.browsers);
   }
   const folders = runFolders(paths, spec.cwd);
   const here = fallback ? { root, spec } : null;

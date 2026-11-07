@@ -7,7 +7,6 @@
 // lent machine and this server run a helper per kind, each in the kind's image, taking only that kind's runs. A kind can
 // keep its runs off this server, and departments' work in the queue, until a lent machine has finished a run of it
 // (holds). The board's HQ sees each machine live (listMachines, the 'machines' event).
-import { execFile } from 'node:child_process';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { publish } from './events.ts';
 import {
@@ -25,11 +24,10 @@ import {
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { promisify } from 'node:util';
 import type { RouteRequest, RouteTable } from '../../../shared/routes/routes.ts';
 import { companyTime, roles, yamlFile } from './company.ts';
 import { DATA_DIR, ORIGIN, REPO_DIR, RUNS_TOKEN } from './config.ts';
-import { columnsOf, db, remember, setting } from './db.ts';
+import { db, remember, setting } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as machines from './machines.ts';
 import { secret } from './secrets.ts';
@@ -65,8 +63,6 @@ type RunRow = {
   attempt: string | null;
   // how many times a helper took it
   takes: number | null;
-  // the commit of HQ's checkout its bundle stands on (thinBase), which the helper keeps, or none for a whole one
-  base: string | null;
   created: string;
   taken: string | null;
   beat: string | null;
@@ -99,9 +95,6 @@ type Kind = {
   sockets: boolean;
   checkout: boolean;
   browsers: boolean;
-  // its checkout runs carry the worker's infrastructure tools (age, versitygw, caddy, docker-compose, jq: shared/gates/
-  // bundle.ts), which only infra's tests use.
-  tools: boolean;
 };
 
 const DIR = `${DATA_DIR}/runs`;
@@ -125,9 +118,6 @@ const OUTPUT_MAX_BYTES = 2 ** 20 + 64 * 1024;
 // a beat's readings and the run's new output (4 KB at most, escaped in JSON)
 const BEAT_MAX_BYTES = 64 * 1024;
 const COMMAND_MAX_CHARS = 4000;
-const COMMIT = /^[0-9a-f]{40}$/;
-// the commits a helper says it has, at most
-const HAVE_MAX = 20;
 const BRING_MAX = 100;
 // A job's runs waiting for a helper, those still coming in counted: each holds its bundle on HQ's volume until a helper
 // takes it
@@ -152,8 +142,7 @@ const SWEEP_MS = 60_000;
 db.exec(`create table if not exists helper_runs (id integer primary key, job integer not null, agent text not null,
   command text not null, cwd text not null, bring text not null, minutes integer not null, state text not null,
   helper text, passed integer, created text not null, taken text, beat text, ended text, exit_code integer,
-  timed_out integer, why text, kind text, attempt text, takes integer, machine integer, slot integer, base text)`);
-if (!columnsOf('helper_runs').includes('base')) db.exec('alter table helper_runs add column base text');
+  timed_out integer, why text, kind text, attempt text, takes integer, machine integer, slot integer)`);
 db.exec("create index if not exists helper_runs_open on helper_runs (state) where state in ('waiting', 'running')");
 db.exec('create unique index if not exists helper_runs_attempt on helper_runs (attempt)');
 mkdirSync(DIR, { recursive: true });
@@ -198,7 +187,7 @@ function kindProblem(name: string, entry: unknown) {
   if (!KIND_NAME.test(name)) return 'its name: a to z, 0 to 9 and -, starting with a letter, at most 24 characters';
   if (entry === null || entry === undefined) return '';
   if (!isMap(entry))
-    return 'its settings: a map (about, image, serverImage, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers, tools)';
+    return 'its settings: a map (about, image, serverImage, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers)';
   if (entry.about !== undefined && typeof entry.about !== 'string') return 'about: a line of text';
   if (entry.image !== undefined && !(typeof entry.image === 'string' && IMAGE_NAME.test(entry.image)))
     return 'image: a plain Docker reference (a to z, 0 to 9 and . _ / : @ -)';
@@ -212,7 +201,6 @@ function kindProblem(name: string, entry: unknown) {
   if (entry.sockets !== undefined && typeof entry.sockets !== 'boolean') return 'sockets: true or false';
   if (entry.checkout !== undefined && typeof entry.checkout !== 'boolean') return 'checkout: true or false';
   if (entry.browsers !== undefined && typeof entry.browsers !== 'boolean') return 'browsers: true or false';
-  if (entry.tools !== undefined && typeof entry.tools !== 'boolean') return 'tools: true or false';
   if (entry.serverAfterLent !== undefined && typeof entry.serverAfterLent !== 'boolean')
     return 'serverAfterLent: true or false';
   if (entry.holdUntilLent !== undefined && !isDepartmentList(entry.holdUntilLent))
@@ -242,7 +230,6 @@ const kindOf = (name: string, entry: Record<string, unknown> | null): Kind => ({
   sockets: entry?.sockets === true,
   checkout: entry?.checkout === true,
   browsers: entry?.browsers === true,
-  tools: entry?.tools === true,
 });
 
 // A cap: a number, or a share of the machine ({ share: 0.5 } for '50%')
@@ -309,7 +296,6 @@ const attemptOf = (request: RouteRequest) => request.params.attempt;
 export const routeTable: RouteTable = {
   'POST /api/agent/runs': forJob(async (job, { req, res }) => answer(res, await createRun(job, specOf(req), req))),
   'GET /api/agent/runs/helper': forJob((job, { res }) => answer(res, helperState())),
-  'GET /api/agent/runs/base': forJob(async (job, { res }) => answer(res, await thinBase())),
   'GET /api/agent/runs/:id(\\d+)': forJob((job, request) => answer(request.res, showRun(job, runId(request)))),
   'POST /api/agent/runs/:id(\\d+)/withdraw': forJob((job, request) =>
     answer(request.res, withdrawRun(job, runId(request))),
@@ -338,12 +324,6 @@ export const routeTable: RouteTable = {
   'GET /api/helper/runs/:attempt(\\d+-\\d+)/bundle': forHelper((helper, request) =>
     sendFile(request.res, bundleFor(helper, attemptOf(request)), 'application/gzip'),
   ),
-  'GET /api/helper/runs/:attempt(\\d+-\\d+)/base': forHelper(async (helper, request) => {
-    const bundle = await baseFor(helper, attemptOf(request), request.url.searchParams.get('have') ?? '');
-    if (bundle instanceof Refusal) return answer(request.res, bundle);
-    await sendFile(request.res, bundle, 'application/octet-stream');
-    rmSync(bundle, { force: true });
-  }),
   'POST /api/helper/runs/:attempt(\\d+-\\d+)/beat': forHelper(async (helper, request) =>
     answer(request.res, beat(helper, attemptOf(request), await request.jsonBody(BEAT_MAX_BYTES))),
   ),
@@ -357,8 +337,7 @@ export const routeTable: RouteTable = {
 
 export function start() {
   // the uploads a restart cut off (none is under way yet).
-  for (const name of readdirSync(DIR))
-    if (name.startsWith('incoming-') || name.startsWith('base-')) rmSync(`${DIR}/${name}`, { force: true });
+  for (const name of readdirSync(DIR)) if (name.startsWith('incoming-')) rmSync(`${DIR}/${name}`, { force: true });
   publishKinds();
   publishHolds();
   setInterval(() => {
@@ -434,7 +413,7 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
     return new Refusal(413, `the bundle is over ${BUNDLE_MAX_BYTES / 2 ** 20} MB: name only the folders the run needs`);
   const { id } = db
     .prepare(
-      "insert into helper_runs (job, agent, command, kind, cwd, bring, minutes, base, state, created) values (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?) returning id",
+      "insert into helper_runs (job, agent, command, kind, cwd, bring, minutes, state, created) values (?, ?, ?, ?, ?, ?, ?, 'waiting', ?) returning id",
     )
     .get(
       job.id,
@@ -444,7 +423,6 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
       spec.cwd,
       JSON.stringify(spec.bring),
       spec.minutes,
-      spec.base ?? null,
       new Date().toISOString(),
     ) as {
     id: number;
@@ -508,8 +486,6 @@ function specProblem(spec: any) {
   const { maxMinutes } = runSettings();
   if (!Number.isSafeInteger(spec.minutes) || spec.minutes < 1 || spec.minutes > maxMinutes)
     return `minutes: a whole number from 1 to ${maxMinutes}`;
-  if (spec.base !== undefined && !(typeof spec.base === 'string' && COMMIT.test(spec.base)))
-    return "base: the commit of HQ's checkout the bundle stands on (GET /api/agent/runs/base)";
   return '';
 }
 
@@ -633,7 +609,6 @@ function helperState() {
       about: kind.about,
       checkout: kind.checkout,
       browsers: kind.browsers,
-      tools: kind.tools,
       image: kind.image,
       gpus: kind.gpus,
       lentOnly: kind.lentOnly,
@@ -1129,7 +1104,6 @@ function takeRun(helper: Helper, asked: unknown) {
     bring: JSON.parse(row.bring),
     minutes: row.minutes,
     sockets,
-    ...(row.base ? { base: row.base } : {}),
   };
 }
 
@@ -1210,7 +1184,6 @@ export function offloadPlaces() {
       about: kind.about,
       checkout: kind.checkout,
       browsers: kind.browsers,
-      tools: kind.tools,
       server: serverTakes(kind) && presence('server', kind.name).present,
     })),
   };
@@ -1238,43 +1211,6 @@ function bundleFor(helper: Helper, attempt: string) {
   const row = attemptRun(helper, attempt);
   return row ? `${DIR}/${row.id}/bundle.tar.gz` : '';
 }
-
-// A run's bundle stands on this checkout's commit: the commit and the tree as
-// the job has them, on top of it, so it carries only what came after (shared/gates/lent.ts). The helper keeps what it
-// fetched of it (baseFor), so a run that stands on a commit it has brings a few MB, not the repo. None from a shallow
-// checkout, which can't give the history whole.
-async function thinBase() {
-  if ((await checkout('rev-parse', '--is-shallow-repository')) !== 'false') return { commit: null };
-  return { commit: await checkout('rev-parse', 'HEAD^{commit}') };
-}
-
-// The commit an attempt's run stands on, with everything before it, as a git bundle in a file of its own: this
-// checkout's HEAD, and main as it last fetched it (a deploy gone back to the last good commit has an earlier HEAD),
-// less what the helper has (have: its commits, comma-separated, those this checkout knows).
-async function baseFor(helper: Helper, attempt: string, have: string) {
-  const row = attemptRun(helper, attempt);
-  if (!row?.base) return new Refusal(404, 'this run stands on no base');
-  const known = [];
-  for (const commit of have.split(',').slice(0, HAVE_MAX))
-    if (COMMIT.test(commit) && (await inCheckout(`${commit}^{commit}`))) known.push(commit);
-  const main = 'refs/remotes/origin/main';
-  const fetched = (await inCheckout(main)) ? [main] : [];
-  const file = `${DIR}/base-${randomUUID()}.bundle`;
-  try {
-    await checkout('bundle', 'create', '-q', file, 'HEAD', ...fetched, ...(known.length ? ['--not', ...known] : []));
-    return file;
-  } catch (error) {
-    rmSync(file, { force: true });
-    return new Refusal(404, `HQ's checkout gave no bundle: ${(error as Error).message.slice(0, 300)}`);
-  }
-}
-const inCheckout = (name: string) => checkout('rev-parse', '-q', '--verify', name).then(Boolean, () => false);
-// (safe.directory: the checkout is root's on the server, mounted read-only)
-const checkout = async (...args: string[]) =>
-  (
-    await execute('git', ['-c', `safe.directory=${REPO_DIR}`, '-C', REPO_DIR, ...args], { encoding: 'utf8' })
-  ).stdout.trim();
-const execute = promisify(execFile);
 
 // The helper's word that its attempt goes on, with its machine's readings and the run's new output ({ live, lines }).
 // The answer says whether it should.
